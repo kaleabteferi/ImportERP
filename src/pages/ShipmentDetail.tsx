@@ -1,4 +1,4 @@
-﻿// src/pages/ShipmentDetail.tsx
+// src/pages/ShipmentDetail.tsx
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
@@ -17,7 +17,7 @@ import { ExpenseForm } from '../components/shipments/ExpenseForm'
 
 
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Types -----------------------------------------------------
 
 interface Shipment {
   id: string
@@ -31,7 +31,11 @@ interface Shipment {
   bl_number: string | null
   notes: string | null
   supplier_id: string
-  suppliers: { name: string; contact_person: string | null; email: string | null } | null
+  suppliers: { 
+    name: string; 
+    contact_person?: string | null; // Added ? to make optional
+    email?: string | null;          // Added ? to make optional
+  } | null
 }
 
 interface ShipmentItem {
@@ -76,7 +80,7 @@ interface Product {
   volume_m3: number | null
 }
 
-// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Constants -------------------------------------------------
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   ORDERED:            { label: 'Ordered',       cls: 'bg-gray-100 text-gray-600'    },
@@ -90,12 +94,12 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 }
 
 const CAT_LABELS: Record<string, string> = {
-  CHINA_ORIGIN:     'ðŸ‡¨ðŸ‡³ China Origin',
-  OCEAN_FREIGHT:    'ðŸš¢ Ocean Freight',
-  DJIBOUTI_PORT:    'âš“ Djibouti Port',
-  TRUCKING:         'ðŸš› Trucking',
-  ETHIOPIA_CUSTOMS: 'ðŸ›ƒ Customs',
-  OTHER:            'ðŸ“‹ Other',
+  CHINA_ORIGIN:     'China Origin',
+  OCEAN_FREIGHT:    'Ocean Freight',
+  DJIBOUTI_PORT:    'Djibouti Port',
+  TRUCKING:         'Trucking',
+  ETHIOPIA_CUSTOMS: 'Customs',
+  OTHER:            'Other',
 }
 
 const CAT_SUGGESTIONS: Record<string, string[]> = {
@@ -138,7 +142,7 @@ const EMPTY_ITEM = {
 
 // const { state: confirmState, confirm, close: closeConfirm } = useConfirm()
 
-// â”€â”€ Info tooltip component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Info tooltip component ------------------------------------
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -168,7 +172,7 @@ function InfoTip({ text }: { text: string }) {
   )
 }
 
-// â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Main component --------------------------------------------
 
 export function ShipmentDetail() {
   const { confirm, close, state } = useConfirm();
@@ -206,6 +210,7 @@ export function ShipmentDetail() {
     ])
 
   const prodMap = new Map((prodRes.data ?? []).map((p: any) => [p.id, p]))
+  
 
   // Manually join product data into items - no FK dependency
   if (shRes.error) setError(shRes.error.message)
@@ -224,7 +229,7 @@ export function ShipmentDetail() {
   const setF  = (f: string, v: string) => setExpForm(p => ({ ...p, [f]: v }))
   const setIF = (f: string, v: string) => setItemForm(p => ({ ...p, [f]: v }))
 
-  // â”€â”€ Add PI item â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Add PI item -------------------------------------------
 
   async function saveItem() {
   if (!itemForm.product_id) { setError('Select a product'); return }
@@ -266,7 +271,7 @@ export function ShipmentDetail() {
   load()
 }
 
-  // â”€â”€ Add / Edit expense â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Add / Edit expense ------------------------------------
 
   async function saveExpense() {
     if (!expForm.description || !expForm.amount) {
@@ -349,7 +354,7 @@ export function ShipmentDetail() {
   }
 
 
-  // â”€â”€ Cost calculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Cost calculation --------------------------------------
 
   async function recalculate() {
     if (items.length === 0) {
@@ -404,7 +409,7 @@ export function ShipmentDetail() {
     load()
   }
 
-  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Derived -----------------------------------------------
 
   const totalExpEtb  = expenses.reduce((s, e) => s + (e.amount_etb ?? 0), 0)
   const totalFobUsd  = items.reduce((s, i) => s + i.quantity * i.unit_price_usd, 0)
@@ -878,7 +883,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• COST BREAKDOWN TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/*  COST BREAKDOWN TAB */}
       {activeTab === 'costs' && (
         <div>
           <div className="flex items-start justify-between mb-3">
@@ -1723,7 +1728,7 @@ export function ShipmentDetail() {
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">
-                      Total volume (mÂ³)
+                      Total volume (m³)
                     </label>
                     <input
                       type="number" step="0.001"
