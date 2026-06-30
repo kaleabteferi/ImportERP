@@ -1,8 +1,8 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, Ship, Receipt, Building2,
+  LayoutDashboard, Ship, Building2,
   Wrench, Package, Calculator, BarChart3,
-  TagIcon,Tag,
+  Tag, Wallet, CreditCard,
 } from 'lucide-react'
 import { Settings as SettingsIcon } from 'lucide-react'
 const links = [
@@ -20,6 +20,8 @@ const links = [
   ]},
   { section: 'Finance', items: [
     { to: '/costs',       icon: Calculator,  label: 'Cost Engine' },
+    { to: '/payables',    icon: Wallet,      label: 'Payables'    },
+    { to: '/receivables', icon: CreditCard,  label: 'Receivables' },
     { to: '/reports',     icon: BarChart3,   label: 'Reports'     },
   ]},
   { section: 'System', items: [

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import {
   Check, Clock, AlertTriangle, Truck,
-  Anchor, Building2, RotateCcw, Save, Loader2
+  Anchor, Building2, RotateCcw, Save, Loader2, RefreshCw,
 } from 'lucide-react'
+import { syncDemurrageExpenses } from '../../lib/expenseSync'
 
 interface TimelineEvent {
   event_type: string
@@ -38,14 +39,6 @@ const EVENTS = [
   { type: 'EMPTY_RETURNED',   label: 'Container returned',     icon: RotateCcw,   phase: 'addis'     },
 ]
 
-const PHASE_COLORS: Record<string, string> = {
-  china:    'bg-red-50 border-red-200 text-red-700',
-  sea:      'bg-blue-50 border-blue-200 text-blue-700',
-  djibouti: 'bg-amber-50 border-amber-200 text-amber-700',
-  transit:  'bg-purple-50 border-purple-200 text-purple-700',
-  addis:    'bg-green-50 border-green-200 text-green-700',
-}
-
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 
@@ -64,7 +57,10 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [showRates, setShowRates] = useState(false)
+  const lastSyncKey = useRef('')
 
   async function load() {
     setLoading(true)
@@ -96,6 +92,7 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
     await supabase.from('shipment_timeline')
       .upsert(payload, { onConflict: 'shipment_id,event_type' })
     setEvents(prev => ({ ...prev, [type]: payload as any }))
+    lastSyncKey.current = ''
   }
 
   async function saveRates() {
@@ -136,8 +133,8 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
     return cost
   }
 
-  const arrivedDjibouti = events['ARRIVED_DJIBOUTI']?.event_date
-    ? new Date(events['ARRIVED_DJIBOUTI'].event_date) : null
+  const arrivedDate = events['ARRIVED_DJIBOUTI']?.event_date ?? null
+  const arrivedDjibouti = arrivedDate ? new Date(arrivedDate) : null
   const leftPort = events['LEFT_PORT']?.event_date
     ? new Date(events['LEFT_PORT'].event_date) : null
   const emptyReturned = events['EMPTY_RETURNED']?.event_date
@@ -161,6 +158,38 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
   const daysUntilFreeEnd = freePeriodEnd
     ? daysBetween(today, freePeriodEnd) : null
   const isOverdue = daysAtPort > rates.dem_free_days && !leftPort
+
+  const syncCosts = useCallback(async () => {
+    if (!arrivedDate) return
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      await syncDemurrageExpenses(shipmentId, {
+        demurrageUsd: demurrageCostUsd,
+        detentionUsd: detentionCostUsd,
+        storageEtb: storageCostEtb,
+      }, fxRate)
+      setSyncMsg('Demurrage, detention & storage synced to expenses')
+    } catch (e: any) {
+      setSyncMsg(`Sync failed: ${e.message}`)
+    } finally {
+      setSyncing(false)
+    }
+  }, [shipmentId, demurrageCostUsd, detentionCostUsd, storageCostEtb, fxRate, arrivedDate])
+
+  useEffect(() => {
+    if (!arrivedDate) return
+    const key = `${demurrageCostUsd}|${detentionCostUsd}|${storageCostEtb}`
+    if (key === lastSyncKey.current) return
+    lastSyncKey.current = key
+    syncDemurrageExpenses(shipmentId, {
+      demurrageUsd: demurrageCostUsd,
+      detentionUsd: detentionCostUsd,
+      storageEtb: storageCostEtb,
+    }, fxRate)
+      .then(() => setSyncMsg('Demurrage costs auto-synced to expenses'))
+      .catch((e: Error) => setSyncMsg(`Sync failed: ${e.message}`))
+  }, [demurrageCostUsd, detentionCostUsd, storageCostEtb, arrivedDate, shipmentId, fxRate])
 
   if (loading) return (
     <div className="flex items-center justify-center py-8 text-gray-400 gap-2">
@@ -249,6 +278,23 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
               </p>
             </div>
           ))}
+          <div className="col-span-3 flex items-center justify-between pt-1">
+            <p className="text-xs text-gray-400">
+              Auto-synced to shipment expenses (updates existing rows, no duplicates)
+            </p>
+            <button
+              onClick={syncCosts}
+              disabled={syncing}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200
+                         rounded-lg hover:bg-white disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+          </div>
+          {syncMsg && (
+            <p className="col-span-3 text-xs text-blue-600">{syncMsg}</p>
+          )}
         </div>
       )}
 
@@ -350,6 +396,7 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
             const existing = events[ev.type]
             const isFuture = !existing?.event_date
             const isPast   = existing?.is_actual && existing?.event_date
+            void isFuture
 
             // Highlight free period end
             const isFreePeriodEnd = ev.type === 'FREE_PERIOD_END'

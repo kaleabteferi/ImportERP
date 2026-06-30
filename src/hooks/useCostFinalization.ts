@@ -138,5 +138,6 @@ export function useCostFinalization(shipmentId: string) {
     provisionalTotal, finalTotal,
     allConfirmed, confirmedCount,
     overheadDelta, hasProvisional,
+    finalize,
   }
 }

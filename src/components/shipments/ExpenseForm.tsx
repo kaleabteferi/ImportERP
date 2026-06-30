@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Check, Loader2, X, Info } from 'lucide-react'
+import { replaceAutoExpenses, type AutoExpenseSource } from '../../lib/expenseSync'
 
 // ── Ethiopian customs cascade (Proclamation 622/2009, updated 2023) ──
 // The correct calculation order per ERCA:
@@ -35,20 +36,6 @@ type Category =
   | 'TRUCKING'
   | 'ETHIOPIA_CUSTOMS'
   | 'OTHER'
-
-interface CustomsCalc {
-  cifUsd: number
-  cifEtb: number
-  customsDuty: number
-  dutyRate: number
-  exciseTax: number
-  exciseRate: number
-  surtax: number
-  vat: number
-  wht: number
-  clearingFee: number
-  total: number
-}
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -167,13 +154,6 @@ const calc = useMemo(() => {
   }
 }, [cifUsd, fxRate, dutyRate, exciseRate, applySurtax, applyVat, applyWht, clearingFee])
 
-  function getAmountEtb(): number {
-    const a = parseFloat(amount) || 0
-    if (currency === 'ETB') return a
-    if (currency === 'USD') return a * fxRate
-    return a * (fxRate / 7.2)
-  }
-
   async function save() {
   if (!description && category !== 'ETHIOPIA_CUSTOMS') {
     setError('Description is required')
@@ -237,34 +217,31 @@ const calc = useMemo(() => {
         return
       }
 
-      const rows = components.map(comp => ({
-        shipment_id:   shipmentId,
-        category:      'ETHIOPIA_CUSTOMS',
-        description:   comp.desc,
-        amount:        comp.amount,
-        currency:      'ETB',
-        amount_etb:    comp.amount,
-        exchange_rate: fxRate,
-        vendor_name:   vendorName || 'ERCA',
-        expense_date:  expenseDate,
-        receipt_ref:   receiptRef || null,
-        cost_status:   'PROVISIONAL',
-        notes:         comp.note,
-      }))
-
-      const { error: insertErr, data: insertedData } = await supabase
-        .from('shipment_expenses')
-        .insert(rows)
-        .select()
-
-      if (insertErr) {
-        console.error('Customs insert failed:', insertErr)
-        setError(`Failed to save customs taxes: ${insertErr.message}`)
-        setSaving(false)
-        return
+      const sourceByDesc: Record<string, AutoExpenseSource> = {
+        'Customs duty': 'customs_duty',
+        'Excise tax': 'customs_excise',
+        'Surtax (10%)': 'customs_surtax',
+        'VAT (15%)': 'customs_vat',
+        'Withholding tax (3%)': 'customs_wht',
+        'Clearing agent fee': 'customs_clearing',
       }
 
-      console.log(`Inserted ${insertedData?.length} customs expense rows`, insertedData)
+      await replaceAutoExpenses(
+        shipmentId,
+        'customs',
+        components.map(comp => ({
+          source: sourceByDesc[comp.desc] ?? 'customs_duty',
+          category: 'ETHIOPIA_CUSTOMS',
+          description: comp.desc,
+          amount: comp.amount,
+          currency: 'ETB' as const,
+          amountEtb: comp.amount,
+          fxRate,
+          vendorName: vendorName || 'ERCA',
+          expenseDate,
+          detailNote: comp.note,
+        })),
+      )
 
     } else {
       // Single manual expense

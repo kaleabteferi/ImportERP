@@ -1,10 +1,10 @@
 // src/pages/CostFinalization.tsx
 
 import { useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, ArrowRight, Check, Loader2,
-  AlertTriangle, Lock, RefreshCw, CheckCircle,
+  AlertTriangle, Lock, CheckCircle,
 } from 'lucide-react'
 import { useCostFinalization, type AllocationMethod } from '../hooks/useCostFinalization'
 
@@ -31,7 +31,6 @@ const STEPS = ['Review expenses', 'Preview impact', 'Confirm & lock', 'Done']
 
 export function CostFinalization() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [confirmed, setConfirmed] = useState(false)
 
   const fin = useCostFinalization(id!)

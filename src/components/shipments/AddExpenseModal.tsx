@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { X, Plus, Loader2, CheckCircle, ChevronDown, AlertCircle } from 'lucide-react';
-import { z } from 'zod';
 import { addExpenseAndRecalculate } from '../../api/expenses';
 import {
   expenseSchema,
@@ -105,7 +104,7 @@ export function AddExpenseModal({
       return true;
     }
     const fieldErrors: typeof errors = {};
-    result.error.errors.forEach(e => {
+    result.error.issues.forEach(e => {
       const field = e.path[0] as keyof ExpenseFormValues;
       fieldErrors[field] = e.message;
     });

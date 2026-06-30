@@ -51,7 +51,7 @@ export const expenseSchema = z.object({
   category: z.enum([
     'CHINA_ORIGIN', 'OCEAN_FREIGHT', 'DJIBOUTI_PORT',
     'TRUCKING', 'ETHIOPIA_CUSTOMS', 'OTHER',
-  ], { required_error: 'Select a category' }),
+  ], { message: 'Select a category' }),
 
   description: z.string()
     .min(2, 'Description is too short')

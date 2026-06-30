@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Printer, Edit2, Save, X,
-  FileText, Package, Truck, Check, Loader2
+  FileText, Package, Truck, Loader2
 } from 'lucide-react'
 
 interface DocData {
@@ -143,7 +143,7 @@ export function ShipmentDocuments() {
     <div className="p-5 text-center text-gray-400">Shipment not found.</div>
   )
 
-  const { shipment, items, company, consignee, fxRate } = data
+  const { shipment, items, company, consignee, fxRate: customsRate } = data
   const supplier  = shipment?.suppliers
   const totalFob  = items.reduce((s: number, i: any) => s + i.quantity * i.unit_price_usd, 0)
   const totalWt   = items.reduce((s: number, i: any) => s + (i.weight_kg_total ?? 0), 0)
@@ -334,7 +334,7 @@ export function ShipmentDocuments() {
                   <h1 className="text-2xl font-bold text-gray-900 tracking-wide">
                     COMMERCIAL INVOICE
                   </h1>
-                  <p className="text-sm text-gray-500 mt-1">Original</p>
+                  <p className="text-sm text-gray-500 mt-1">Original · Rate {customsRate} ETB/USD</p>
                 </div>
                 <div className="text-right">
                   <p className="text-xl font-bold text-gray-900">{company?.company_name}</p>
@@ -638,7 +638,7 @@ export function ShipmentDocuments() {
                         <td className="px-3 py-2 text-right font-mono">{ctns}</td>
                         <td className="px-3 py-2 text-right font-mono">{ppc}</td>
                         <td className="px-3 py-2 text-right font-mono font-medium">
-                          {N(item.quantity)}
+                          {N(totalPcs)}
                         </td>
                         <td className="px-3 py-2 text-right font-mono">
                           {gw ? N(gw) : '—'}

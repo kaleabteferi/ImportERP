@@ -11,6 +11,7 @@ interface Product {
   weight_kg: number | null
   volume_m3: number | null
   is_assembled: boolean
+  assembly_type: string | null
   is_active: boolean
 }
 
@@ -18,6 +19,7 @@ const EMPTY = {
   sku: '', name: '', description: '',
   unit_of_measure: 'PCS', weight_kg: '',
   volume_m3: '', is_assembled: false,
+  assembly_type: 'IMPORTED',
 }
 
 export function Products() {
@@ -55,6 +57,7 @@ export function Products() {
       weight_kg:       p.weight_kg ?? '',
       volume_m3:       p.volume_m3 ?? '',
       is_assembled:    p.is_assembled,
+      assembly_type:   p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED'),
     })
     setEditId(p.id)
     setError(null)
@@ -76,6 +79,7 @@ export function Products() {
       weight_kg:       form.weight_kg ? parseFloat(form.weight_kg) : null,
       volume_m3:       form.volume_m3 ? parseFloat(form.volume_m3) : null,
       is_assembled:    form.is_assembled,
+      assembly_type:   form.assembly_type,
     }
     const { error: err } = editId
       ? await supabase.from('products').update(payload).eq('id', editId)
@@ -166,10 +170,12 @@ export function Products() {
               </div>
               <div>
                 <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                  ${p.is_assembled
+                  ${p.assembly_type === 'FULL' || p.is_assembled
                     ? 'bg-purple-50 text-purple-700'
-                    : 'bg-gray-100 text-gray-600'}`}>
-                  {p.is_assembled ? 'Assembled' : 'Imported'}
+                    : p.assembly_type === 'SKD' || p.assembly_type === 'CKD'
+                      ? 'bg-amber-50 text-amber-700'
+                      : 'bg-gray-100 text-gray-600'}`}>
+                  {p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED')}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -301,17 +307,25 @@ export function Products() {
                 </div>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.is_assembled}
-                  onChange={e => set('is_assembled', e.target.checked)}
-                  className="rounded"
-                />
-                <span className="text-xs text-gray-600">
-                  This product requires local assembly (has a BOM)
-                </span>
-              </label>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Assembly type</label>
+                <select
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
+                  value={form.assembly_type}
+                  onChange={e => {
+                    set('assembly_type', e.target.value)
+                    set('is_assembled', e.target.value === 'FULL' || e.target.value === 'SKD')
+                  }}
+                >
+                  <option value="IMPORTED">IMPORTED — ready to sell</option>
+                  <option value="FULL">FULL — fully assembled import</option>
+                  <option value="SKD">SKD — semi-knocked down (assembly line)</option>
+                  <option value="CKD">CKD — completely knocked down (parts only)</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  SKD/CKD stock routes to assembly components when shipment is received.
+                </p>
+              </div>
 
               {error && (
                 <div className="px-3 py-2 bg-red-50 border border-red-200

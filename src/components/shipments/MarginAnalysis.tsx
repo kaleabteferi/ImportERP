@@ -17,7 +17,7 @@ interface Props {
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 
-export function MarginAnalysis({ items, fxRate }: Props) {
+export function MarginAnalysis({ items, fxRate: _fxRate }: Props) {
   const [targetMargin, setTargetMargin] = useState(30)
   const [customPrices, setCustomPrices] = useState<Record<string, string>>({})
   const [vatRate] = useState(15)   // VAT on sales (if VAT-registered seller)

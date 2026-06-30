@@ -82,7 +82,9 @@ export function ExpensesPanel({
         expense_date:            payload.expense_date,
         receipt_ref:             payload.receipt_ref || undefined,
         notes:                   payload.notes || undefined,
-        exchange_rate_override:  payload.exchange_rate_override || undefined,
+        exchange_rate_override:  payload.exchange_rate_override
+          ? parseFloat(payload.exchange_rate_override)
+          : undefined,
       },
       onCostsUpdated,
     );
@@ -469,7 +471,7 @@ function InlineEditForm({ expense, onSave, onCancel }: InlineEditFormProps) {
     const result = expenseSchema.safeParse(form);
     if (!result.success) {
       const errs: typeof errors = {};
-      result.error.errors.forEach(e => {
+      result.error.issues.forEach(e => {
         errs[e.path[0] as keyof ExpenseFormValues] = e.message;
       });
       setErrors(errs);

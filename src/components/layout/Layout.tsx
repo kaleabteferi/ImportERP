@@ -1,11 +1,8 @@
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { MobileNav } from './MobileNav'
-import { useState } from 'react'
 
 export function Layout() {
-  const [mobileOpen, setMobileOpen] = useState(false)
-
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden',
                   background: 'var(--color-background-tertiary)' }}>

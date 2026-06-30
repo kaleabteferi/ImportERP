@@ -51,7 +51,10 @@ export function Shipments() {
       supabase.from('suppliers')
         .select('id, name').eq('is_active', true).order('name'),
     ])
-    setShipments(shRes.data ?? [])
+    setShipments((shRes.data ?? []).map(s => ({
+      ...s,
+      suppliers: Array.isArray(s.suppliers) ? s.suppliers[0] ?? null : s.suppliers,
+    })))
     setSuppliers(supRes.data ?? [])
     setLoading(false)
   }

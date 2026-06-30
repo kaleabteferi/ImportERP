@@ -1,5 +1,7 @@
 // src/lib/costEngine.ts  (updated)
 
+import type { AllocationMethod } from '../types/costEngine';
+
 export interface PLItem {
   id: string;
   pi_item_id: string;
@@ -132,6 +134,8 @@ function getAllocationBasis(
       return item.total_volume_m3;
     case 'VALUE':
       return item.unit_price_foreign * item.total_units * usdToEtb;
+    default:
+      return item.total_units;
   }
 }
 

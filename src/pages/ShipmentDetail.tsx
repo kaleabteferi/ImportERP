@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Loader2, X, Check,
   RefreshCw, Package, Receipt, Calculator,
-  FileText, Truck, Lock, Info,
+  FileText, Truck, Lock, Info, Paperclip,
 } from 'lucide-react'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -14,6 +14,8 @@ import { TimelinePanel } from '../components/shipments/TimelinePanel'
 import { MarginAnalysis } from '../components/shipments/MarginAnalysis'
 import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
+import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments'
+import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
 
 
 
@@ -43,6 +45,9 @@ interface ShipmentItem {
   product_id: string
   quantity: number
   unit_price_usd: number
+  unit_of_measure?: string | null
+  units_per_carton?: number | null
+  carton_qty?: number | null
   weight_kg_total: number | null
   volume_m3_total: number | null
   allocated_cost_etb: number | null
@@ -102,16 +107,7 @@ const CAT_LABELS: Record<string, string> = {
   OTHER:            'Other',
 }
 
-const CAT_SUGGESTIONS: Record<string, string[]> = {
-  CHINA_ORIGIN:     ['Factory loading', 'Export documentation', 'Inspection fee', 'Banking charges'],
-  OCEAN_FREIGHT:    ['Ocean freight', 'BL fee', 'Insurance', 'Container charges'],
-  DJIBOUTI_PORT:    ['Djibouti offloading', 'Warehouse storage', 'Port handling', 'Documentation'],
-  TRUCKING:         ['Truck fee â€“ Addis route', 'Fuel', 'Driver costs', 'Security'],
-  ETHIOPIA_CUSTOMS: ['Customs duty', 'VAT', 'Surtax', 'Withholding tax', 'Clearing agent fee'],
-  OTHER:            ['Demurrage', 'Penalty', 'Bank charge', 'Currency loss'],
-}
-
-type TabKey = 'items' | 'expenses' | 'costs' | 'commercial' | 'packing' | 'waybill' | 'timeline' | 'margin'
+type TabKey = 'items' | 'expenses' | 'costs' | 'commercial' | 'packing' | 'waybill' | 'timeline' | 'margin' | 'documents'
 
 const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'items',      label: 'PI Items',          icon: Package   },
@@ -122,17 +118,11 @@ const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'waybill',    label: 'Truck waybill',     icon: Truck     },
   { key: 'timeline', label: 'Timeline & dates',  icon: Calendar    },
   { key: 'margin',   label: 'Margin analysis',   icon: TrendingUp  },
+  { key: 'documents', label: 'Documents',        icon: Paperclip   },
 ]
 
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
-
-const EMPTY_EXP = {
-  category: 'ETHIOPIA_CUSTOMS', description: '', amount: '',
-  currency: 'ETB', vendor_name: '',
-  expense_date: new Date().toISOString().split('T')[0],
-  receipt_ref: '',
-}
 
 const EMPTY_ITEM = {
   product_id: '', quantity: '', unit_price_usd: '',
@@ -140,9 +130,16 @@ const EMPTY_ITEM = {
   unit_of_measure: 'PCS', pieces_per_carton: '',
 }
 
-// const { state: confirmState, confirm, close: closeConfirm } = useConfirm()
-
 // -- Info tooltip component ------------------------------------
+
+function itemPacking(item: ShipmentItem) {
+  const uom = item.unit_of_measure ?? item.products?.unit_of_measure ?? 'PCS'
+  const pcsPerCtn = item.units_per_carton ?? 2
+  const ctns = item.carton_qty
+    ?? (uom === 'CTN' ? item.quantity : Math.ceil(item.quantity / pcsPerCtn))
+  const totalPcs = uom === 'CTN' ? item.quantity * pcsPerCtn : item.quantity
+  return { uom, pcsPerCtn, ctns, totalPcs }
+}
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -187,36 +184,42 @@ export function ShipmentDetail() {
   const [activeTab, setActiveTab] = useState<TabKey>('items')
   const [expOpen, setExpOpen]     = useState(false)
   const [itemOpen, setItemOpen]   = useState(false)
-  const [expForm, setExpForm]     = useState({ ...EMPTY_EXP })
   const [itemForm, setItemForm]   = useState({ ...EMPTY_ITEM })
   const [saving, setSaving]       = useState(false)
   const [recalcing, setRecalcing] = useState(false)
   const [error, setError]         = useState<string | null>(null)
   const [editExpId, setEditExpId] = useState<string | null>(null)
+  const [receiving, setReceiving] = useState(false)
   
 
   const load = useCallback(async () => {
-  if (!id) return
-  setLoading(true)
-  setError(null)
+    if (!id) return
+    setLoading(true)
+    setError(null)
 
-  // Run all queries in parallel
-  const [shRes, itemsRes, expRes, prodRes, fxRes] = await Promise.all([
-      supabase.from('shipments').select('*').eq('id', id).single(),
+    const [shRes, itemsRes, expRes, prodRes, fxRes] = await Promise.all([
+      supabase.from('shipments')
+        .select('*, suppliers(name, contact_person, email)')
+        .eq('id', id)
+        .single(),
       supabase.from('shipment_items').select('*').eq('shipment_id', id),
       supabase.from('shipment_expenses').select('*').eq('shipment_id', id),
       supabase.from('products').select('*').eq('is_active', true),
-      supabase.from('forex_rates').select('rate').order('effective_date', { ascending: false }).limit(1),
+      supabase.from('forex_rates').select('rate')
+        .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
+        .order('effective_date', { ascending: false }).limit(1),
     ])
 
-  const prodMap = new Map((prodRes.data ?? []).map((p: any) => [p.id, p]))
-  
+    const prodMap = new Map((prodRes.data ?? []).map((p: Product) => [p.id, p]))
+    const enrichedItems: ShipmentItem[] = (itemsRes.data ?? []).map((item: ShipmentItem) => ({
+      ...item,
+      products: prodMap.get(item.product_id) ?? null,
+    }))
 
-  // Manually join product data into items - no FK dependency
-  if (shRes.error) setError(shRes.error.message)
+    if (shRes.error) setError(shRes.error.message)
     else {
       setShipment(shRes.data)
-      setItems(itemsRes.data ?? [])
+      setItems(enrichedItems)
       setExpenses(expRes.data ?? [])
       setProducts(prodRes.data ?? [])
       setFxRate(fxRes.data?.[0]?.rate ?? 131.20)
@@ -226,7 +229,6 @@ export function ShipmentDetail() {
 
   useEffect(() => { load() }, [load])
 
-  const setF  = (f: string, v: string) => setExpForm(p => ({ ...p, [f]: v }))
   const setIF = (f: string, v: string) => setItemForm(p => ({ ...p, [f]: v }))
 
   // -- Add PI item -------------------------------------------
@@ -253,7 +255,7 @@ export function ShipmentDetail() {
     quantity:          qty,                    // as entered (could be CTN count)
     unit_of_measure:   itemForm.unit_of_measure,
     units_per_carton:  isCarton ? pcsPerCtn : null,
-    carton_qty:        isCarton ? qty : Math.ceil(totalPieces / 2), // estimate if PCS
+    carton_qty:        isCarton ? qty : Math.ceil(totalPieces / (parseFloat(itemForm.pieces_per_carton || '2') || 2)),
     unit_price_usd:    parseFloat(itemForm.unit_price_usd),
     weight_kg_total:   itemForm.weight_kg_total
       ? parseFloat(itemForm.weight_kg_total)
@@ -271,58 +273,9 @@ export function ShipmentDetail() {
   load()
 }
 
-  // -- Add / Edit expense ------------------------------------
-
-  async function saveExpense() {
-    if (!expForm.description || !expForm.amount) {
-      setError('Description and amount are required'); return
-    }
-    setSaving(true)
-    setError(null)
-
-    const amount = parseFloat(expForm.amount)
-    const amtEtb = expForm.currency === 'ETB' ? amount
-      : expForm.currency === 'USD' ? amount * fxRate
-      : amount * (fxRate / 7.2)
-
-    const payload = {
-      category:      expForm.category,
-      description:   expForm.description,
-      amount,
-      currency:      expForm.currency,
-      amount_etb:    Math.round(amtEtb * 100) / 100,
-      exchange_rate: fxRate,
-      vendor_name:   expForm.vendor_name || null,
-      expense_date:  expForm.expense_date,
-      receipt_ref:   expForm.receipt_ref || null,
-      cost_status:   'PROVISIONAL',
-    }
-
-    const { error: err } = editExpId
-      ? await supabase.from('shipment_expenses')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', editExpId)
-      : await supabase.from('shipment_expenses')
-          .insert({ ...payload, shipment_id: id })
-
-    if (err) { setError(err.message); setSaving(false); return }
-    setSaving(false)
-    setExpOpen(false)
-    setEditExpId(null)
-    setExpForm({ ...EMPTY_EXP })
-    load()
-  }
+  // -- Edit expense ------------------------------------------
 
   function openEditExp(exp: Expense) {
-    setExpForm({
-      category:     exp.category,
-      description:  exp.description,
-      amount:       String(exp.amount),
-      currency:     exp.currency,
-      vendor_name:  exp.vendor_name ?? '',
-      expense_date: exp.expense_date,
-      receipt_ref:  exp.receipt_ref ?? '',
-    })
     setEditExpId(exp.id)
     setError(null)
     setExpOpen(true)
@@ -351,6 +304,38 @@ export function ShipmentDetail() {
         load()
       }
     })
+  }
+
+  async function receiveIntoInventory() {
+    if (!id || items.length === 0) return
+    setReceiving(true)
+    setError(null)
+    try {
+      const { data: prodMeta } = await supabase
+        .from('products')
+        .select('id, assembly_type, is_assembled')
+        .in('id', items.map(i => i.product_id))
+
+      const metaMap = new Map((prodMeta ?? []).map(p => [p.id, p]))
+
+      await receiveShipmentToInventory(
+        id,
+        items.map(item => ({
+          shipment_item_id:     item.id,
+          product_id:           item.product_id,
+          product_name:         item.products?.name ?? '',
+          quantity:             item.quantity,
+          unit_landed_cost_etb: item.unit_landed_cost_etb,
+          assembly_type:        resolveAssemblyType(metaMap.get(item.product_id) ?? {}),
+        })),
+        fxRate,
+      )
+      load()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setReceiving(false)
+    }
   }
 
 
@@ -421,7 +406,7 @@ export function ShipmentDetail() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
-      <Loader2 size={18} className="animate-spin" /> Loadingâ€¦
+      <Loader2 size={18} className="animate-spin" /> Loading…
     </div>
   )
 
@@ -447,9 +432,9 @@ export function ShipmentDetail() {
           <h1 className="text-lg font-medium">{shipment.shipment_number}</h1>
           <p className="text-xs text-gray-400 mt-0.5">
             {supplier?.name ?? '-'}
-            {shipment.container_number && ` Â· ${shipment.container_number}`}
-            {shipment.vessel_name && ` Â· ${shipment.vessel_name}`}
-            {shipment.eta_djibouti && ` Â· ETA Djibouti ${shipment.eta_djibouti}`}
+            {shipment.container_number && ` · ${shipment.container_number}`}
+            {shipment.vessel_name && ` · ${shipment.vessel_name}`}
+            {shipment.eta_djibouti && ` · ETA Djibouti ${shipment.eta_djibouti}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -504,7 +489,7 @@ export function ShipmentDetail() {
             label: 'Exchange rate',
             val: `${fxRate} ETB`,
             sub: 'Per 1 USD (customs)',
-            tip: 'The National Bank of Ethiopia (NBE) customs rate used to convert USD costs to ETB. Update this in Settings â†’ Forex Rates before calculating.',
+            tip: 'The National Bank of Ethiopia (NBE) customs rate used to convert USD costs to ETB. Update this in Settings → Forex Rates before calculating.',
           },
         ].map(s => (
           <div key={s.label} className="bg-gray-50 rounded-xl px-4 py-3">
@@ -517,6 +502,31 @@ export function ShipmentDetail() {
           </div>
         ))}
       </div>
+
+      {/* Receive into inventory */}
+      {items.some(i => i.unit_landed_cost_etb) &&
+       !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
+        <div className="flex items-center justify-between px-4 py-3 mb-5
+                        bg-green-50 border border-green-200 rounded-xl">
+          <div className="text-xs text-green-800">
+            <p className="font-medium">Ready for warehouse receipt</p>
+            <p className="mt-0.5 text-green-700">
+              SKD/CKD parts route to assembly components; fully assembled goods go to finished stock.
+            </p>
+          </div>
+          <button
+            onClick={receiveIntoInventory}
+            disabled={receiving}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 text-white
+                       text-xs rounded-lg hover:bg-green-800 disabled:opacity-50 shrink-0"
+          >
+            {receiving
+              ? <><Loader2 size={12} className="animate-spin" /> Receiving…</>
+              : <><Package size={12} /> Receive into inventory</>
+            }
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-1.5 mb-5 border-b border-gray-100
@@ -545,7 +555,7 @@ export function ShipmentDetail() {
                        disabled:opacity-40 transition-colors text-gray-600"
           >
             <RefreshCw size={12} className={recalcing ? 'animate-spin' : ''} />
-            {recalcing ? 'Calculatingâ€¦' : 'Recalculate'}
+            {recalcing ? 'Calculating…' : 'Recalculate'}
           </button>
         </div>
       </div>
@@ -560,7 +570,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• PI ITEMS TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* PI ITEMS TAB */}
       {activeTab === 'items' && (
         <div>
           <div className="flex items-start justify-between mb-3">
@@ -643,16 +653,16 @@ export function ShipmentDetail() {
                             </p>
                           </td>
                           <td className="px-3 py-3 text-right font-mono">
-  {N(item.quantity)}{' '}
-  <span className="text-gray-400 font-normal">
-    {(item as any).unit_of_measure ?? 'PCS'}
-  </span>
-  {(item as any).unit_of_measure === 'CTN' && (item as any).units_per_carton && (
-    <div className="text-xs text-gray-400 mt-0.5">
-      = {N(item.quantity * (item as any).units_per_carton)} pcs
-    </div>
-  )}
-</td>
+                            {N(item.quantity)}{' '}
+                            <span className="text-gray-400 font-normal">
+                              {item.unit_of_measure ?? 'PCS'}
+                            </span>
+                            {item.unit_of_measure === 'CTN' && item.units_per_carton && (
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                = {N(item.quantity * item.units_per_carton)} pcs
+                              </div>
+                            )}
+                          </td>
                           <td className="px-3 py-3 text-right font-mono text-gray-600">
                             ${item.unit_price_usd}
                           </td>
@@ -741,7 +751,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• EXPENSES TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* EXPENSES TAB */}
       {activeTab === 'expenses' && (
         <div>
           <div className="flex items-start justify-between mb-3">
@@ -758,7 +768,7 @@ export function ShipmentDetail() {
               </p>
             </div>
             <button
-              onClick={() => { setExpForm({ ...EMPTY_EXP }); setEditExpId(null); setError(null); setExpOpen(true) }}
+              onClick={() => { setEditExpId(null); setError(null); setExpOpen(true) }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
                          text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -893,7 +903,7 @@ export function ShipmentDetail() {
                 <InfoTip text="This shows how the total overhead (all expenses) is split across products. The allocation method determines the split: By Quantity divides equally per unit, By Weight splits proportionally by kg, By Value splits by USD value. The unit landed cost is what you must cover per unit before making any profit." />
               </div>
               <p className="text-xs text-gray-400 mt-0.5">
-                Method: <strong>{shipment.allocation_method}</strong> Â·
+                Method: <strong>{shipment.allocation_method}</strong> ·
                 Rate: <strong>{fxRate} ETB/USD</strong>
               </p>
             </div>
@@ -905,7 +915,7 @@ export function ShipmentDetail() {
                          disabled:opacity-50 transition-colors"
             >
               <RefreshCw size={12} className={recalcing ? 'animate-spin' : ''} />
-              {recalcing ? 'Calculatingâ€¦' : 'Calculate now'}
+              {recalcing ? 'Calculating…' : 'Calculate now'}
             </button>
           </div>
 
@@ -942,7 +952,7 @@ export function ShipmentDetail() {
                     className="text-xs px-3 py-1.5 bg-blue-600 text-white
                                rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    â†’ Add items
+                    → Add items
                   </button>
                 )}
                 {expenses.length === 0 && (
@@ -951,7 +961,7 @@ export function ShipmentDetail() {
                     className="text-xs px-3 py-1.5 bg-blue-600 text-white
                                rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    â†’ Add expenses
+                    → Add expenses
                   </button>
                 )}
               </div>
@@ -979,7 +989,7 @@ export function ShipmentDetail() {
                       <th className="text-right px-3 py-2.5 font-medium text-gray-400 uppercase tracking-wide">
                         <div className="flex items-center justify-end gap-1">
                           Unit landed cost
-                          <InfoTip text="Product cost + overhead per unit. This is your true cost floor - you must sell above this to make profit. Suggested selling price = Unit landed cost Ã· (1 âˆ’ target margin). E.g. for 30% margin: landed Ã· 0.70." />
+                          <InfoTip text="Product cost + overhead per unit. This is your true cost floor - you must sell above this to make profit. Suggested selling price = Unit landed cost ÷ (1 − target margin). E.g. for 30% margin: landed ÷ 0.70." />
                         </div>
                       </th>
                       <th className="text-right px-3 py-2.5 font-medium text-gray-400 uppercase tracking-wide">Status</th>
@@ -1079,7 +1089,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• COMMERCIAL INVOICE TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* COMMERCIAL INVOICE TAB */}
       {activeTab === 'commercial' && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -1094,7 +1104,7 @@ export function ShipmentDetail() {
                 <div>
                   <p className="text-base font-medium text-gray-900">Commercial Invoice</p>
                   <p className="text-xs text-gray-400 mt-1">
-                    Invoice No: {shipment.shipment_number.replace('SHP', 'CI')} Â·
+                    Invoice No: {shipment.shipment_number.replace('SHP', 'CI')} ·
                     Date: {today}
                   </p>
                 </div>
@@ -1162,7 +1172,7 @@ export function ShipmentDetail() {
                         No items - add them in the PI Items tab first.
                       </td>
                     </tr>
-                  ) : items.map((item, i) => {
+                  ) : items.map(item => {
                     const prod = item.products
                     return (
                       <tr key={item.id} className="hover:bg-gray-50/50">
@@ -1215,7 +1225,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• PACKING LIST TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* PACKING LIST TAB */}
       {activeTab === 'packing' && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -1229,7 +1239,7 @@ export function ShipmentDetail() {
                 <div>
                   <p className="text-base font-medium">Packing List</p>
                   <p className="text-xs text-gray-400 mt-1">
-                    PL No: {shipment.shipment_number.replace('SHP', 'PL')} Â·
+                    PL No: {shipment.shipment_number.replace('SHP', 'PL')} ·
                     Container: {shipment.container_number ?? '-'}
                   </p>
                 </div>
@@ -1267,7 +1277,7 @@ export function ShipmentDetail() {
                     </th>
                     <th className="text-right px-3 py-2.5 font-medium text-gray-500">
                       <div className="flex items-center justify-end gap-1">
-                        Vol (mÂ³)
+                        Vol (m³)
                         <InfoTip text="Total volume in cubic metres. Used for By Volume cost allocation and container capacity planning." />
                       </div>
                     </th>
@@ -1284,6 +1294,7 @@ export function ShipmentDetail() {
                     </tr>
                   ) : items.map((item, i) => {
                     const prod     = item.products
+                    const packing  = itemPacking(item)
                     const totalVol = item.volume_m3_total
                     return (
                       <tr key={item.id} className="hover:bg-gray-50/50">
@@ -1293,17 +1304,19 @@ export function ShipmentDetail() {
                           <p className="font-mono text-gray-400 mt-0.5">{prod?.sku ?? '-'}</p>
                         </td>
                         <td className="px-3 py-3 text-right font-mono">
-                          {item.quantity > 0 ? Math.ceil(item.quantity / 2) : '-'}
+                          {packing.ctns > 0 ? N(packing.ctns) : '-'}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-gray-500">2</td>
+                        <td className="px-3 py-3 text-right font-mono text-gray-500">
+                          {packing.pcsPerCtn}
+                        </td>
                         <td className="px-3 py-3 text-right font-mono font-medium">
-                          {N(item.quantity)}
+                          {N(packing.totalPcs)}
                         </td>
                         <td className="px-3 py-3 text-right font-mono">
                           {item.weight_kg_total ? `${N(item.weight_kg_total)} kg` : '-'}
                         </td>
                         <td className="px-3 py-3 text-right font-mono">
-                          {totalVol ? `${totalVol.toFixed(3)} mÂ³` : '-'}
+                          {totalVol ? `${totalVol.toFixed(3)} m³` : '-'}
                         </td>
                         <td className="px-3 py-3 text-right font-mono text-gray-600">
                           ${item.unit_price_usd}
@@ -1319,17 +1332,17 @@ export function ShipmentDetail() {
                   <tr className="bg-gray-50 border-t border-gray-200 font-medium text-sm">
                     <td colSpan={2} className="px-4 py-3 text-xs text-gray-500">Total</td>
                     <td className="px-3 py-3 text-right font-mono text-xs">
-                      {N(items.reduce((s, i) => s + Math.ceil(i.quantity / 2), 0))}
+                      {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))}
                     </td>
                     <td></td>
                     <td className="px-3 py-3 text-right font-mono text-xs">
-                      {N(items.reduce((s, i) => s + i.quantity, 0))}
+                      {N(items.reduce((s, i) => s + itemPacking(i).totalPcs, 0))}
                     </td>
                     <td className="px-3 py-3 text-right font-mono text-xs">
                       {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg
                     </td>
                     <td className="px-3 py-3 text-right font-mono text-xs">
-                      {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} mÂ³
+                      {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
                     </td>
                     <td></td>
                     <td className="px-3 py-3 text-right font-mono text-blue-700">
@@ -1341,9 +1354,9 @@ export function ShipmentDetail() {
             </div>
 
             <div className="px-6 py-3 border-t border-gray-100 text-xs text-gray-400">
-              Total cartons: {N(items.reduce((s, i) => s + Math.ceil(i.quantity / 2), 0))} Â·
-              Total gross weight: {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg Â·
-              Total volume: {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} mÂ³
+              Total cartons: {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))} ·
+              Total gross weight: {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg ·
+              Total volume: {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
             </div>
           </div>
 
@@ -1358,7 +1371,7 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* â•â• TRUCK WAYBILL TAB â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* TRUCK WAYBILL TAB */}
       {activeTab === 'waybill' && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -1372,12 +1385,12 @@ export function ShipmentDetail() {
                 <div>
                   <p className="text-base font-medium">Road Transport Waybill</p>
                   <p className="text-xs text-gray-400 mt-1">
-                    WB No: {shipment.shipment_number.replace('SHP', 'WB')} Â·
+                    WB No: {shipment.shipment_number.replace('SHP', 'WB')} ·
                     Date: {today}
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-gray-400">Route: Djibouti â†’ Addis Ababa</p>
+                  <p className="text-xs text-gray-400">Route: Djibouti → Addis Ababa</p>
                   <p className="text-xs text-gray-400 mt-0.5">Distance: ~900 km</p>
                 </div>
               </div>
@@ -1453,17 +1466,18 @@ export function ShipmentDetail() {
                       </tr>
                     ) : items.map(item => {
                       const prod = item.products
+                      const packing = itemPacking(item)
                       return (
                         <tr key={item.id} className="border-b border-gray-50 last:border-0">
                           <td className="px-3 py-2.5 font-medium">{prod?.name ?? '-'}</td>
                           <td className="px-3 py-2.5 text-right font-mono">
-                            {Math.ceil(item.quantity / 2)} ctns
+                            {packing.ctns} ctns
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono">
                             {item.weight_kg_total ? `${N(item.weight_kg_total)} kg` : '-'}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono">
-                            {item.volume_m3_total ? `${item.volume_m3_total.toFixed(3)} mÂ³` : '-'}
+                            {item.volume_m3_total ? `${item.volume_m3_total.toFixed(3)} m³` : '-'}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono">
                             ${N(item.quantity * item.unit_price_usd)}
@@ -1476,13 +1490,13 @@ export function ShipmentDetail() {
                     <tr className="bg-gray-50 border-t border-gray-200 font-medium">
                       <td className="px-3 py-2.5 text-xs text-gray-500">Total</td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs">
-                        {N(items.reduce((s, i) => s + Math.ceil(i.quantity / 2), 0))} ctns
+                        {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))} ctns
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs">
                         {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs">
-                        {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} mÂ³
+                        {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono text-blue-700">
                         ${N(totalFobUsd)}
@@ -1552,7 +1566,11 @@ export function ShipmentDetail() {
   />
 )}
 
-      {/* â•â• MODALS â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {activeTab === 'documents' && id && (
+        <ShipmentAttachments shipmentId={id} />
+      )}
+
+      {/* MODALS */}
 
       {/* Add PI Item modal */}
       {itemOpen && (
@@ -1600,7 +1618,7 @@ export function ShipmentDetail() {
                     No products found.{' '}
                     <Link to="/products" className="underline font-medium"
                           onClick={() => setItemOpen(false)}>
-                      Add products first â†’
+                      Add products first →
                     </Link>
                   </div>
                 ) : (
@@ -1765,7 +1783,7 @@ export function ShipmentDetail() {
                            transition-colors min-w-[120px] justify-center"
               >
                 {saving
-                  ? <><Loader2 size={12} className="animate-spin" /> Savingâ€¦</>
+                  ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
                   : <><Check size={12} /> Add to shipment</>
                 }
               </button>
@@ -1788,7 +1806,12 @@ export function ShipmentDetail() {
           freightUsd={expenses
             .filter(e => e.category === 'OCEAN_FREIGHT' && e.currency === 'USD')
             .reduce((s, e) => s + e.amount, 0)}
-          insuranceUsd={0}
+          insuranceUsd={expenses
+            .filter(e =>
+              e.category === 'OCEAN_FREIGHT' &&
+              /insurance/i.test(e.description)
+            )
+            .reduce((s, e) => s + (e.currency === 'USD' ? e.amount : e.amount / fxRate), 0)}
           editExpense={editExpId ? expenses.find(e => e.id === editExpId) : undefined}
           onSave={() => {
             setExpOpen(false)

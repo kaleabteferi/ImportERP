@@ -71,7 +71,10 @@ export function Inventory() {
       .sort((a, b) => b.total_value - a.total_value)
 
     setInventory(inv)
-    setMovements(moveRes.data ?? [])
+    setMovements((moveRes.data ?? []).map(row => ({
+      ...row,
+      products: Array.isArray(row.products) ? row.products[0] ?? null : row.products,
+    })))
     setLoading(false)
   }
 
