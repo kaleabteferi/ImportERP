@@ -156,6 +156,52 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Operations snapshot */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr .8fr', gap: '12px', marginBottom: '14px' }}>
+        <div style={card}>
+          <div style={cardHead}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500 }}>
+              <TrendingUp size={14} color="#2B7A4B" /> Today at a glance
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px', padding: '12px 14px' }}>
+            {[
+              { label: 'Active shipments', value: d.activeShipments.length, hint: 'in motion' },
+              { label: 'Production today', value: d.productionToday, hint: 'units logged' },
+              { label: 'Low stock', value: d.lowStockCount, hint: 'products' },
+            ].map(item => (
+              <div key={item.label} style={{ padding: '10px', borderRadius: '10px', background: 'var(--color-background-secondary)' }}>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: '#0C447C' }}>{item.value}</div>
+                <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.label}</div>
+                <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.hint}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={card}>
+          <div style={cardHead}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500 }}>
+              <Receipt size={14} color="#185FA5" /> Quick actions
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px' }}>
+            <Link to="/shipments" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: '12px', fontWeight: 500 }}>Receive shipment</span>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
+            </Link>
+            <Link to="/production" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: '12px', fontWeight: 500 }}>Log production</span>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
+            </Link>
+            <Link to="/inventory" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: '12px', fontWeight: 500 }}>Review stock</span>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+
       {/* KPI strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
                     gap: '10px', marginBottom: '14px' }}>
@@ -230,6 +276,33 @@ export function Dashboard() {
                   </div>
                 )
               })}
+            </div>
+          </div>
+
+          {/* Recent activity */}
+          <div style={card}>
+            <div style={cardHead}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
+                            fontSize: '12px', fontWeight: 500 }}>
+                <RefreshCw size={14} color="#534AB7" /> Recent activity
+              </div>
+              <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>Live feed</span>
+            </div>
+            <div style={{ padding: '8px 14px' }}>
+              {d.activity.length === 0 ? (
+                <div style={{ padding: '12px 0', textAlign: 'center', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+                  No recent operations yet.
+                </div>
+              ) : d.activity.map(item => (
+                <div key={item.id} style={{ display: 'flex', gap: '8px', padding: '8px 0', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '999px', background: item.tone === 'positive' ? '#2B7A4B' : item.tone === 'warning' ? '#A32D2D' : '#185FA5', marginTop: '5px', flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '12px', fontWeight: 500 }}>{item.title}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.subtitle}</div>
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{item.timestamp}</div>
+                </div>
+              ))}
             </div>
           </div>
 

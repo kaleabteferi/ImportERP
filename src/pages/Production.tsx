@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { postInventoryMovement, DEFAULT_WAREHOUSE_ID } from '../lib/inventoryReceive'
 import { Plus, Wrench, X, Check, Loader2, BarChart3, Package } from 'lucide-react'
 
 interface ProductionOrder {
   id: string
   order_number: string
+  product_id: string | null
   target_quantity: number
   completed_quantity: number
   status: string
@@ -47,30 +49,6 @@ const STATUS_LABEL: Record<string, string> = {
   COMPLETED: 'Completed', CANCELLED: 'Cancelled',
 }
 
-function normBom(bom: any) {
-  if (!bom) return null
-  const row = Array.isArray(bom) ? bom[0] : bom
-  if (!row) return null
-  const products = row.products
-  return {
-    products: Array.isArray(products) ? products[0] ?? null : products,
-  }
-}
-
-function normOrder(o: any): ProductionOrder {
-  return { ...o, bom_headers: normBom(o.bom_headers) }
-}
-
-function normLog(l: any): DailyLog {
-  const po = Array.isArray(l.production_orders) ? l.production_orders[0] : l.production_orders
-  return {
-    ...l,
-    production_orders: po
-      ? { ...po, bom_headers: normBom(po.bom_headers) }
-      : undefined,
-  }
-}
-
 export function Production() {
   const [orders, setOrders]     = useState<ProductionOrder[]>([])
   const [logs, setLogs]         = useState<DailyLog[]>([])
@@ -84,63 +62,179 @@ export function Production() {
   const [entries, setEntries]   = useState<Record<string, string>>({})
   const [logDate, setLogDate]   = useState(new Date().toISOString().split('T')[0])
   const [logNotes, setLogNotes] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [creatingOrder, setCreatingOrder] = useState(false)
+  const [bomOptions, setBomOptions] = useState<Array<{ id: string; product_id: string | null; name: string; product_name: string; sku: string }>>([])
+  const [selectedBomId, setSelectedBomId] = useState('')
+  const [targetQty, setTargetQty] = useState('10')
 
   async function load() {
     setLoading(true)
     const today = new Date().toISOString().split('T')[0]
     const since = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
 
-    const [ordersRes, logsRes, moveRes, salesRes] = await Promise.all([
-      supabase.from('production_orders')
-        .select('id, order_number, target_quantity, completed_quantity, status, planned_start_date, labor_cost_etb, bom_header_id, bom_headers(products(id, name, sku))')
-        .in('status', ['DRAFT', 'IN_PROGRESS'])
-        .order('created_at', { ascending: false }),
-      supabase.from('production_daily_logs')
-        .select('id, log_date, quantity_produced, production_order_id, notes, production_orders(order_number, bom_headers(products(name)))')
-        .gte('log_date', since)
-        .order('log_date', { ascending: false }),
-      supabase.from('inventory_ledger')
-        .select('id, movement_type, quantity, movement_date, notes, products(name, sku)')
-        .gte('movement_date', since)
-        .in('movement_type', ['PRODUCTION_CONSUMED', 'PRODUCTION_OUTPUT', 'SALE'])
-        .order('movement_date', { ascending: false }),
-      supabase.from('sales_orders')
-        .select('total_etb')
-        .eq('sale_date', today)
-        .in('status', ['INVOICED', 'PAID']),
-    ])
+    try {
+      const [ordersRes, logsRes, moveRes, salesRes, productsRes, bomRes] = await Promise.all([
+        supabase.from('production_orders')
+          .select('id, order_number, product_id, target_quantity, completed_quantity, status, planned_start_date, labor_cost_etb, bom_header_id, created_at, updated_at')
+          .in('status', ['DRAFT', 'IN_PROGRESS'])
+          .order('created_at', { ascending: false }),
+        supabase.from('production_daily_logs')
+          .select('id, log_date, quantity_produced, production_order_id, notes, created_at')
+          .gte('log_date', since)
+          .order('log_date', { ascending: false }),
+        supabase.from('inventory_ledger')
+          .select('id, movement_type, quantity, movement_date, notes, product_id')
+          .gte('movement_date', since)
+          .in('movement_type', ['SHIPMENT_RECEIVED', 'PRODUCTION_CONSUMED', 'PRODUCTION_OUTPUT', 'SALE'])
+          .order('movement_date', { ascending: false }),
+        supabase.from('sales_orders')
+          .select('total_etb')
+          .eq('sale_date', today)
+          .in('status', ['INVOICED', 'PAID']),
+        supabase.from('products').select('id, name, sku').order('name'),
+        supabase.from('bom_headers').select('id, product_id, name').order('name'),
+      ])
 
-    setOrders((ordersRes.data ?? []).map(normOrder))
-    setLogs((logsRes.data ?? []).map(normLog))
-    setMovements((moveRes.data ?? []).map(m => ({
-      ...m,
-      products: Array.isArray(m.products) ? m.products[0] ?? null : m.products,
-    })))
-    setSalesToday((salesRes.data ?? []).reduce((s, r) => s + (r.total_etb ?? 0), 0))
+      if (ordersRes.error) throw ordersRes.error
+      if (logsRes.error) throw logsRes.error
+      if (moveRes.error) throw moveRes.error
+      if (salesRes.error) throw salesRes.error
+      if (productsRes.error) throw productsRes.error
+      if (bomRes.error) throw bomRes.error
 
-    const todayLogs = (logsRes.data ?? []).filter(l => l.log_date === today)
-    const e: Record<string, string> = {}
-    for (const l of todayLogs) {
-      e[l.production_order_id] = String(l.quantity_produced)
+      const productsById = new Map((productsRes.data ?? []).map((p: any) => [p.id, p]))
+      const bomRows = (bomRes.data ?? []).map((bom: any) => {
+        const product = bom.product_id ? productsById.get(bom.product_id) : null
+        return {
+          id: bom.id,
+          product_id: bom.product_id,
+          name: bom.name ?? 'Unnamed BOM',
+          product_name: product?.name ?? 'Unassigned product',
+          sku: product?.sku ?? '—',
+        }
+      })
+      setBomOptions(bomRows)
+      const orderRows = (ordersRes.data ?? []).map((order: any) => {
+        const product = order.product_id ? productsById.get(order.product_id) : null
+        return {
+          ...order,
+          bom_headers: {
+            products: product
+              ? { id: product.id, name: product.name ?? '—', sku: product.sku ?? '—' }
+              : null,
+          },
+        }
+      })
+
+      const logsRows = (logsRes.data ?? []).map((log: any) => {
+        const order = orderRows.find((o: any) => o.id === log.production_order_id)
+        return {
+          ...log,
+          production_orders: order
+            ? {
+                order_number: order.order_number,
+                bom_headers: order.bom_headers,
+              }
+            : undefined,
+        }
+      })
+
+      const movementRows = (moveRes.data ?? []).map((m: any) => ({
+        ...m,
+        products: m.product_id ? {
+          name: productsById.get(m.product_id)?.name ?? '—',
+          sku: productsById.get(m.product_id)?.sku ?? '—',
+        } : null,
+      }))
+
+      setOrders(orderRows)
+      setLogs(logsRows)
+      setMovements(movementRows)
+      setSalesToday((salesRes.data ?? []).reduce((s, r) => s + (r.total_etb ?? 0), 0))
+
+      const todayLogs = logsRows.filter((l: any) => l.log_date === today)
+      const e: Record<string, string> = {}
+      for (const l of todayLogs) {
+        e[l.production_order_id] = String(l.quantity_produced)
+      }
+      setEntries(e)
+    } catch (e: any) {
+      console.error(e)
+      setOrders([])
+      setLogs([])
+      setMovements([])
+      setSalesToday(0)
+      setEntries({})
+      setError(e?.message ?? 'Unable to load production data.')
+    } finally {
+      setLoading(false)
     }
-    setEntries(e)
-    setLoading(false)
   }
 
   useEffect(() => { load() }, [])
 
+  async function createOrder() {
+    setCreatingOrder(true)
+    setError(null)
+
+    try {
+      if (!selectedBomId) {
+        setError('Select a BOM before creating a production order.')
+        return
+      }
+
+      const bom = bomOptions.find(option => option.id === selectedBomId)
+      if (!bom) {
+        setError('Selected BOM was not found.')
+        return
+      }
+
+      const qty = Number(targetQty)
+      if (!Number.isFinite(qty) || qty <= 0) {
+        setError('Enter a valid production quantity.')
+        return
+      }
+
+      const orderNumber = `PROD-${Date.now().toString().slice(-6)}`
+      const { error: insertError } = await supabase.from('production_orders').insert({
+        order_number: orderNumber,
+        product_id: bom.product_id,
+        bom_header_id: bom.id,
+        target_quantity: qty,
+        completed_quantity: 0,
+        status: 'DRAFT',
+        planned_start_date: new Date().toISOString().split('T')[0],
+        labor_cost_etb: 0,
+      })
+
+      if (insertError) throw insertError
+
+      setCreateOpen(false)
+      setSelectedBomId('')
+      setTargetQty('10')
+      await load()
+    } catch (e: any) {
+      setError(e?.message ?? 'Unable to create production order.')
+    } finally {
+      setCreatingOrder(false)
+    }
+  }
+
   async function saveLog() {
     setSaving(true)
     setError(null)
-    const active = orders.filter(o => o.status === 'IN_PROGRESS')
-    if (!active.length) { setError('No orders in progress.'); setSaving(false); return }
+    const active = orders.filter(o =>
+      ['DRAFT', 'IN_PROGRESS'].includes(o.status) && o.target_quantity > o.completed_quantity,
+    )
+    if (!active.length) { setError('No open production orders to log.'); setSaving(false); return }
 
     try {
       for (const order of active) {
         const qty = parseInt(entries[order.id] ?? '0')
         if (qty <= 0) continue
 
-        const productId = order.bom_headers?.products?.id
+        const productId = order.product_id ?? order.bom_headers?.products?.id
         if (!productId) continue
 
         const { data: existing } = await supabase
@@ -177,14 +271,15 @@ export function Production() {
           }).eq('id', order.id)
 
           // Finished goods into inventory
-          await supabase.from('inventory_ledger').insert({
-            product_id:    productId,
-            quantity:      delta,
+          await postInventoryMovement({
+            product_id: productId,
+            quantity: delta,
             movement_type: 'PRODUCTION_OUTPUT',
             movement_date: logDate,
-            notes:         `Assembly line output · ${order.order_number}`,
+            warehouse_id: DEFAULT_WAREHOUSE_ID,
+            notes: `Assembly line output · ${order.order_number}`,
             reference_type: 'production_order',
-            reference_id:   order.id,
+            reference_id: order.id,
           })
 
           // Component withdrawal (BOM consumption estimate)
@@ -195,14 +290,15 @@ export function Production() {
               .eq('bom_header_id', order.bom_header_id)
 
             for (const line of bomLines ?? []) {
-              await supabase.from('inventory_ledger').insert({
-                product_id:    line.component_product_id,
-                quantity:      -(line.quantity_per_unit * delta),
+              await postInventoryMovement({
+                product_id: line.component_product_id,
+                quantity: -(line.quantity_per_unit * delta),
                 movement_type: 'PRODUCTION_CONSUMED',
                 movement_date: logDate,
-                notes:         `Withdrawn for ${order.order_number}`,
+                warehouse_id: DEFAULT_WAREHOUSE_ID,
+                notes: `Withdrawn for ${order.order_number}`,
                 reference_type: 'production_order',
-                reference_id:   order.id,
+                reference_id: order.id,
               })
             }
           }
@@ -219,8 +315,10 @@ export function Production() {
     }
   }
 
-  const inProgress = orders.filter(o => o.status === 'IN_PROGRESS')
-  const todayStr   = new Date().toISOString().split('T')[0]
+  const activeOrders = orders.filter(o =>
+    ['DRAFT', 'IN_PROGRESS'].includes(o.status) && o.target_quantity > o.completed_quantity,
+  )
+  const todayStr     = new Date().toISOString().split('T')[0]
   const totalToday = logs
     .filter(l => l.log_date === todayStr)
     .reduce((s, l) => s + l.quantity_produced, 0)
@@ -236,7 +334,7 @@ export function Production() {
         <div>
           <h1 className="text-lg font-medium">Production</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            {inProgress.length} orders in progress
+            {activeOrders.length} open orders
             {totalToday > 0 && ` · ${N(totalToday)} units logged today`}
           </p>
         </div>
@@ -264,6 +362,40 @@ export function Production() {
           </button>
         </div>
       </div>
+
+      {createOpen && (
+        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-blue-900">Create production order from BOM</h3>
+              <p className="text-sm text-blue-700">SKD and CKD receipts feed component stock for the assembly line before you log output.</p>
+            </div>
+            <button onClick={() => setCreateOpen(false)} className="rounded-lg p-2 text-blue-700 hover:bg-blue-100">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-[2fr_1fr_auto]">
+            <label className="text-sm text-blue-900">
+              BOM
+              <select value={selectedBomId} onChange={e => setSelectedBomId(e.target.value)} className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm">
+                <option value="">Select a BOM</option>
+                {bomOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.name} · {option.product_name} ({option.sku})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-blue-900">
+              Target quantity
+              <input value={targetQty} onChange={e => setTargetQty(e.target.value)} type="number" min="1" className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm" />
+            </label>
+            <button onClick={createOrder} disabled={creatingOrder} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-70">
+              {creatingOrder ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Create
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -433,13 +565,13 @@ export function Production() {
                   onChange={e => setLogDate(e.target.value)}
                 />
               </div>
-              {inProgress.length === 0 ? (
+              {activeOrders.length === 0 ? (
                 <div className="py-8 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-                  No orders currently in progress.
+                  No open production orders to log.
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {inProgress.map(order => {
+                  {activeOrders.map(order => {
                     const prod      = order.bom_headers?.products
                     const remaining = order.target_quantity - order.completed_quantity
                     return (
@@ -480,7 +612,7 @@ export function Production() {
                       className="px-4 py-2 text-xs border border-gray-200 rounded-lg">
                 Cancel
               </button>
-              <button onClick={saveLog} disabled={saving || inProgress.length === 0}
+              <button onClick={saveLog} disabled={saving || activeOrders.length === 0}
                       className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
                                  text-xs rounded-lg disabled:opacity-50">
                 {saving

@@ -4,7 +4,7 @@ import {
   Check, Clock, AlertTriangle, Truck,
   Anchor, Building2, RotateCcw, Save, Loader2, RefreshCw,
 } from 'lucide-react'
-import { syncDemurrageExpenses } from '../../lib/expenseSync'
+import { hasPaidAutoExpense, markAutoExpensesPaid, syncDemurrageExpenses } from '../../lib/expenseSync'
 
 interface TimelineEvent {
   event_type: string
@@ -164,6 +164,15 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
     setSyncing(true)
     setSyncMsg(null)
     try {
+      const paid = await Promise.all([
+        hasPaidAutoExpense(shipmentId, 'demurrage'),
+        hasPaidAutoExpense(shipmentId, 'detention'),
+        hasPaidAutoExpense(shipmentId, 'storage'),
+      ])
+      if (paid.some(Boolean)) {
+        setSyncMsg('Demurrage costs are marked paid; no further accrual will be synced')
+        return
+      }
       await syncDemurrageExpenses(shipmentId, {
         demurrageUsd: demurrageCostUsd,
         detentionUsd: detentionCostUsd,
@@ -177,17 +186,42 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
     }
   }, [shipmentId, demurrageCostUsd, detentionCostUsd, storageCostEtb, fxRate, arrivedDate])
 
+  async function markPaid() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      await markAutoExpensesPaid(shipmentId)
+      setSyncMsg('Demurrage, detention and storage marked as paid')
+      await load()
+    } catch (e: any) {
+      setSyncMsg(`Unable to mark paid: ${e.message}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   useEffect(() => {
     if (!arrivedDate) return
     const key = `${demurrageCostUsd}|${detentionCostUsd}|${storageCostEtb}`
     if (key === lastSyncKey.current) return
     lastSyncKey.current = key
-    syncDemurrageExpenses(shipmentId, {
-      demurrageUsd: demurrageCostUsd,
-      detentionUsd: detentionCostUsd,
-      storageEtb: storageCostEtb,
-    }, fxRate)
-      .then(() => setSyncMsg('Demurrage costs auto-synced to expenses'))
+    Promise.all([
+      hasPaidAutoExpense(shipmentId, 'demurrage'),
+      hasPaidAutoExpense(shipmentId, 'detention'),
+      hasPaidAutoExpense(shipmentId, 'storage'),
+    ])
+      .then(async paid => {
+        if (paid.some(Boolean)) {
+          setSyncMsg('Demurrage costs are marked paid; no further accrual will be synced')
+          return
+        }
+        await syncDemurrageExpenses(shipmentId, {
+          demurrageUsd: demurrageCostUsd,
+          detentionUsd: detentionCostUsd,
+          storageEtb: storageCostEtb,
+        }, fxRate)
+        setSyncMsg('Demurrage costs auto-synced to expenses')
+      })
       .catch((e: Error) => setSyncMsg(`Sync failed: ${e.message}`))
   }, [demurrageCostUsd, detentionCostUsd, storageCostEtb, arrivedDate, shipmentId, fxRate])
 
@@ -282,15 +316,24 @@ export function TimelinePanel({ shipmentId, fxRate, containerVolumeM3 }: {
             <p className="text-xs text-gray-400">
               Auto-synced to shipment expenses (updates existing rows, no duplicates)
             </p>
-            <button
-              onClick={syncCosts}
-              disabled={syncing}
-              className="flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200
-                         rounded-lg hover:bg-white disabled:opacity-50 transition-colors"
-            >
-              <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
-              {syncing ? 'Syncing…' : 'Sync now'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={markPaid}
+                disabled={syncing}
+                className="flex items-center gap-1 text-xs px-2.5 py-1 border border-green-200 text-green-700 rounded-lg hover:bg-green-50 disabled:opacity-50 transition-colors"
+              >
+                <Check size={11} /> Mark paid
+              </button>
+              <button
+                onClick={syncCosts}
+                disabled={syncing}
+                className="flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200
+                           rounded-lg hover:bg-white disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw size={11} className={syncing ? 'animate-spin' : ''} />
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+            </div>
           </div>
           {syncMsg && (
             <p className="col-span-3 text-xs text-blue-600">{syncMsg}</p>

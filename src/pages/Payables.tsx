@@ -24,24 +24,66 @@ export function Payables() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const { data } = await supabase
-        .from('purchase_orders')
-        .select('id, po_number, total_amount, paid_amount, currency, payment_terms, due_date, status, suppliers(name)')
-        .in('status', ['OPEN', 'PARTIAL', 'OVERDUE'])
-        .order('due_date', { ascending: true })
+      try {
+        const [purchaseRes, expenseRes] = await Promise.all([
+          (async () => {
+            try {
+              return await supabase
+                .from('purchase_orders')
+                .select('id, po_number, total_amount, paid_amount, currency, payment_terms, due_date, status, suppliers(name)')
+                .in('status', ['OPEN', 'PARTIAL', 'OVERDUE'])
+                .order('due_date', { ascending: true })
+            } catch {
+              return { data: [], error: null }
+            }
+          })(),
+          (async () => {
+            try {
+              return await supabase
+                .from('shipment_expenses')
+                .select('id, description, amount, amount_etb, currency, vendor_name, expense_date, notes')
+                .order('expense_date', { ascending: true })
+            } catch {
+              return { data: [], error: null }
+            }
+          })(),
+        ])
 
-      setRows((data ?? []).map((r: any) => ({
-        id: r.id,
-        supplier_name: (Array.isArray(r.suppliers) ? r.suppliers[0]?.name : r.suppliers?.name) ?? '—',
-        po_number: r.po_number,
-        total_amount: r.total_amount ?? 0,
-        paid_amount: r.paid_amount ?? 0,
-        currency: r.currency ?? 'USD',
-        payment_terms: r.payment_terms,
-        due_date: r.due_date,
-        status: r.status,
-      })))
-      setLoading(false)
+        const purchaseRows = (purchaseRes.data ?? []).map((r: any) => ({
+          id: r.id,
+          supplier_name: (Array.isArray(r.suppliers) ? r.suppliers[0]?.name : r.suppliers?.name) ?? '—',
+          po_number: r.po_number,
+          total_amount: Number(r.total_amount ?? 0),
+          paid_amount: Number(r.paid_amount ?? 0),
+          currency: r.currency ?? 'USD',
+          payment_terms: r.payment_terms,
+          due_date: r.due_date,
+          status: r.status,
+        }))
+
+        const expenseRows = (expenseRes.data ?? []).map((r: any) => ({
+          id: `expense-${r.id}`,
+          supplier_name: r.vendor_name ?? 'Shipment expense',
+          po_number: r.description,
+          total_amount: Number(r.amount_etb ?? r.amount ?? 0),
+          paid_amount: 0,
+          currency: r.currency ?? 'ETB',
+          payment_terms: 'Shipment cost',
+          due_date: r.expense_date,
+          status: 'OPEN',
+        }))
+
+        setRows([...purchaseRows, ...expenseRows].sort((a, b) => {
+          const aDate = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER
+          const bDate = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER
+          return aDate - bDate
+        }))
+      } catch (error) {
+        console.error(error)
+        setRows([])
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [])

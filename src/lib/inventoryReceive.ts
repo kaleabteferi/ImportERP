@@ -1,6 +1,8 @@
 import { supabase } from './supabase'
 import { receiveShipment } from '../api/shipments'
 
+export const DEFAULT_WAREHOUSE_ID = '00000000-0000-0000-0000-000000000001'
+
 export type AssemblyType = 'FULL' | 'SKD' | 'CKD' | 'IMPORTED'
 
 export interface ReceiveItem {
@@ -24,13 +26,45 @@ export function resolveAssemblyType(product: {
   return 'IMPORTED'
 }
 
+export interface InventoryMovementInput {
+  product_id: string
+  quantity: number
+  unit_cost_etb?: number | null
+  movement_type: string
+  movement_date?: string
+  warehouse_id?: string
+  notes?: string | null
+  reference_type?: string | null
+  reference_id?: string | null
+}
+
+export async function postInventoryMovement(input: InventoryMovementInput) {
+  const movementDate = input.movement_date ?? new Date().toISOString().split('T')[0]
+  const { data, error } = await supabase.from('inventory_ledger').insert({
+    product_id: input.product_id,
+    quantity: input.quantity,
+    unit_cost_etb: input.unit_cost_etb ?? null,
+    movement_type: input.movement_type,
+    movement_date: movementDate,
+    warehouse_id: input.warehouse_id ?? DEFAULT_WAREHOUSE_ID,
+    notes: input.notes ?? null,
+    reference_type: input.reference_type ?? null,
+    reference_id: input.reference_id ?? null,
+  }).select('*').maybeSingle()
+
+  if (error) throw error
+  return data
+}
+
 /** Receive shipment into inventory. Tries RPC first, falls back to direct ledger writes. */
 export async function receiveShipmentToInventory(
   shipmentId: string,
   items: ReceiveItem[],
   fxRate: number,
-  warehouseId = 'main',
+  warehouseId = DEFAULT_WAREHOUSE_ID,
 ): Promise<void> {
+  if (!shipmentId || items.length === 0) return
+
   const payload = items.map(i => ({
     shipment_item_id: i.shipment_item_id,
     quantity_received: i.quantity,
@@ -44,31 +78,33 @@ export async function receiveShipmentToInventory(
   }
 
   for (const item of items) {
+    if (!item.product_id || item.quantity <= 0) continue
+
     const unitCost = item.unit_landed_cost_etb ?? 0
     const notes = `Received from shipment · ${item.assembly_type}`
 
     if (item.assembly_type === 'CKD' || item.assembly_type === 'SKD') {
-      // Parts go to component inventory for assembly line
-      await supabase.from('inventory_ledger').insert({
-        product_id:     item.product_id,
-        quantity:       item.quantity,
-        unit_cost_etb:  unitCost,
-        movement_type:  'SHIPMENT_RECEIVED',
-        movement_date:  new Date().toISOString().split('T')[0],
+      await postInventoryMovement({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_cost_etb: unitCost,
+        movement_type: 'SHIPMENT_RECEIVED',
+        movement_date: new Date().toISOString().split('T')[0],
+        warehouse_id: warehouseId,
         reference_type: 'shipment',
-        reference_id:   shipmentId,
-        notes:          `${notes} — routed to assembly components`,
+        reference_id: shipmentId,
+        notes: `${notes} — routed to assembly components`,
       })
     } else {
-      // FULL or IMPORTED — finished goods warehouse
-      await supabase.from('inventory_ledger').insert({
-        product_id:     item.product_id,
-        quantity:       item.quantity,
-        unit_cost_etb:  unitCost,
-        movement_type:  'SHIPMENT_RECEIVED',
-        movement_date:  new Date().toISOString().split('T')[0],
+      await postInventoryMovement({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_cost_etb: unitCost,
+        movement_type: 'SHIPMENT_RECEIVED',
+        movement_date: new Date().toISOString().split('T')[0],
+        warehouse_id: warehouseId,
         reference_type: 'shipment',
-        reference_id:   shipmentId,
+        reference_id: shipmentId,
         notes,
       })
     }

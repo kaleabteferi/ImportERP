@@ -40,6 +40,16 @@ interface Consignee {
   is_default: boolean
 }
 
+interface Warehouse {
+  id: string
+  name: string
+  code: string | null
+  address: string | null
+  city: string | null
+  is_active: boolean
+  created_at: string
+}
+
 const RATE_TYPES = [
   {
     key: 'CUSTOMS',
@@ -61,10 +71,11 @@ const RATE_TYPES = [
 const TABS = [
   { key: 'company',    label: 'Company',       icon: Building2  },
   { key: 'forex',      label: 'Exchange rates', icon: DollarSign },
+  { key: 'warehouses', label: 'Warehouses',     icon: Building2  },
   { key: 'consignees', label: 'Consignees',     icon: Users      },
 ]
 
-type TabKey = 'company' | 'forex' | 'consignees'
+type TabKey = 'company' | 'forex' | 'warehouses' | 'consignees'
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -95,6 +106,7 @@ export function Settings() {
   const [tab, setTab]         = useState<TabKey>('company')
   const [company, setCompany] = useState<CompanySettings | null>(null)
   const [rates, setRates]     = useState<ForexRate[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [consignees, setConsignees] = useState<Consignee[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -110,6 +122,13 @@ export function Settings() {
   const [cEditId, setCEditId] = useState<string | null>(null)
   const [cSaving, setCsaving] = useState(false)
 
+  const [wOpen, setWOpen] = useState(false)
+  const [wForm, setWForm] = useState({
+    name: '', code: '', address: '', city: 'Addis Ababa', is_active: true,
+  })
+  const [wEditId, setWEditId] = useState<string | null>(null)
+  const [wSaving, setWSaving] = useState(false)
+
   // New rate form
   const [rForm, setRForm]     = useState({
     rate_type: 'CUSTOMS', rate: '', effective_date: new Date().toISOString().split('T')[0],
@@ -118,7 +137,7 @@ export function Settings() {
 
   async function load() {
     setLoading(true)
-    const [coRes, fxRes, cnRes] = await Promise.all([
+    const [coRes, fxRes, whRes, cnRes] = await Promise.all([
       supabase.from('company_settings').select('*').limit(1).single(),
       supabase.from('forex_rates')
         .select('*')
@@ -126,10 +145,12 @@ export function Settings() {
         .eq('to_currency', 'ETB')
         .order('effective_date', { ascending: false })
         .limit(20),
+      supabase.from('warehouses').select('*').order('name'),
       supabase.from('consignees').select('*').order('name'),
     ])
     if (coRes.data) setCompany(coRes.data)
     setRates(fxRes.data ?? [])
+    setWarehouses(whRes.data ?? [])
     setConsignees(cnRes.data ?? [])
     setLoading(false)
   }
@@ -201,6 +222,33 @@ export function Settings() {
     await supabase.from('consignees').update({ is_default: false }).neq('id', id)
     await supabase.from('consignees').update({ is_default: true }).eq('id', id)
     load()
+  }
+
+  async function saveWarehouse() {
+    setWSaving(true)
+    const payload = { ...wForm }
+    if (wEditId) {
+      await supabase.from('warehouses').update(payload).eq('id', wEditId)
+    } else {
+      await supabase.from('warehouses').insert(payload)
+    }
+    setWSaving(false)
+    setWOpen(false)
+    setWEditId(null)
+    setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true })
+    load()
+  }
+
+  function openEditWarehouse(w: Warehouse) {
+    setWForm({
+      name: w.name,
+      code: w.code ?? '',
+      address: w.address ?? '',
+      city: w.city ?? 'Addis Ababa',
+      is_active: w.is_active,
+    })
+    setWEditId(w.id)
+    setWOpen(true)
   }
 
   if (loading) return (
@@ -519,6 +567,162 @@ export function Settings() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Warehouses tab ────────────────────────────────── */}
+      {tab === 'warehouses' && (
+        <div className="space-y-4">
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-2 text-xs text-gray-500 max-w-md">
+              <Info size={13} className="mt-0.5 shrink-0 text-blue-400" />
+              <span>
+                Register warehouses where stock is stored and choose the receiving location
+                for each shipment. Warehouses are also used by inventory ledger entries.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true })
+                setWEditId(null)
+                setWOpen(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                         text-white text-xs rounded-lg hover:bg-blue-700
+                         transition-colors shrink-0 ml-3"
+            >
+              <Plus size={13} /> Add warehouse
+            </button>
+          </div>
+
+          {warehouses.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+              <Building2 size={32} className="mx-auto text-gray-200 mb-3" />
+              <p className="text-sm font-medium text-gray-500 mb-1">No warehouses yet</p>
+              <p className="text-xs text-gray-400 mb-4">
+                Create a warehouse to receive shipments and record inventory by location.
+              </p>
+              <button
+                onClick={() => setWOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                           text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus size={13} /> Add first warehouse
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {warehouses.map((w, i) => (
+                <div
+                  key={w.id}
+                  className={`px-5 py-4 ${i > 0 ? 'border-t border-gray-100' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-sm">{w.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {w.code ? `${w.code} • ` : ''}{w.city || 'No city'}
+                      </p>
+                      {w.address && (
+                        <p className="text-xs text-gray-400 mt-1">{w.address}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${w.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {w.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                      <button
+                        onClick={() => openEditWarehouse(w)}
+                        className="mt-3 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        <X size={12} /> Edit
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {wOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+              <div className="w-full max-w-xl bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div>
+                    <p className="text-sm font-semibold">{wEditId ? 'Edit warehouse' : 'New warehouse'}</p>
+                    <p className="text-xs text-gray-500">Add a location for shipment receipt and inventory tracking.</p>
+                  </div>
+                  <button onClick={() => setWOpen(false)} className="text-gray-400 hover:text-gray-600">
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="px-5 py-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Warehouse name</label>
+                      <input
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        value={wForm.name}
+                        onChange={e => setWForm(p => ({ ...p, name: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Code</label>
+                      <input
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        value={wForm.code}
+                        onChange={e => setWForm(p => ({ ...p, code: e.target.value }))}
+                        placeholder="MAIN"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">City</label>
+                      <input
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        value={wForm.city}
+                        onChange={e => setWForm(p => ({ ...p, city: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Address</label>
+                      <input
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        value={wForm.address}
+                        onChange={e => setWForm(p => ({ ...p, address: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={wForm.is_active}
+                      onChange={e => setWForm(p => ({ ...p, is_active: e.target.checked }))}
+                      className="form-checkbox rounded border-gray-300 text-blue-600"
+                    />
+                    Active warehouse
+                  </label>
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
+                  <button
+                    onClick={() => setWOpen(false)}
+                    className="px-3 py-2 text-xs text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveWarehouse}
+                    disabled={wSaving || !wForm.name}
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {wSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    {wSaving ? 'Saving…' : 'Save warehouse'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

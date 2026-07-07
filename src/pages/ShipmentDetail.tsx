@@ -33,11 +33,19 @@ interface Shipment {
   bl_number: string | null
   notes: string | null
   supplier_id: string
+  warehouse_id: string | null
   suppliers: { 
     name: string; 
     contact_person?: string | null; // Added ? to make optional
     email?: string | null;          // Added ? to make optional
   } | null
+}
+
+interface Warehouse {
+  id: string
+  name: string
+  code: string | null
+  city: string | null
 }
 
 interface ShipmentItem {
@@ -190,6 +198,8 @@ export function ShipmentDetail() {
   const [error, setError]         = useState<string | null>(null)
   const [editExpId, setEditExpId] = useState<string | null>(null)
   const [receiving, setReceiving] = useState(false)
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('')
   
 
   const load = useCallback(async () => {
@@ -197,7 +207,7 @@ export function ShipmentDetail() {
     setLoading(true)
     setError(null)
 
-    const [shRes, itemsRes, expRes, prodRes, fxRes] = await Promise.all([
+    const [shRes, itemsRes, expRes, prodRes, fxRes, whRes] = await Promise.all([
       supabase.from('shipments')
         .select('*, suppliers(name, contact_person, email)')
         .eq('id', id)
@@ -208,6 +218,7 @@ export function ShipmentDetail() {
       supabase.from('forex_rates').select('rate')
         .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
         .order('effective_date', { ascending: false }).limit(1),
+      supabase.from('warehouses').select('*').order('name'),
     ])
 
     const prodMap = new Map((prodRes.data ?? []).map((p: Product) => [p.id, p]))
@@ -223,6 +234,11 @@ export function ShipmentDetail() {
       setExpenses(expRes.data ?? [])
       setProducts(prodRes.data ?? [])
       setFxRate(fxRes.data?.[0]?.rate ?? 131.20)
+      setWarehouses(whRes.data ?? [])
+      const defaultWarehouse = shRes.data?.warehouse_id
+        || whRes.data?.[0]?.id
+        || ''
+      setSelectedWarehouseId(defaultWarehouse)
     }
     setLoading(false)
   }, [id])
@@ -306,8 +322,19 @@ export function ShipmentDetail() {
     })
   }
 
+  async function updateShipmentWarehouse(warehouseId: string) {
+    if (!id || !shipment) return
+    setSelectedWarehouseId(warehouseId)
+    await supabase.from('shipments').update({ warehouse_id: warehouseId }).eq('id', id)
+    setShipment({ ...shipment, warehouse_id: warehouseId })
+  }
+
   async function receiveIntoInventory() {
     if (!id || items.length === 0) return
+    if (!selectedWarehouseId) {
+      setError('Select a warehouse before receiving this shipment.')
+      return
+    }
     setReceiving(true)
     setError(null)
     try {
@@ -329,6 +356,7 @@ export function ShipmentDetail() {
           assembly_type:        resolveAssemblyType(metaMap.get(item.product_id) ?? {}),
         })),
         fxRate,
+        selectedWarehouseId,
       )
       load()
     } catch (e: any) {
@@ -504,27 +532,40 @@ export function ShipmentDetail() {
       </div>
 
       {/* Receive into inventory */}
-      {items.some(i => i.unit_landed_cost_etb) &&
-       !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
-        <div className="flex items-center justify-between px-4 py-3 mb-5
-                        bg-green-50 border border-green-200 rounded-xl">
+      {items.length > 0 && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
+        <div className="flex flex-col gap-3 px-4 py-3 mb-5 bg-green-50 border border-green-200 rounded-xl md:flex-row md:items-center md:justify-between">
           <div className="text-xs text-green-800">
             <p className="font-medium">Ready for warehouse receipt</p>
             <p className="mt-0.5 text-green-700">
-              SKD/CKD parts route to assembly components; fully assembled goods go to finished stock.
+              Inventory entries will be created for each shipment line and routed to assembly components or finished stock based on the product type.
             </p>
           </div>
-          <button
-            onClick={receiveIntoInventory}
-            disabled={receiving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 text-white
-                       text-xs rounded-lg hover:bg-green-800 disabled:opacity-50 shrink-0"
-          >
-            {receiving
-              ? <><Loader2 size={12} className="animate-spin" /> Receiving…</>
-              : <><Package size={12} /> Receive into inventory</>
-            }
-          </button>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <label className="text-xs text-green-800 flex flex-col gap-1">
+              Warehouse
+              <select
+                value={selectedWarehouseId}
+                onChange={e => updateShipmentWarehouse(e.target.value)}
+                className="w-full min-w-[220px] px-3 py-2 text-sm border border-green-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-400"
+              >
+                <option value="">Select warehouse</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}{w.city ? ` — ${w.city}` : ''}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={receiveIntoInventory}
+              disabled={receiving || !selectedWarehouseId}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 text-white
+                         text-xs rounded-lg hover:bg-green-800 disabled:opacity-50 shrink-0"
+            >
+              {receiving
+                ? <><Loader2 size={12} className="animate-spin" /> Receiving…</>
+                : <><Package size={12} /> Receive into inventory</>
+              }
+            </button>
+          </div>
         </div>
       )}
 

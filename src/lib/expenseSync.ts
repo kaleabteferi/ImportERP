@@ -35,17 +35,47 @@ function autoTag(source: AutoExpenseSource) {
 export async function findAutoExpense(shipmentId: string, source: AutoExpenseSource) {
   const { data } = await supabase
     .from('shipment_expenses')
-    .select('id, amount, amount_etb, cost_status')
+    .select('id, amount, amount_etb, cost_status, is_paid, paid_at')
     .eq('shipment_id', shipmentId)
-    .eq('notes', autoTag(source))
+    .like('notes', `${autoTag(source)}%`)
+    .order('created_at', { ascending: false })
     .maybeSingle()
   return data
+}
+
+export async function markAutoExpensesPaid(shipmentId: string, sources: AutoExpenseSource[] = ['demurrage', 'detention', 'storage']) {
+  const tagPatterns = sources.map(source => autoTag(source))
+  const { data, error } = await supabase
+    .from('shipment_expenses')
+    .select('id, notes')
+    .eq('shipment_id', shipmentId)
+    .or(tagPatterns.map(tag => `notes.like.${tag}%`).join(','))
+
+  if (error) throw new Error(error.message)
+
+  if (!data?.length) return
+
+  const { error: updateError } = await supabase
+    .from('shipment_expenses')
+    .update({ is_paid: true, paid_at: new Date().toISOString() })
+    .in('id', data.map(item => item.id))
+
+  if (updateError) throw new Error(updateError.message)
+}
+
+export async function hasPaidAutoExpense(shipmentId: string, source: AutoExpenseSource) {
+  const record = await findAutoExpense(shipmentId, source)
+  return Boolean(record?.is_paid)
 }
 
 /** Upsert or remove a single auto-synced expense. Zero amount removes the row. */
 export async function upsertAutoExpense(input: AutoExpenseInput): Promise<void> {
   const tag = autoTag(input.source)
   const existing = await findAutoExpense(input.shipmentId, input.source)
+
+  if (existing?.is_paid) {
+    return
+  }
 
   if (input.amountEtb <= 0 && input.amount <= 0) {
     if (existing) {

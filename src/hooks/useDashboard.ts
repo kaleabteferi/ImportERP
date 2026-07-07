@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { calculateInventoryBalances } from '../lib/inventoryLedger'
 
 export interface DashboardData {
   inventoryValueEtb: number
@@ -43,6 +44,14 @@ export interface DashboardData {
     today_units: number
     target_units: number
   }>
+  activity: Array<{
+    id: string
+    title: string
+    subtitle: string
+    timestamp: string
+    type: 'shipment' | 'production' | 'inventory' | 'sales'
+    tone: 'positive' | 'warning' | 'neutral'
+  }>
   pl: {
     revenue: number
     cogs: number
@@ -71,7 +80,7 @@ export function useDashboard() {
         .toISOString().split('T')[0]
       const today      = now.toISOString().split('T')[0]
 
-      const [inv, ships, sales, prevSales, pos, ars, prodLogs] = await Promise.all([
+      const [inv, ships, sales, prevSales, pos, ars, prodLogs, recentMoves, recentProdLogs, recentShipments] = await Promise.all([
         // Inventory from ledger
         supabase.from('inventory_ledger')
           .select('product_id, quantity, unit_cost_etb, products(name, sku)')
@@ -113,22 +122,29 @@ export function useDashboard() {
         supabase.from('production_daily_logs')
           .select('quantity_produced, production_orders(target_quantity, bom_headers(products(name)))')
           .eq('log_date', today),
+
+        // Recent inventory activity
+        supabase.from('inventory_ledger')
+          .select('id, movement_type, quantity, movement_date, notes, products(name)')
+          .order('movement_date', { ascending: false })
+          .limit(6),
+
+        // Recent production logs
+        supabase.from('production_daily_logs')
+          .select('id, log_date, quantity_produced, notes, production_orders(order_number, bom_headers(products(name)))')
+          .order('log_date', { ascending: false })
+          .limit(6),
+
+        // Recent shipments
+        supabase.from('shipments')
+          .select('id, shipment_number, status, updated_at')
+          .order('updated_at', { ascending: false })
+          .limit(6),
       ])
 
       // Process inventory
-      const invMap = new Map<string, { name: string; sku: string; qty: number; val: number }>()
-      for (const row of inv.data ?? []) {
-        const pid  = row.product_id
-        const prod = row.products as any
-        if (!invMap.has(pid)) {
-          invMap.set(pid, { name: prod?.name ?? '—', sku: prod?.sku ?? '—', qty: 0, val: 0 })
-        }
-        const entry = invMap.get(pid)!
-        entry.qty += row.quantity
-        entry.val += row.quantity * (row.unit_cost_etb ?? 0)
-      }
-      const invItems = [...invMap.values()].filter(i => i.qty > 0)
-      const inventoryValueEtb = invItems.reduce((s, i) => s + i.val, 0)
+      const inventoryRows = calculateInventoryBalances(inv.data ?? [])
+      const inventoryValueEtb = inventoryRows.reduce((s, item) => s + item.total_value, 0)
 
       // Process sales
       const salesData   = sales.data ?? []
@@ -165,6 +181,35 @@ export function useDashboard() {
         target_units: (log.production_orders as any)?.target_quantity ?? 0,
       }))
 
+      const activity = [
+        ...(recentMoves.data ?? []).map((row: any) => ({
+          id: row.id,
+          title: `${row.movement_type.replace(/_/g, ' ').toLowerCase()} · ${(row.products as any)?.name ?? 'Product'}`,
+          subtitle: row.notes ?? 'Inventory movement',
+          timestamp: row.movement_date ?? today,
+          type: 'inventory' as const,
+          tone: row.quantity > 0 ? 'positive' as const : 'warning' as const,
+        })),
+        ...(recentProdLogs.data ?? []).map((row: any) => ({
+          id: row.id,
+          title: `${row.quantity_produced ?? 0} units logged for ${(row.production_orders as any)?.bom_headers?.products?.name ?? 'production'}`,
+          subtitle: `Order ${(row.production_orders as any)?.order_number ?? '—'} · ${row.log_date}`,
+          timestamp: row.log_date ?? today,
+          type: 'production' as const,
+          tone: 'neutral' as const,
+        })),
+        ...(recentShipments.data ?? []).map((row: any) => ({
+          id: row.id,
+          title: `${row.shipment_number} · ${row.status}`,
+          subtitle: 'Shipment updated',
+          timestamp: row.updated_at ?? today,
+          type: 'shipment' as const,
+          tone: row.status === 'WAREHOUSE_RECEIVED' ? 'positive' as const : 'neutral' as const,
+        })),
+      ]
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 7)
+
       setData({
         inventoryValueEtb,
         monthRevenueEtb:      revenue,
@@ -175,7 +220,7 @@ export function useDashboard() {
         totalPayableUsd:      payables.reduce((s, p) => s + p.outstanding_usd, 0),
         totalReceivableEtb:   receivables.reduce((s, r) => s + r.outstanding_etb, 0),
         productionToday:      production.reduce((s, p) => s + p.today_units, 0),
-        lowStockCount:        invItems.filter(i => i.qty < 20).length,
+        lowStockCount:        inventoryRows.filter(i => i.quantity_on_hand < 20).length,
         activeShipments: (ships.data ?? []).map((s: any) => ({
           id:               s.id,
           shipment_number:  s.shipment_number,
@@ -184,16 +229,17 @@ export function useDashboard() {
           status:           s.status,
           eta_djibouti:     s.eta_djibouti,
         })),
-        inventory: invItems.map(i => ({
-          product_name:    i.name,
-          sku:             i.sku,
-          quantity_on_hand: i.qty,
-          total_value:     i.val,
-          is_low:          i.qty < 20,
+        inventory: inventoryRows.map(i => ({
+          product_name:      i.product_name,
+          sku:               i.sku,
+          quantity_on_hand:  i.quantity_on_hand,
+          total_value:       i.total_value,
+          is_low:            i.quantity_on_hand < 20,
         })),
         payables,
         receivables,
         production,
+        activity,
         pl: {
           revenue,
           cogs,

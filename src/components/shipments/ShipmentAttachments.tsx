@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type DragEvent } from 'react'
 import { supabase } from '../../lib/supabase'
-import { Upload, FileText, Image, Trash2, Loader2, Download } from 'lucide-react'
+import { Upload, FileText, Image, Trash2, Loader2, Download, Eye, X } from 'lucide-react'
 
 interface Attachment {
   id: string
@@ -21,11 +21,15 @@ const DOC_TYPES = [
 ]
 
 export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
-  const [files, setFiles]       = useState<Attachment[]>([])
-  const [loading, setLoading]   = useState(true)
+  const [files, setFiles] = useState<Attachment[]>([])
+  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [error, setError]       = useState<string | null>(null)
-  const [docType, setDocType]   = useState(DOC_TYPES[0])
+  const [error, setError] = useState<string | null>(null)
+  const [docType, setDocType] = useState(DOC_TYPES[0])
+  const [dragActive, setDragActive] = useState(false)
+  const [previewFile, setPreviewFile] = useState<Attachment | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function load() {
@@ -64,7 +68,7 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
     setError(null)
 
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-    const path     = `${shipmentId}/${Date.now()}_${safeName}`
+    const path = `${shipmentId}/${Date.now()}_${safeName}`
 
     const { error: upErr } = await supabase.storage
       .from(BUCKET)
@@ -78,31 +82,50 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
 
     const { error: dbErr } = await supabase.from('shipment_attachments').insert({
       shipment_id: shipmentId,
-      file_name:   file.name,
-      file_path:   path,
-      mime_type:   file.type,
-      file_size:   file.size,
-      doc_type:    docType,
+      file_name: file.name,
+      file_path: path,
+      mime_type: file.type,
+      file_size: file.size,
+      doc_type: docType,
     })
 
     if (dbErr) {
       await supabase.storage.from(BUCKET).remove([path])
       setError(dbErr.message)
     } else {
-      load()
+      await load()
     }
     setUploading(false)
+  }
+
+  async function handleFiles(fileList: FileList | File[]) {
+    const picked = Array.from(fileList)
+    if (picked.length === 0) return
+    await upload(picked[0])
   }
 
   async function remove(att: Attachment) {
     await supabase.storage.from(BUCKET).remove([att.file_path])
     await supabase.from('shipment_attachments').delete().eq('id', att.id)
-    load()
+    await load()
   }
 
   async function download(att: Attachment) {
     const { data } = await supabase.storage.from(BUCKET).createSignedUrl(att.file_path, 120)
     if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+  }
+
+  async function openPreview(att: Attachment) {
+    setPreviewLoading(true)
+    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(att.file_path, 120)
+    setPreviewUrl(data?.signedUrl ?? null)
+    setPreviewFile(att)
+    setPreviewLoading(false)
+  }
+
+  function closePreview() {
+    setPreviewFile(null)
+    setPreviewUrl(null)
   }
 
   function formatSize(bytes: number | null) {
@@ -132,8 +155,7 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
           <button
             onClick={() => inputRef.current?.click()}
             disabled={uploading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                       text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             {uploading
               ? <><Loader2 size={12} className="animate-spin" /> Uploading…</>
@@ -147,7 +169,7 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
             className="hidden"
             onChange={e => {
               const f = e.target.files?.[0]
-              if (f) upload(f)
+              if (f) void upload(f)
               e.target.value = ''
             }}
           />
@@ -165,13 +187,33 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
           <Loader2 size={14} className="animate-spin" /> Loading documents…
         </div>
       ) : files.length === 0 ? (
-        <div className="bg-white border border-dashed border-gray-200 rounded-xl p-8 text-center">
+        <div
+          className={`bg-white border border-dashed rounded-xl p-8 text-center transition-colors ${dragActive ? 'border-blue-400 bg-blue-50' : 'border-gray-200'}`}
+          onDragEnter={e => { e.preventDefault(); setDragActive(true) }}
+          onDragOver={e => { e.preventDefault(); setDragActive(true) }}
+          onDragLeave={e => { e.preventDefault(); setDragActive(false) }}
+          onDrop={async (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault()
+            setDragActive(false)
+            if (e.dataTransfer.files?.length) await handleFiles(e.dataTransfer.files)
+          }}
+        >
           <FileText size={28} className="mx-auto text-gray-200 mb-2" />
           <p className="text-sm text-gray-500">No documents uploaded yet</p>
           <p className="text-xs text-gray-400 mt-1">Drag scans here or click Upload above</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-50">
+        <div
+          className={`bg-white border border-gray-200 rounded-xl divide-y divide-gray-50 ${dragActive ? 'ring-1 ring-blue-200' : ''}`}
+          onDragEnter={e => { e.preventDefault(); setDragActive(true) }}
+          onDragOver={e => { e.preventDefault(); setDragActive(true) }}
+          onDragLeave={e => { e.preventDefault(); setDragActive(false) }}
+          onDrop={async (e: DragEvent<HTMLDivElement>) => {
+            e.preventDefault()
+            setDragActive(false)
+            if (e.dataTransfer.files?.length) await handleFiles(e.dataTransfer.files)
+          }}
+        >
           {files.map(f => (
             <div key={f.id} className="flex items-center gap-3 px-4 py-3">
               {f.mime_type.startsWith('image/')
@@ -186,14 +228,21 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
                 </p>
               </div>
               <button
-                onClick={() => download(f)}
+                onClick={() => void openPreview(f)}
                 className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors"
-                title="Download / view"
+                title="Preview"
+              >
+                <Eye size={14} />
+              </button>
+              <button
+                onClick={() => void download(f)}
+                className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors"
+                title="Download"
               >
                 <Download size={14} />
               </button>
               <button
-                onClick={() => remove(f)}
+                onClick={() => void remove(f)}
                 className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
                 title="Delete"
               >
@@ -201,6 +250,48 @@ export function ShipmentAttachments({ shipmentId }: { shipmentId: string }) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {previewFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={closePreview}>
+          <div className="w-full max-w-4xl rounded-xl bg-white shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium">{previewFile.file_name}</p>
+                <p className="text-xs text-gray-400">{previewFile.doc_type ?? 'Document'}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void download(previewFile)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                  <Download size={12} /> Download
+                </button>
+                <button
+                  onClick={closePreview}
+                  className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[75vh] overflow-auto bg-gray-50 p-3">
+              {previewLoading ? (
+                <div className="flex min-h-[300px] items-center justify-center text-gray-400 gap-2 text-sm">
+                  <Loader2 size={16} className="animate-spin" /> Preparing preview…
+                </div>
+              ) : previewUrl && previewFile.mime_type.startsWith('image/') ? (
+                <img src={previewUrl} alt={previewFile.file_name} className="mx-auto max-h-[70vh] rounded-lg object-contain" />
+              ) : previewUrl ? (
+                <iframe src={previewUrl} title={previewFile.file_name} className="min-h-[70vh] w-full rounded-lg border-0" />
+              ) : (
+                <div className="flex min-h-[300px] items-center justify-center text-gray-500 text-sm">
+                  Preview is not available for this document.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

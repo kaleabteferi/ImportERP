@@ -1,15 +1,9 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { calculateInventoryBalances, type InventoryBalance } from '../lib/inventoryLedger'
 import { Package, AlertTriangle, Loader2 } from 'lucide-react'
 
-interface InventoryRow {
-  product_id: string
-  product_name: string
-  sku: string
-  quantity_on_hand: number
-  avg_unit_cost_etb: number
-  total_value: number
-}
+interface InventoryRow extends InventoryBalance {}
 
 interface Movement {
   id: string
@@ -18,6 +12,8 @@ interface Movement {
   unit_cost_etb: number | null
   movement_date: string
   notes: string | null
+  warehouse_id: string | null
+  warehouse_name: string | null
   products: { name: string; sku: string } | null
 }
 
@@ -37,45 +33,54 @@ export function Inventory() {
   const [inventory, setInventory] = useState<InventoryRow[]>([])
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState<string | null>(null)
   const [tab, setTab]             = useState<'stock' | 'movements'>('stock')
   const [filterProd, setFilterProd] = useState('')
 
   async function load() {
     setLoading(true)
-    const [ledgerRes, moveRes] = await Promise.all([
-      supabase.from('inventory_ledger')
-        .select('product_id, quantity, unit_cost_etb, products(name, sku)'),
-      supabase.from('inventory_ledger')
-        .select('id, movement_type, quantity, unit_cost_etb, movement_date, notes, products(name, sku)')
-        .order('movement_date', { ascending: false })
-        .limit(100),
-    ])
+    setError(null)
 
-    // Aggregate by product
-    const map = new Map<string, InventoryRow>()
-    for (const row of ledgerRes.data ?? []) {
-      const pid  = row.product_id
-      const prod = row.products as any
-      if (!map.has(pid)) map.set(pid, {
-        product_id: pid, product_name: prod?.name ?? '—',
-        sku: prod?.sku ?? '—', quantity_on_hand: 0,
-        avg_unit_cost_etb: 0, total_value: 0,
-      })
-      const e = map.get(pid)!
-      e.quantity_on_hand  += row.quantity
-      e.total_value       += row.quantity * (row.unit_cost_etb ?? 0)
+    try {
+      const [ledgerRes, moveRes, productRes, warehouseRes] = await Promise.all([
+        supabase.from('inventory_ledger').select('product_id, quantity, unit_cost_etb, warehouse_id'),
+        supabase.from('inventory_ledger').select('id, movement_type, quantity, unit_cost_etb, movement_date, notes, warehouse_id, product_id').order('movement_date', { ascending: false }).limit(100),
+        supabase.from('products').select('id, name, sku').order('name'),
+        supabase.from('warehouses').select('id, name').order('name'),
+      ])
+
+      if (ledgerRes.error) throw ledgerRes.error
+      if (moveRes.error) throw moveRes.error
+      if (productRes.error) throw productRes.error
+      if (warehouseRes.error) throw warehouseRes.error
+
+      const productsById = new Map((productRes.data ?? []).map((p: any) => [p.id, p]))
+      const warehousesById = new Map((warehouseRes.data ?? []).map((w: any) => [w.id, w]))
+
+      const ledgerRows = (ledgerRes.data ?? []).map((row: any) => ({
+        ...row,
+        products: row.product_id ? { name: productsById.get(row.product_id)?.name ?? '—', sku: productsById.get(row.product_id)?.sku ?? '—' } : null,
+        warehouses: row.warehouse_id ? { name: warehousesById.get(row.warehouse_id)?.name ?? 'Main Warehouse' } : null,
+      }))
+
+      const moveRows = (moveRes.data ?? []).map((row: any) => ({
+        ...row,
+        products: row.product_id ? { name: productsById.get(row.product_id)?.name ?? '—', sku: productsById.get(row.product_id)?.sku ?? '—' } : null,
+        warehouse_name: row.warehouse_id ? (warehousesById.get(row.warehouse_id)?.name ?? 'Main Warehouse') : null,
+      }))
+
+      const inv = calculateInventoryBalances(ledgerRows as any[])
+
+      setInventory(inv)
+      setMovements(moveRows)
+    } catch (e: any) {
+      console.error(e)
+      setError(e?.message ?? 'Unable to load inventory data.')
+      setInventory([])
+      setMovements([])
+    } finally {
+      setLoading(false)
     }
-    const inv = [...map.values()]
-      .filter(i => i.quantity_on_hand > 0)
-      .map(i => ({ ...i, avg_unit_cost_etb: i.total_value / i.quantity_on_hand }))
-      .sort((a, b) => b.total_value - a.total_value)
-
-    setInventory(inv)
-    setMovements((moveRes.data ?? []).map(row => ({
-      ...row,
-      products: Array.isArray(row.products) ? row.products[0] ?? null : row.products,
-    })))
-    setLoading(false)
   }
 
   useEffect(() => { load() }, [])
@@ -120,6 +125,12 @@ export function Inventory() {
         </div>
       )}
 
+      {!loading && error && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       {!loading && lowStock.length > 0 && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200
                         rounded-xl text-xs text-red-700 mb-4">
@@ -144,10 +155,11 @@ export function Inventory() {
             </div>
           ) : (
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                               bg-gray-50 border-b border-gray-100
                               text-xs font-medium text-gray-400 uppercase tracking-wide">
                 <div>Product</div>
+                <div>Warehouse</div>
                 <div className="text-right">On hand</div>
                 <div className="text-right">Unit cost</div>
                 <div className="text-right">Total value</div>
@@ -160,7 +172,7 @@ export function Inventory() {
                 return (
                   <div
                     key={item.product_id}
-                    className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
+                    className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                                 items-center
                                 ${i < inventory.length - 1 ? 'border-b border-gray-50' : ''}`}
                   >
@@ -168,6 +180,7 @@ export function Inventory() {
                       <p className="text-sm font-medium">{item.product_name}</p>
                       <p className="text-xs font-mono text-gray-400 mt-0.5">{item.sku}</p>
                     </div>
+                    <div className="text-sm text-gray-600">{item.warehouse_name}</div>
                     <div className="text-right">
                       <p className={`text-sm font-medium font-mono
                         ${isCritical ? 'text-red-600' : isLow ? 'text-amber-700' : 'text-gray-900'}`}>
@@ -180,7 +193,7 @@ export function Inventory() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium font-mono text-blue-700">
-                        {N(item.total_value / 1000)}K ETB
+                        {N(item.total_value)} ETB
                       </p>
                     </div>
                     <div className="text-right">
@@ -198,16 +211,17 @@ export function Inventory() {
               })}
 
               {/* Total */}
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                               bg-gray-50 border-t border-gray-100
                               text-sm font-medium">
                 <div className="text-gray-500 text-xs">Total</div>
+                <div />
                 <div className="text-right font-mono">
                   {N(inventory.reduce((s, i) => s + i.quantity_on_hand, 0))}
                 </div>
                 <div />
                 <div className="text-right font-mono text-blue-700">
-                  {N(totalValue / 1000)}K ETB
+                  {N(totalValue)} ETB
                 </div>
                 <div />
               </div>

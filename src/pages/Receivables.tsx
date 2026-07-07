@@ -23,28 +23,63 @@ export function Receivables() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const { data } = await supabase
-        .from('sales_orders')
-        .select('id, order_number, total_etb, paid_amount, sale_date, status, customers(name)')
-        .in('status', ['INVOICED', 'PARTIAL'])
-        .order('sale_date', { ascending: true })
+      try {
+        const [salesRes, paymentsRes] = await Promise.all([
+          (async () => {
+            try {
+              return await supabase
+                .from('sales_orders')
+                .select('id, order_number, total_etb, paid_amount, sale_date, status, customers(name)')
+                .in('status', ['INVOICED', 'PARTIAL'])
+                .order('sale_date', { ascending: true })
+            } catch {
+              return { data: [], error: null }
+            }
+          })(),
+          (async () => {
+            try {
+              return await supabase
+                .from('sales_payments')
+                .select('sales_order_id, amount_paid')
+            } catch {
+              return { data: [], error: null }
+            }
+          })(),
+        ])
 
-      const today = new Date()
-      setRows((data ?? []).map((r: any) => {
-        const saleDate = r.sale_date ? new Date(r.sale_date) : today
-        const days = Math.floor((today.getTime() - saleDate.getTime()) / 86400000)
-        return {
-          id: r.id,
-          customer_name: (Array.isArray(r.customers) ? r.customers[0]?.name : r.customers?.name) ?? '—',
-          order_number: r.order_number,
-          total_etb: r.total_etb ?? 0,
-          paid_etb: r.paid_amount ?? 0,
-          sale_date: r.sale_date,
-          status: r.status,
-          days_outstanding: days,
+        const paymentMap = new Map<string, number>()
+        for (const payment of (paymentsRes.data ?? []) as Array<{ sales_order_id: string; amount_paid: number }>) {
+          const key = payment.sales_order_id
+          paymentMap.set(key, (paymentMap.get(key) ?? 0) + Number(payment.amount_paid ?? 0))
         }
-      }))
-      setLoading(false)
+
+        const today = new Date()
+        const rowsData = (salesRes.data ?? []).map((r: any) => {
+          const saleDate = r.sale_date ? new Date(r.sale_date) : today
+          const days = Math.floor((today.getTime() - saleDate.getTime()) / 86400000)
+          const paidFromOrders = Number(r.paid_amount ?? 0)
+          const paidFromPayments = paymentMap.get(r.id) ?? 0
+          const paidEtb = Math.max(paidFromOrders, paidFromPayments)
+
+          return {
+            id: r.id,
+            customer_name: (Array.isArray(r.customers) ? r.customers[0]?.name : r.customers?.name) ?? '—',
+            order_number: r.order_number,
+            total_etb: Number(r.total_etb ?? 0),
+            paid_etb: paidEtb,
+            sale_date: r.sale_date,
+            status: r.status,
+            days_outstanding: days,
+          }
+        })
+
+        setRows(rowsData.filter((row: Receivable) => row.total_etb > row.paid_etb))
+      } catch (error) {
+        console.error(error)
+        setRows([])
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [])
