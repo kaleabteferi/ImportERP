@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './lib/auth'
+import { ThemeProvider } from './lib/theme'
 import { PageStateProvider } from './lib/pageState'
 import { RequireAuth } from './components/auth/RequireAuth'
 import { RequireRole } from './components/auth/RequireRole'
@@ -34,6 +35,7 @@ import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 
 export default function App() {
   return (
+    <ThemeProvider>
     <AuthProvider>
       <RequireAuth>
         <PageStateProvider>
@@ -122,5 +124,6 @@ export default function App() {
         </PageStateProvider>
       </RequireAuth>
     </AuthProvider>
+    </ThemeProvider>
   )
 }

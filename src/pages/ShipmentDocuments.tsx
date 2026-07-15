@@ -313,7 +313,10 @@ export function ShipmentDocuments() {
       </div>
 
       {/* ══ PRINT AREA ═════════════════════════════════════════ */}
-      <div ref={printRef} className="max-w-4xl mx-auto px-6 print:px-8 print:max-w-none">
+      {/* doc-light: these are printable paper documents (invoice, packing
+          list, customs declaration) — always rendered light regardless of
+          app theme, since they represent a physical/printed artifact. */}
+      <div ref={printRef} className="doc-light max-w-4xl mx-auto px-6 print:px-8 print:max-w-none">
         <style>{`
           @media print {
             @page { size: A4; margin: 15mm; }

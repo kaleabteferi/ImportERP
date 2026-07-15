@@ -2,3 +2,99 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Enables the `dark:` variant, triggered by a `.dark` class on <html> (see
+   src/lib/theme.tsx). Most of the app isn't hand-annotated with `dark:`
+   classes though — instead the neutral color tokens below are overridden
+   for the whole app at once, since the UI is built almost entirely out of
+   a small fixed set of gray/white utilities. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic layout tokens used by Sidebar/MobileNav/Layout. These were
+   referenced (var(--color-background-primary) etc.) but never actually
+   defined anywhere, so the sidebar/nav rendered with no background/border/
+   text color at all — defining them here fixes that pre-existing gap in
+   light mode too, not just dark mode. */
+:root {
+  color-scheme: light;
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f7f8fa;
+  --color-background-tertiary: #f7f8fa;
+  --color-background-info: #eff6ff;
+  --color-border-primary: #e5e7eb;
+  --color-border-secondary: #e5e7eb;
+  --color-border-tertiary: #e5e7eb;
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #9ca3af;
+  --color-text-info: #1d4ed8;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Flip the neutral gray ramp end-for-end. Tailwind's utilities
+     (bg-gray-50, text-gray-900, border-gray-200, divide-gray-100, ...)
+     all read these variables at paint time, so this alone re-themes the
+     overwhelming majority of the app (borders, muted/body/heading text,
+     sunken panels) without touching individual pages. */
+  --color-gray-50: #1c1f25;
+  --color-gray-100: #22262d;
+  --color-gray-200: #2c313a;
+  --color-gray-300: #3b4048;
+  --color-gray-400: #838a94;
+  --color-gray-500: #9aa1ab;
+  --color-gray-600: #b4bac3;
+  --color-gray-700: #cdd2d9;
+  --color-gray-800: #e4e7eb;
+  --color-gray-900: #f5f7f9;
+  --color-gray-950: #fbfcfd;
+
+  --color-background-primary: #17191e;
+  --color-background-secondary: #1c1f25;
+  --color-background-tertiary: #0d0f12;
+  --color-background-info: #17304d;
+  --color-border-primary: #2c313a;
+  --color-border-secondary: #2c313a;
+  --color-border-tertiary: #2c313a;
+  --color-text-primary: #f5f7f9;
+  --color-text-secondary: #b4bac3;
+  --color-text-tertiary: #838a94;
+  --color-text-info: #60a5fa;
+}
+
+/* `white` is used for two different jobs in this codebase: card/table/
+   modal surfaces (bg-white, 229 uses) and on-color button/badge text
+   (text-white, 101 uses, e.g. bg-blue-600 text-white). Those need
+   opposite treatment in dark mode, so unlike the gray ramp above this
+   can't be a single variable flip — override the surface usage by class,
+   and pin the text usage back to actual white afterward. */
+.dark .bg-white { background-color: #17191e; }
+.dark .text-white { color: #ffffff; }
+
+/* Printable documents (invoices, packing lists, customs declarations —
+   see ShipmentDocuments.tsx) represent a physical/printed page and stay
+   light regardless of app theme, same as they would coming out of a
+   printer. Re-declaring the tokens here overrides the inherited dark
+   values for this subtree only. */
+.dark .doc-light {
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-gray-950: #030712;
+  color-scheme: light;
+}
+.dark .doc-light.bg-white,
+.dark .doc-light .bg-white { background-color: #ffffff; }
+
+body {
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
