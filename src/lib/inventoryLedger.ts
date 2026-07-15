@@ -70,7 +70,9 @@ export function calculateInventoryBalances<T extends InventoryLedgerLike>(rows: 
     }
   }
 
+  // Do NOT filter out zero-quantity rows: a product that sold out is exactly
+  // what an inventory page needs to surface, not hide. Sort out-of-stock
+  // items to the bottom (they carry no value) but keep them visible.
   return [...map.values()]
-    .filter(item => item.quantity_on_hand > 0)
     .sort((a, b) => b.total_value - a.total_value)
 }

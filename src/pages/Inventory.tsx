@@ -121,6 +121,8 @@ export function Inventory() {
   const [error, setError]         = useState<string | null>(null)
   const [tab, setTab]             = usePageState<'stock' | 'movements'>('inventory.tab', 'stock')
   const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
+  const [filterWarehouse, setFilterWarehouse] = usePageState('inventory.filterWarehouse', '')
+  const [stockSearch, setStockSearch] = usePageState('inventory.stockSearch', '')
   const [showAdjustForm, setShowAdjustForm] = useState(false)
   const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string }>>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
@@ -178,13 +180,17 @@ export function Inventory() {
   }, [])
 
   const totalValue = inventory.reduce((s, i) => s + i.total_value, 0)
-  const lowStock   = inventory.filter(i => i.quantity_on_hand < 20)
+  const outOfStock = inventory.filter(i => i.quantity_on_hand <= 0)
+  const lowStock   = inventory.filter(i => i.quantity_on_hand > 0 && i.quantity_on_hand < 20)
   const moves      = filterProd
     ? movements.filter(m => (m.products as any)?.name === filterProd)
     : movements
   // inventory has one row per product+warehouse, but this filter is by
   // product name only — dedupe so the same product isn't listed per warehouse.
   const filterableProducts = [...new Map(inventory.map(i => [i.product_name, i])).values()]
+  const visibleStock = inventory
+    .filter(i => !filterWarehouse || i.warehouse_id === filterWarehouse)
+    .filter(i => !stockSearch || i.product_name.toLowerCase().includes(stockSearch.toLowerCase()) || i.sku.toLowerCase().includes(stockSearch.toLowerCase()))
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -241,9 +247,20 @@ export function Inventory() {
         </div>
       )}
 
-      {!loading && lowStock.length > 0 && (
+      {!loading && outOfStock.length > 0 && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200
-                        rounded-xl text-xs text-red-700 mb-4">
+                        rounded-xl text-xs text-red-700 mb-2">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>
+            <strong>{outOfStock.length} products</strong> out of stock:{' '}
+            {outOfStock.map(p => p.product_name).join(', ')}
+          </span>
+        </div>
+      )}
+
+      {!loading && lowStock.length > 0 && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200
+                        rounded-xl text-xs text-amber-700 mb-4">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>
             <strong>{lowStock.length} products</strong> below safety stock:{' '}
@@ -264,7 +281,30 @@ export function Inventory() {
               </p>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <>
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  value={stockSearch}
+                  onChange={e => setStockSearch(e.target.value)}
+                  placeholder="Search product or SKU"
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg w-52
+                             focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+                <select
+                  value={filterWarehouse}
+                  onChange={e => setFilterWarehouse(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                             focus:outline-none focus:ring-1 focus:ring-blue-400"
+                >
+                  <option value="">All warehouses</option>
+                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+
+              {visibleStock.length === 0 ? (
+                <div className="text-center py-12 text-gray-400 text-sm">No products match this filter.</div>
+              ) : (
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
               <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                               bg-gray-50 border-b border-gray-100
                               text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -276,15 +316,16 @@ export function Inventory() {
                 <div className="text-right">Status</div>
               </div>
 
-              {inventory.map((item, i) => {
-                const isLow      = item.quantity_on_hand < 20
-                const isCritical = item.quantity_on_hand < 5
+              {visibleStock.map((item, i) => {
+                const isOut       = item.quantity_on_hand <= 0
+                const isCritical  = !isOut && item.quantity_on_hand < 5
+                const isLow       = !isOut && !isCritical && item.quantity_on_hand < 20
                 return (
                   <div
                     key={`${item.product_id}:${item.warehouse_id ?? ''}`}
                     className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                                 items-center
-                                ${i < inventory.length - 1 ? 'border-b border-gray-50' : ''}`}
+                                ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}
                   >
                     <div>
                       <p className="text-sm font-medium">{item.product_name}</p>
@@ -293,7 +334,7 @@ export function Inventory() {
                     <div className="text-sm text-gray-600">{item.warehouse_name}</div>
                     <div className="text-right">
                       <p className={`text-sm font-medium font-mono
-                        ${isCritical ? 'text-red-600' : isLow ? 'text-amber-700' : 'text-gray-900'}`}>
+                        ${isOut ? 'text-red-600' : isCritical ? 'text-red-600' : isLow ? 'text-amber-700' : 'text-gray-900'}`}>
                         {N(item.quantity_on_hand)}
                       </p>
                       <p className="text-xs text-gray-400">units</p>
@@ -308,12 +349,14 @@ export function Inventory() {
                     </div>
                     <div className="text-right">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                        ${isCritical
-                          ? 'bg-red-50 text-red-700'
-                          : isLow
-                            ? 'bg-amber-50 text-amber-700'
-                            : 'bg-green-50 text-green-700'}`}>
-                        {isCritical ? 'Critical' : isLow ? 'Low' : 'OK'}
+                        ${isOut
+                          ? 'bg-red-100 text-red-700'
+                          : isCritical
+                            ? 'bg-red-50 text-red-700'
+                            : isLow
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-green-50 text-green-700'}`}>
+                        {isOut ? 'Out of stock' : isCritical ? 'Critical' : isLow ? 'Low' : 'OK'}
                       </span>
                     </div>
                   </div>
@@ -327,15 +370,17 @@ export function Inventory() {
                 <div className="text-gray-500 text-xs">Total</div>
                 <div />
                 <div className="text-right font-mono">
-                  {N(inventory.reduce((s, i) => s + i.quantity_on_hand, 0))}
+                  {N(visibleStock.reduce((s, i) => s + i.quantity_on_hand, 0))}
                 </div>
                 <div />
                 <div className="text-right font-mono text-blue-700">
-                  {N(totalValue)} ETB
+                  {N(visibleStock.reduce((s, i) => s + i.total_value, 0))} ETB
                 </div>
                 <div />
               </div>
-            </div>
+              </div>
+              )}
+            </>
           )}
         </>
       )}

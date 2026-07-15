@@ -379,11 +379,12 @@ export function Production() {
         const delta   = qty - prevQty
 
         if (existing) {
-          await supabase.from('production_daily_logs')
+          const { error: updErr } = await supabase.from('production_daily_logs')
             .update({ quantity_produced: qty, notes: logNotes || null })
             .eq('id', existing.id)
+          if (updErr) throw updErr
         } else {
-          await supabase.from('production_daily_logs').insert({
+          const { error: insErr } = await supabase.from('production_daily_logs').insert({
             production_order_id: order?.id ?? null,
             bom_header_id: order ? null : bom.id,
             product_id: order ? null : bom.product_id,
@@ -392,6 +393,7 @@ export function Production() {
             quantity_produced: qty,
             notes: logNotes || null,
           })
+          if (insErr) throw insErr
         }
 
         if (delta === 0) continue
@@ -406,10 +408,11 @@ export function Production() {
             order.target_quantity,
             Math.max(0, order.completed_quantity + delta),
           )
-          await supabase.from('production_orders').update({
+          const { error: ordErr } = await supabase.from('production_orders').update({
             completed_quantity: newCompleted,
             status: newCompleted >= order.target_quantity ? 'COMPLETED' : 'IN_PROGRESS',
           }).eq('id', order.id)
+          if (ordErr) throw ordErr
         }
 
         // Finished goods into inventory (net zero for STICKER-stage BOMs

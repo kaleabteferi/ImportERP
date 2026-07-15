@@ -67,6 +67,7 @@ export function Sales() {
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [justCreatedCustomerId, setJustCreatedCustomerId] = useState<string | null>(null)
+  const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -113,6 +114,20 @@ export function Sales() {
       .then(({ data }) => setCustomerCreditAccounts((data ?? []).map((c: any) => ({ ...c, customer_id: customerId }))))
   }, [customerId])
 
+  // Available stock at the selected warehouse — shown per product so a
+  // sale doesn't get built against stock that isn't actually there, only
+  // to fail with an opaque RPC error on submit.
+  useEffect(() => {
+    if (!warehouseId) { setStockByProduct({}); return }
+    supabase.from('current_inventory').select('product_id, quantity_on_hand')
+      .eq('warehouse_id', warehouseId)
+      .then(({ data }) => {
+        const map: Record<string, number> = {}
+        for (const row of (data ?? []) as any[]) map[row.product_id] = Number(row.quantity_on_hand ?? 0)
+        setStockByProduct(map)
+      })
+  }, [warehouseId])
+
   function addToCart(productId: string) {
     if (cart.some(l => l.productId === productId)) return
     setCart(c => [...c, { productId, quantity: 1, unitPriceEtb: lastPriceByProduct[productId] ?? 0 }])
@@ -152,6 +167,12 @@ export function Sales() {
     if (cart.length === 0) { setError('Add at least one item.'); return }
     if (cart.some(l => l.quantity <= 0 || l.unitPriceEtb <= 0)) { setError('Every line needs a quantity and price greater than 0.'); return }
     if (payNow && method !== 'credit' && !accountId) { setError('Choose which account received the money.'); return }
+    const shortLine = cart.find(l => l.quantity > (stockByProduct[l.productId] ?? 0))
+    if (shortLine) {
+      const p = products.find(x => x.id === shortLine.productId)
+      setError(`Not enough stock at this warehouse for ${p?.name ?? 'this product'} — ${stockByProduct[shortLine.productId] ?? 0} available, ${shortLine.quantity} requested.`)
+      return
+    }
 
     setSaving(true); setError(null); setSuccess(null)
     try {
@@ -333,17 +354,30 @@ export function Sales() {
 
               <div>
                 <label className="block text-xs text-gray-500 mb-1.5">Items</label>
+                {!warehouseId && (
+                  <p className="text-xs text-amber-600 mb-1.5">Choose a warehouse to see available stock.</p>
+                )}
                 <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-1 mb-2 border border-gray-100 rounded-lg">
-                  {products.map(p => (
-                    <button key={p.id} type="button" onClick={() => addToCart(p.id)}
-                      disabled={cart.some(l => l.productId === p.id)}
-                      className="flex flex-col items-center gap-1 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 text-center">
-                      <div className="w-9 h-9 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center">
-                        {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" /> : <Package size={14} className="text-gray-300" />}
-                      </div>
-                      <span className="text-[10px] leading-tight line-clamp-2">{p.name}</span>
-                    </button>
-                  ))}
+                  {products.map(p => {
+                    const stock = stockByProduct[p.id] ?? 0
+                    const outOfStock = !!warehouseId && stock <= 0
+                    return (
+                      <button key={p.id} type="button" onClick={() => addToCart(p.id)}
+                        disabled={cart.some(l => l.productId === p.id) || outOfStock}
+                        title={outOfStock ? 'Out of stock at this warehouse' : undefined}
+                        className="flex flex-col items-center gap-1 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-30 text-center">
+                        <div className="w-9 h-9 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center">
+                          {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" /> : <Package size={14} className="text-gray-300" />}
+                        </div>
+                        <span className="text-[10px] leading-tight line-clamp-2">{p.name}</span>
+                        {warehouseId && (
+                          <span className={`text-[9px] font-mono ${outOfStock ? 'text-red-500' : stock < 20 ? 'text-amber-600' : 'text-gray-400'}`}>
+                            {outOfStock ? 'Out of stock' : `${N(stock)} in stock`}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
 
                 {cart.length === 0 ? (
@@ -352,22 +386,29 @@ export function Sales() {
                   <div className="space-y-2">
                     {cart.map(line => {
                       const p = products.find(x => x.id === line.productId)
+                      const available = stockByProduct[line.productId] ?? 0
+                      const exceeds = line.quantity > available
                       return (
-                        <div key={line.productId} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                          <span className="flex-1 text-xs font-medium truncate">{p?.name ?? '—'}</span>
-                          <button onClick={() => updateCartLine(line.productId, { quantity: Math.max(1, line.quantity - 1) })}
-                            className="p-1 text-gray-400 hover:text-gray-600"><Minus size={12} /></button>
-                          <input type="number" value={line.quantity} min={1}
-                            onChange={e => updateCartLine(line.productId, { quantity: Math.max(1, Number(e.target.value)) })}
-                            className="w-12 px-1 py-1 text-xs font-mono border border-gray-200 rounded text-center" />
-                          <button onClick={() => updateCartLine(line.productId, { quantity: line.quantity + 1 })}
-                            className="p-1 text-gray-400 hover:text-gray-600"><Plus size={12} /></button>
-                          <span className="text-xs text-gray-400">×</span>
-                          <input type="number" value={line.unitPriceEtb} min={0}
-                            onChange={e => updateCartLine(line.productId, { unitPriceEtb: Number(e.target.value) })}
-                            className="w-20 px-1.5 py-1 text-xs font-mono border border-gray-200 rounded" placeholder="Price" />
-                          <span className="text-xs font-mono w-16 text-right">{N(line.quantity * line.unitPriceEtb)}</span>
-                          <button onClick={() => removeCartLine(line.productId)} className="p-1 text-gray-400 hover:text-red-500"><Trash2 size={12} /></button>
+                        <div key={line.productId} className="bg-gray-50 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 text-xs font-medium truncate">{p?.name ?? '—'}</span>
+                            <button onClick={() => updateCartLine(line.productId, { quantity: Math.max(1, line.quantity - 1) })}
+                              className="p-1 text-gray-400 hover:text-gray-600"><Minus size={12} /></button>
+                            <input type="number" value={line.quantity} min={1}
+                              onChange={e => updateCartLine(line.productId, { quantity: Math.max(1, Number(e.target.value)) })}
+                              className={`w-12 px-1 py-1 text-xs font-mono border rounded text-center ${exceeds ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200'}`} />
+                            <button onClick={() => updateCartLine(line.productId, { quantity: line.quantity + 1 })}
+                              className="p-1 text-gray-400 hover:text-gray-600"><Plus size={12} /></button>
+                            <span className="text-xs text-gray-400">×</span>
+                            <input type="number" value={line.unitPriceEtb} min={0}
+                              onChange={e => updateCartLine(line.productId, { unitPriceEtb: Number(e.target.value) })}
+                              className="w-20 px-1.5 py-1 text-xs font-mono border border-gray-200 rounded" placeholder="Price" />
+                            <span className="text-xs font-mono w-16 text-right">{N(line.quantity * line.unitPriceEtb)}</span>
+                            <button onClick={() => removeCartLine(line.productId)} className="p-1 text-gray-400 hover:text-red-500"><Trash2 size={12} /></button>
+                          </div>
+                          {exceeds && warehouseId && (
+                            <p className="text-xs text-red-600 mt-1">Only {N(available)} available at this warehouse.</p>
+                          )}
                         </div>
                       )
                     })}
