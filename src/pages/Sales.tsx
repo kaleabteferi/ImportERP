@@ -4,7 +4,7 @@ import { createSalesOrder, fetchOrdersWithMargins, recordPayment } from '../api/
 import { fetchCustomers, createCustomer } from '../api/customers'
 import { fetchWarehousesList } from '../api/income'
 import { fetchAccounts } from '../api/accounts'
-import { recordCreditTransaction } from '../api/credit'
+import { recordCreditTransaction, openCreditAccount } from '../api/credit'
 import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import {
@@ -66,6 +66,7 @@ export function Sales() {
   const [creditAccountId, setCreditAccountId] = useState('')
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
+  const [justCreatedCustomerId, setJustCreatedCustomerId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -131,6 +132,7 @@ export function Sales() {
     setMethod('cash')
     setAccountId('')
     setCreditAccountId('')
+    setJustCreatedCustomerId(null)
     setSaleDate(new Date().toISOString().split('T')[0])
   }
 
@@ -141,6 +143,7 @@ export function Sales() {
     setShowNewCustomer(false)
     await load()
     setCustomerId(id)
+    setJustCreatedCustomerId(id)
   }
 
   async function submit() {
@@ -148,11 +151,25 @@ export function Sales() {
     if (!warehouseId) { setError('Choose a warehouse.'); return }
     if (cart.length === 0) { setError('Add at least one item.'); return }
     if (cart.some(l => l.quantity <= 0 || l.unitPriceEtb <= 0)) { setError('Every line needs a quantity and price greater than 0.'); return }
-    if (payNow && method === 'credit' && !creditAccountId) { setError('Choose which credit account this draws against, or open one for this customer first.'); return }
     if (payNow && method !== 'credit' && !accountId) { setError('Choose which account received the money.'); return }
 
     setSaving(true); setError(null); setSuccess(null)
     try {
+      // A customer created inline on this page can't have picked a credit
+      // account yet (none exist). Open one automatically instead of
+      // blocking the sale, sized to cover this order.
+      let creditAcctId = creditAccountId
+      if (payNow && method === 'credit' && !creditAcctId) {
+        if (customerId === justCreatedCustomerId && customerCreditAccounts.length === 0) {
+          const dueDate = new Date(saleDate)
+          dueDate.setDate(dueDate.getDate() + 30)
+          creditAcctId = await openCreditAccount(customerId, cartTotal, dueDate.toISOString().split('T')[0])
+          setCreditAccountId(creditAcctId)
+        } else {
+          throw new Error('Choose which credit account this draws against, or open one for this customer first.')
+        }
+      }
+
       const result = await createSalesOrder({
         customer_id: customerId,
         warehouse_id: warehouseId,
@@ -163,7 +180,7 @@ export function Sales() {
 
       if (payNow) {
         if (method === 'credit') {
-          await recordCreditTransaction(creditAccountId, 'draw', result.total_etb, {
+          await recordCreditTransaction(creditAcctId, 'draw', result.total_etb, {
             method, salesOrderId: result.order_id,
           })
         } else {
@@ -386,7 +403,11 @@ export function Sales() {
                           ))}
                         </select>
                         {customerId && customerCreditAccounts.length === 0 && (
-                          <p className="text-xs text-amber-600 mt-1">No credit account for this customer — open one in Credit Accounts first.</p>
+                          customerId === justCreatedCustomerId ? (
+                            <p className="text-xs text-blue-600 mt-1">A credit account will be opened automatically for this new customer.</p>
+                          ) : (
+                            <p className="text-xs text-amber-600 mt-1">No credit account for this customer — open one in Credit Accounts first.</p>
+                          )
                         )}
                       </div>
                     ) : (
