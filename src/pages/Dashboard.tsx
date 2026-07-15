@@ -7,6 +7,7 @@ import {
   Loader2, ArrowRight, CheckCircle2, Wallet, Landmark, CreditCard,
   Package, Users, RefreshCw,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const pctChange = (current: number, prev: number) =>
@@ -30,14 +31,17 @@ function timeAgo(d: Date | null) {
 const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
 const PERIOD_PREV_LABEL: Record<Period, string> = { day: 'yesterday', week: 'last week', month: 'last month' }
 
-function KpiCard({ label, value, sub, trend, icon: Icon, tone }: {
-  label: string; value: string; sub?: string; trend?: number; icon: typeof Wallet; tone?: 'warn' | 'good'
+function KpiCard({ label, value, sub, trend, icon: Icon, tone, to }: {
+  label: string; value: string; sub?: string; trend?: number; icon: LucideIcon; tone?: 'warn' | 'good'; to?: string
 }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
-      <div className="flex items-center gap-1.5 text-gray-400 mb-1">
-        <Icon size={12} />
-        <p className="text-xs">{label}</p>
+  const body = (
+    <>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5 text-gray-400">
+          <Icon size={12} />
+          <p className="text-xs">{label}</p>
+        </div>
+        {to && <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />}
       </div>
       <p className={`text-xl font-medium ${tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-green-700' : ''}`}>{value}</p>
       {trend !== undefined ? (
@@ -48,7 +52,13 @@ function KpiCard({ label, value, sub, trend, icon: Icon, tone }: {
       ) : sub ? (
         <p className="text-xs mt-1 text-gray-400">{sub}</p>
       ) : null}
-    </div>
+    </>
+  )
+  const cls = 'group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150'
+  return to ? (
+    <Link to={to} className={`${cls} hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400`}>{body}</Link>
+  ) : (
+    <div className={cls}>{body}</div>
   )
 }
 
@@ -79,18 +89,29 @@ function MiniTrend({ points, formatValue }: { points: DayPoint[]; formatValue: (
   )
 }
 
-function QuestionCard({ question, children }: { question: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
+function QuestionCard({ question, children, viewAllTo, viewAllLabel, defaultOpen }: {
+  question: string; children: React.ReactNode; viewAllTo?: string; viewAllLabel?: string; defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(!!defaultOpen)
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors duration-150"
       >
         <span className="text-sm font-medium">{question}</span>
         {open ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
       </button>
-      {open && <div className="px-4 pb-4 border-t border-gray-100 pt-3">{children}</div>}
+      {open && (
+        <div className="px-4 pb-4 border-t border-gray-100 pt-3">
+          {children}
+          {viewAllTo && (
+            <Link to={viewAllTo} className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline w-fit">
+              {viewAllLabel ?? 'View all'} <ArrowRight size={11} />
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -170,49 +191,55 @@ export function Dashboard() {
 
       {/* Tier 1 — headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp}
+        <KpiCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp} to="/sales"
           value={`${N(d.revenueEtb)} ETB`} trend={revenueChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
-        <KpiCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package}
+        <KpiCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package} to="/production"
           value={`${N(d.producedUnits)} units`} trend={productionChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
-        <KpiCard label="Net cash" icon={Wallet}
+        <KpiCard label="Net cash" icon={Wallet} to="/money-tracking"
           value={`${netCashEtb >= 0 ? '+' : ''}${N(netCashEtb)} ETB`}
           sub={`${N(d.cashInEtb)} in · ${N(d.cashOutEtb)} out`}
           tone={netCashEtb >= 0 ? 'good' : 'warn'} />
-        <KpiCard label="Days of stock" icon={Package}
+        <KpiCard label="Days of stock" icon={Package} to="/inventory"
           value={d.daysOfStock !== null ? `${d.daysOfStock.toFixed(0)} days` : '—'}
           sub={`${N(d.inventoryValueEtb)} ETB on hand`}
           tone={d.daysOfStock !== null && d.daysOfStock < 7 ? 'warn' : undefined} />
-        <KpiCard label="Customers owe you" icon={CreditCard}
+        <KpiCard label="Customers owe you" icon={CreditCard} to="/receivables"
           value={`${N(d.receivablesEtb)} ETB`}
           tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
-        <KpiCard label="You owe suppliers" icon={Landmark}
+        <KpiCard label="You owe suppliers" icon={Landmark} to="/payables"
           value={`${N(d.payablesEtb)} ETB`}
           tone={d.payablesEtb > 0 ? 'warn' : undefined} />
-        <KpiCard label="Active customers" icon={Users}
+        <KpiCard label="Active customers" icon={Users} to="/customers"
           value={String(d.activeCustomers)}
           sub={`${PERIOD_LABEL[period].toLowerCase()}`} />
-        <KpiCard label="Frequent customers" icon={Users}
+        <KpiCard label="Frequent customers" icon={Users} to="/customers"
           value={String(d.frequentCustomers)}
           sub="2+ orders in 30 days" />
       </div>
 
       {/* Tier 2 — trends */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-xs font-medium text-gray-500 mb-3">Revenue trend</p>
+        <Link to="/sales" className="group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150 hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-medium text-gray-500">Revenue trend</p>
+            <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />
+          </div>
           <MiniTrend points={d.revenueTrend} formatValue={n => `${N(n)} ETB`} />
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-xs font-medium text-gray-500 mb-3">Production trend</p>
+        </Link>
+        <Link to="/production" className="group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150 hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-medium text-gray-500">Production trend</p>
+            <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />
+          </div>
           <MiniTrend points={d.productionTrend} formatValue={n => `${N(n)} units`} />
-        </div>
+        </Link>
       </div>
 
       {/* Tier 3 — drill-down */}
       <div>
         <p className="text-xs font-medium text-gray-500 mb-2">Ask the business</p>
         <div className="space-y-2">
-          <QuestionCard question="What sold best?">
+          <QuestionCard question="What sold best?" viewAllTo="/sales" viewAllLabel="Go to Sales" defaultOpen>
             {d.topProducts.length === 0 ? (
               <p className="text-sm text-gray-400">No sales recorded in this period yet.</p>
             ) : (
@@ -232,7 +259,7 @@ export function Dashboard() {
             )}
           </QuestionCard>
 
-          <QuestionCard question="Where are we losing money?">
+          <QuestionCard question="Where are we losing money?" viewAllTo="/products" viewAllLabel="Go to Products">
             {d.lowMarginProducts.length === 0 ? (
               <p className="text-sm text-gray-400">Not enough sales data yet to check margins.</p>
             ) : (
@@ -252,17 +279,27 @@ export function Dashboard() {
             )}
           </QuestionCard>
 
-          <QuestionCard question="What should I do today?">
+          <QuestionCard question="What should I do today?" defaultOpen={d.todoToday.length > 0}>
             {d.todoToday.length === 0 ? (
               <p className="text-sm text-gray-400 flex items-center gap-2">
                 <CheckCircle2 size={14} className="text-green-500" /> Nothing urgent — everything's on track.
               </p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-1">
                 {d.todoToday.map((t, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-gray-300 mt-0.5">•</span>
-                    <span>{t.text}</span>
+                  <li key={i}>
+                    {t.link ? (
+                      <Link to={t.link} className="flex items-start gap-2 text-sm -mx-2 px-2 py-1 rounded-lg hover:bg-gray-50 transition-colors duration-150 group">
+                        <span className="text-gray-300 mt-0.5">•</span>
+                        <span className="flex-1">{t.text}</span>
+                        <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                      </Link>
+                    ) : (
+                      <div className="flex items-start gap-2 text-sm px-2 py-1">
+                        <span className="text-gray-300 mt-0.5">•</span>
+                        <span>{t.text}</span>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

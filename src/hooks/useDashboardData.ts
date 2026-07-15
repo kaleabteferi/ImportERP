@@ -18,7 +18,7 @@ export interface DayPoint { date: string; value: number }
 export interface TopProduct { name: string; quantity: number; revenue: number }
 export interface LowMarginProduct { name: string; marginPct: number }
 export interface AdviceItem { text: string; impact: 'high' | 'medium' | 'low' }
-export interface TodoItem { text: string }
+export interface TodoItem { text: string; link?: string }
 
 export interface DashboardData {
   // Tier 1 — headline, with period-over-period variance
@@ -194,11 +194,11 @@ export function useDashboardData(period: Period): DashboardData {
 
       const todoToday: TodoItem[] = []
       const overduePOs = (purchaseOrdersRes.data ?? []).filter((po: any) => Number(po.paid_amount ?? 0) < Number(po.total_amount ?? 0))
-      if (overduePOs.length > 0) todoToday.push({ text: `${overduePOs.length} supplier payment${overduePOs.length > 1 ? 's' : ''} still outstanding.` })
-      if (receivablesEtb > 0) todoToday.push({ text: `${Math.round(receivablesEtb).toLocaleString()} ETB owed by customers — follow up on overdue accounts.` })
+      if (overduePOs.length > 0) todoToday.push({ text: `${overduePOs.length} supplier payment${overduePOs.length > 1 ? 's' : ''} still outstanding.`, link: '/payables' })
+      if (receivablesEtb > 0) todoToday.push({ text: `${Math.round(receivablesEtb).toLocaleString()} ETB owed by customers — follow up on overdue accounts.`, link: '/receivables' })
       const draftOrders = (productionOrdersRes.data ?? []).length
       const weeklyTargetTotal = (productionOrdersRes.data ?? []).reduce((s: number, o: any) => s + Number(o.target_quantity ?? 0), 0)
-      if (bomHeadersRes.data && bomHeadersRes.data.length === 0) todoToday.push({ text: 'No active BOMs — assembly and sticker stages can\'t be logged yet.' })
+      if (bomHeadersRes.data && bomHeadersRes.data.length === 0) todoToday.push({ text: 'No active BOMs — assembly and sticker stages can\'t be logged yet.', link: '/boms' })
 
       let topAdvice: AdviceItem | null = null
       let secondaryAdvice: AdviceItem | null = null
