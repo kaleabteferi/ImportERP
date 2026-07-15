@@ -52,7 +52,8 @@ export function useShipmentCostBreakdown(
     if (!shipmentId) return;
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setIsLoading(true);
     setError(null);
@@ -77,7 +78,8 @@ export function useShipmentCostBreakdown(
           )
         `)
         .eq('shipment_id', shipmentId)
-        .order('products(name)');
+        .order('products(name)')
+        .abortSignal(controller.signal);
 
       if (itemsError) throw itemsError;
 
@@ -85,6 +87,7 @@ export function useShipmentCostBreakdown(
         .from('shipments')
         .select('id, allocation_method')
         .eq('id', shipmentId)
+        .abortSignal(controller.signal)
         .single();
 
       if (shipmentError) throw shipmentError;
@@ -92,7 +95,8 @@ export function useShipmentCostBreakdown(
       const { data: expenses, error: expensesError } = await supabase
         .from('shipment_expenses')
         .select('category, amount_etb, cost_status')
-        .eq('shipment_id', shipmentId);
+        .eq('shipment_id', shipmentId)
+        .abortSignal(controller.signal);
 
       if (expensesError) throw expensesError;
 

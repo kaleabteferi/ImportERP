@@ -1,554 +1,279 @@
-import { RefreshCw, AlertTriangle, TrendingUp, Ship,
-         Package, Wrench, Receipt, Building2 } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboard } from '../hooks/useDashboard'
+import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
+import { useAuth } from '../lib/auth'
+import {
+  Sparkles, TrendingUp, TrendingDown, ChevronDown, ChevronRight,
+  Loader2, ArrowRight, CheckCircle2, Wallet, Landmark, CreditCard,
+  Package, Users, RefreshCw,
+} from 'lucide-react'
 
-const N = (n: number) =>
-  new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+const pctChange = (current: number, prev: number) =>
+  prev === 0 ? (current > 0 ? 100 : 0) : ((current - prev) / prev) * 100
 
-const STATUS: Record<string, { label: string; bg: string; color: string }> = {
-  ORDERED:            { label: 'Ordered',      bg: '#F1EFE8', color: '#5F5E5A' },
-  IN_PRODUCTION:      { label: 'In production',bg: '#F1EFE8', color: '#5F5E5A' },
-  SHIPPED:            { label: 'Shipped',      bg: '#E6F1FB', color: '#0C447C' },
-  AT_DJIBOUTI:        { label: 'At Djibouti', bg: '#FAEEDA', color: '#633806' },
-  IN_TRANSIT:         { label: 'In transit',   bg: '#EEEDFE', color: '#3C3489' },
-  AT_CUSTOMS:         { label: 'At customs',   bg: '#FCEBEB', color: '#791F1F' },
-  WAREHOUSE_RECEIVED: { label: 'Received',     bg: '#EAF3DE', color: '#27500A' },
+function greeting() {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
 }
 
-const card: React.CSSProperties = {
-  background: 'var(--color-background-primary)',
-  border: '0.5px solid var(--color-border-tertiary)',
-  borderRadius: '12px', overflow: 'hidden',
+function timeAgo(d: Date | null) {
+  if (!d) return ''
+  const secs = Math.floor((Date.now() - d.getTime()) / 1000)
+  if (secs < 60) return 'just now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  return `${Math.floor(secs / 3600)}h ago`
 }
 
-const cardHead: React.CSSProperties = {
-  padding: '10px 14px',
-  borderBottom: '0.5px solid var(--color-border-tertiary)',
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  background: 'var(--color-background-secondary)',
-}
+const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
+const PERIOD_PREV_LABEL: Record<Period, string> = { day: 'yesterday', week: 'last week', month: 'last month' }
 
-export function Dashboard() {
-  const { data, isLoading, error, refresh, refreshed } = useDashboard()
-  const now = new Date()
-
-  if (isLoading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  height: '200px', color: 'var(--color-text-tertiary)', gap: '8px' }}>
-      <RefreshCw size={16} className="animate-spin" />
-      Loading dashboard…
-    </div>
-  )
-
-  if (error) return (
-    <div style={{ margin: '24px', padding: '14px', background: '#FCEBEB',
-                  border: '0.5px solid #F09595', borderRadius: '10px',
-                  color: '#791F1F', fontSize: '13px', display: 'flex', gap: '8px' }}>
-      <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
-      <div>
-        <strong>Could not load dashboard.</strong> {error}
-        <br />
-        <span style={{ fontSize: '12px' }}>
-          Make sure your Supabase tables exist and RLS is disabled for development.
-        </span>
-      </div>
-    </div>
-  )
-
-  // Show empty state if no data yet — guides the user to add data
-  const isEmpty = !data || (
-    data.activeShipments.length === 0 &&
-    data.monthRevenueEtb === 0 &&
-    data.inventoryValueEtb === 0
-  )
-
-  if (isEmpty) return (
-    <div style={{ padding: '40px', maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
-      <div style={{ fontSize: '32px', marginBottom: '12px' }}>📦</div>
-      <h1 style={{ fontSize: '20px', fontWeight: 500, marginBottom: '8px' }}>
-        Welcome to ImportERP
-      </h1>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px',
-                  lineHeight: '1.6', marginBottom: '24px' }}>
-        Your dashboard is empty because no data has been added yet.
-        Start by adding your first supplier and shipment.
-      </p>
-      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-        <Link to="/suppliers" style={{
-          padding: '8px 18px', background: '#185FA5', color: '#fff',
-          borderRadius: '8px', textDecoration: 'none', fontSize: '13px',
-        }}>
-          Add first supplier
-        </Link>
-        <Link to="/shipments" style={{
-          padding: '8px 18px', border: '0.5px solid var(--color-border-secondary)',
-          borderRadius: '8px', textDecoration: 'none', fontSize: '13px',
-          color: 'var(--color-text-primary)',
-        }}>
-          Add first shipment
-        </Link>
-      </div>
-    </div>
-  )
-
-  const d = data!
-  const vsLast = d.pl.prevNetProfit > 0
-    ? Math.round((d.pl.netProfit - d.pl.prevNetProfit) / d.pl.prevNetProfit * 100)
-    : 0
-  const overdueAR  = d.receivables.filter(r => r.is_overdue)
-
+function KpiCard({ label, value, sub, trend, icon: Icon, tone }: {
+  label: string; value: string; sub?: string; trend?: number; icon: typeof Wallet; tone?: 'warn' | 'good'
+}) {
   return (
-    <div style={{ padding: '16px', maxWidth: '1200px', margin: '0 auto' }}>
-
-      {/* Top bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'flex-start', marginBottom: '14px' }}>
-        <div>
-          <div style={{ fontSize: '15px', fontWeight: 500 }}>
-            {now.getHours() < 12 ? 'Good morning' : 'Good afternoon'}
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
-            {now.toLocaleDateString('en-ET', { weekday:'long', year:'numeric',
-                                               month:'long', day:'numeric' })}
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {refreshed && (
-            <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-              Updated {refreshed.toLocaleTimeString()}
-            </span>
-          )}
-          <button onClick={refresh} style={{
-            display: 'flex', alignItems: 'center', gap: '5px',
-            padding: '5px 11px', border: '0.5px solid var(--color-border-secondary)',
-            borderRadius: '8px', background: 'var(--color-background-primary)',
-            color: 'var(--color-text-secondary)', fontSize: '11px', cursor: 'pointer',
-          }}>
-            <RefreshCw size={13} /> Refresh
-          </button>
-        </div>
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className="flex items-center gap-1.5 text-gray-400 mb-1">
+        <Icon size={12} />
+        <p className="text-xs">{label}</p>
       </div>
+      <p className={`text-xl font-medium ${tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-green-700' : ''}`}>{value}</p>
+      {trend !== undefined ? (
+        <p className={`text-xs mt-1 flex items-center gap-1 ${trend >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+          {trend >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+          {Math.abs(trend).toFixed(0)}%{sub ? ` ${sub}` : ''}
+        </p>
+      ) : sub ? (
+        <p className="text-xs mt-1 text-gray-400">{sub}</p>
+      ) : null}
+    </div>
+  )
+}
 
-      {/* Alert banners */}
-      {overdueAR.length > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 13px',
-          background: '#FAEEDA', border: '0.5px solid #FAC775', borderRadius: '10px',
-          fontSize: '12px', color: '#633806', marginBottom: '12px',
-        }}>
-          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: '1px' }} />
-          <span>
-            <strong>{overdueAR.length} customer invoice{overdueAR.length > 1 ? 's' : ''} overdue:</strong>
-            {' '}{overdueAR.map(r => `${r.customer_name} (${r.days} days)`).join(' · ')}
-          </span>
-        </div>
-      )}
-
-      {d.lowStockCount > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 13px',
-          background: '#FCEBEB', border: '0.5px solid #F09595', borderRadius: '10px',
-          fontSize: '12px', color: '#791F1F', marginBottom: '12px',
-        }}>
-          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-          <span><strong>{d.lowStockCount} products</strong> below safety stock — consider placing orders.</span>
-        </div>
-      )}
-
-      {/* Operations snapshot */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr .8fr', gap: '12px', marginBottom: '14px' }}>
-        <div style={card}>
-          <div style={cardHead}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500 }}>
-              <TrendingUp size={14} color="#2B7A4B" /> Today at a glance
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '10px', padding: '12px 14px' }}>
-            {[
-              { label: 'Active shipments', value: d.activeShipments.length, hint: 'in motion' },
-              { label: 'Production today', value: d.productionToday, hint: 'units logged' },
-              { label: 'Low stock', value: d.lowStockCount, hint: 'products' },
-            ].map(item => (
-              <div key={item.label} style={{ padding: '10px', borderRadius: '10px', background: 'var(--color-background-secondary)' }}>
-                <div style={{ fontSize: '18px', fontWeight: 600, color: '#0C447C' }}>{item.value}</div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.label}</div>
-                <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.hint}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={card}>
-          <div style={cardHead}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 500 }}>
-              <Receipt size={14} color="#185FA5" /> Quick actions
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px' }}>
-            <Link to="/shipments" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>Receive shipment</span>
-              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
-            </Link>
-            <Link to="/production" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>Log production</span>
-              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
-            </Link>
-            <Link to="/inventory" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: 'var(--color-background-secondary)', textDecoration: 'none', color: 'var(--color-text-primary)' }}>
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>Review stock</span>
-              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>→</span>
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* KPI strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
-                    gap: '10px', marginBottom: '14px' }}>
-        {[
-          { label: 'Inventory value',   value: N(d.inventoryValueEtb), unit: 'ETB', color: '#0C447C', icon: Package },
-          { label: 'Month revenue',     value: N(d.monthRevenueEtb),   unit: 'ETB', color: '#27500A', icon: TrendingUp },
-          { label: 'Gross profit',      value: N(d.grossProfitEtb),    unit: 'ETB', color: '#27500A', icon: TrendingUp },
-          { label: 'Supplier payable',  value: '$' + N(d.totalPayableUsd), unit: 'USD', color: '#633806', icon: Building2 },
-        ].map(k => (
-          <div key={k.label} style={{ background: 'var(--color-background-secondary)',
-                                      borderRadius: '10px', padding: '12px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px',
-                          fontSize: '10px', color: 'var(--color-text-tertiary)',
-                          textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: '6px' }}>
-              <k.icon size={12} />
-              {k.label}
-            </div>
-            <div style={{ fontSize: '20px', fontWeight: 500, color: k.color }}>{k.value}</div>
-            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)',
-                          marginTop: '2px' }}>{k.unit}</div>
+function MiniTrend({ points, formatValue }: { points: DayPoint[]; formatValue: (n: number) => string }) {
+  const max = Math.max(1, ...points.map(p => p.value))
+  const best = Math.max(...points.map(p => p.value))
+  const avg = points.reduce((s, p) => s + p.value, 0) / Math.max(points.length, 1)
+  const showLabels = points.length <= 14
+  return (
+    <div>
+      <div className="flex items-end gap-1 h-20 mb-2">
+        {points.map(p => (
+          <div key={p.date} className="flex-1 flex flex-col items-center justify-end gap-1">
+            <div
+              className="w-full rounded-t bg-indigo-500/80"
+              style={{ height: `${Math.max(4, (p.value / max) * 100)}%` }}
+              title={`${p.date}: ${formatValue(p.value)}`}
+            />
+            {showLabels && <span className="text-[9px] text-gray-400">{new Date(p.date).toLocaleDateString('en', { weekday: 'narrow' })}</span>}
           </div>
         ))}
       </div>
+      <div className="flex justify-between text-xs text-gray-400 border-t border-gray-100 pt-2">
+        <span>Best day <span className="text-gray-600 font-medium">{formatValue(best)}</span></span>
+        <span>Average <span className="text-gray-600 font-medium">{formatValue(avg)}</span></span>
+      </div>
+    </div>
+  )
+}
 
-      {/* Main grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+function QuestionCard({ question, children }: { question: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+      >
+        <span className="text-sm font-medium">{question}</span>
+        {open ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+      </button>
+      {open && <div className="px-4 pb-4 border-t border-gray-100 pt-3">{children}</div>}
+    </div>
+  )
+}
 
-        {/* Left */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+function AdviceNote({ text }: { text: string }) {
+  return (
+    <div className="mt-3 flex gap-2 text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
+      <Sparkles size={13} className="shrink-0 mt-0.5" />
+      <p className="italic">{text}</p>
+    </div>
+  )
+}
 
-          {/* Active shipments */}
-          <div style={card}>
-            <div style={cardHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '12px', fontWeight: 500 }}>
-                <Ship size={14} color="#185FA5" /> Active shipments
-              </div>
-              <Link to="/shipments" style={{ fontSize: '11px', color: '#185FA5',
-                                             textDecoration: 'none' }}>
-                View all →
-              </Link>
-            </div>
-            <div style={{ padding: '4px 0' }}>
-              {d.activeShipments.length === 0 ? (
-                <div style={{ padding: '20px 14px', textAlign: 'center',
-                              fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                  No active shipments.{' '}
-                  <Link to="/shipments" style={{ color: '#185FA5' }}>Add one →</Link>
-                </div>
-              ) : d.activeShipments.map(s => {
-                const st = STATUS[s.status] ?? STATUS['ORDERED']
-                return (
-                  <div key={s.id} style={{
-                    padding: '10px 14px',
-                    borderBottom: '0.5px solid var(--color-border-tertiary)',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                                  alignItems: 'center', marginBottom: '3px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 500 }}>
-                        {s.shipment_number}
-                      </span>
-                      <span style={{ fontSize: '10px', fontWeight: 500,
-                                     padding: '2px 7px', borderRadius: '99px',
-                                     background: st.bg, color: st.color }}>
-                        {st.label}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                      {s.supplier_name} · {s.container_number || '—'}
-                      {s.eta_djibouti ? ` · ETA ${s.eta_djibouti}` : ''}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+export function Dashboard() {
+  const { profile } = useAuth()
+  const [period, setPeriod] = useState<Period>('day')
+  const d = useDashboardData(period)
+  const firstName = (profile?.full_name ?? '').split(' ')[0] || 'there'
 
-          {/* Recent activity */}
-          <div style={card}>
-            <div style={cardHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '12px', fontWeight: 500 }}>
-                <RefreshCw size={14} color="#534AB7" /> Recent activity
-              </div>
-              <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>Live feed</span>
-            </div>
-            <div style={{ padding: '8px 14px' }}>
-              {d.activity.length === 0 ? (
-                <div style={{ padding: '12px 0', textAlign: 'center', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                  No recent operations yet.
-                </div>
-              ) : d.activity.map(item => (
-                <div key={item.id} style={{ display: 'flex', gap: '8px', padding: '8px 0', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '999px', background: item.tone === 'positive' ? '#2B7A4B' : item.tone === 'warning' ? '#A32D2D' : '#185FA5', marginTop: '5px', flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '12px', fontWeight: 500 }}>{item.title}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.subtitle}</div>
-                  </div>
-                  <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{item.timestamp}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+  const revenueChangePct = pctChange(d.revenueEtb, d.revenuePrevEtb)
+  const productionChangePct = pctChange(d.producedUnits, d.producedPrevUnits)
+  const netCashEtb = d.cashInEtb - d.cashOutEtb
 
-          {/* P&L */}
-          <div style={card}>
-            <div style={cardHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '12px', fontWeight: 500 }}>
-                <TrendingUp size={14} color="#3B6D11" /> This month — P&L
-              </div>
-              <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
-                {now.toLocaleString('default', { month: 'long' })} {now.getFullYear()}
-              </span>
-            </div>
-            <div style={{ padding: '10px 14px' }}>
-              {[
-                { label: 'Revenue',           val: d.pl.revenue,     color: '#0C447C', bold: false },
-                { label: 'Cost of goods',     val: -d.pl.cogs,       color: '#791F1F', bold: false },
-                { label: 'Gross profit',      val: d.pl.grossProfit, color: '#27500A', bold: true  },
-                { label: 'Est. net profit',   val: d.pl.netProfit,   color: '#27500A', bold: true  },
-              ].map(row => (
-                <div key={row.label} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '6px 0', borderBottom: '0.5px solid var(--color-border-tertiary)',
-                }}>
-                  <span style={{ fontSize: '12px', color: row.bold
-                    ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                    fontWeight: row.bold ? 500 : 400 }}>
-                    {row.label}
-                  </span>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace',
-                                 fontWeight: row.bold ? 500 : 400, color: row.color }}>
-                    {row.val < 0 ? '-' : ''}{N(Math.abs(row.val))} ETB
-                  </span>
-                </div>
-              ))}
-              {d.pl.prevNetProfit > 0 && (
-                <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between',
-                              fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                  <span>vs last month</span>
-                  <span style={{ color: vsLast >= 0 ? '#27500A' : '#791F1F', fontWeight: 500 }}>
-                    {vsLast >= 0 ? '+' : ''}{vsLast}%
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
+  if (d.loading && !d.lastUpdated) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center text-gray-400 gap-2">
+        <Loader2 size={18} className="animate-spin" /> Getting the numbers…
+      </div>
+    )
+  }
 
+  return (
+    <div className="p-5 max-w-5xl mx-auto space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-medium">{greeting()}, {firstName}</h1>
+          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1.5">
+            {new Date().toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' })}
+            <span className="text-gray-300">·</span>
+            <RefreshCw size={10} className={d.loading ? 'animate-spin' : ''} />
+            Updated {timeAgo(d.lastUpdated)}
+          </p>
         </div>
-
-        {/* Right */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-
-          {/* Inventory */}
-          <div style={card}>
-            <div style={cardHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '12px', fontWeight: 500 }}>
-                <Package size={14} color="#534AB7" /> Inventory
-              </div>
-              <Link to="/inventory" style={{ fontSize: '11px', color: '#185FA5',
-                                             textDecoration: 'none' }}>
-                Manage →
-              </Link>
-            </div>
-            <div style={{ padding: '10px 14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                            fontSize: '11px', color: 'var(--color-text-secondary)',
-                            marginBottom: '10px' }}>
-                <span>Total value</span>
-                <span style={{ fontWeight: 500, color: '#0C447C', fontFamily: 'monospace' }}>
-                  {N(d.inventoryValueEtb)} ETB
-                </span>
-              </div>
-              {d.inventory.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '12px 0',
-                              fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                  No inventory yet — receive a shipment first.
-                </div>
-              ) : d.inventory.slice(0, 5).map(item => (
-                <div key={item.sku} style={{ marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between',
-                                alignItems: 'center', marginBottom: '3px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 500 }}>{item.product_name}</span>
-                      {item.is_low && (
-                        <span style={{ fontSize: '9px', fontWeight: 500, padding: '1px 5px',
-                                       borderRadius: '99px', background: '#FCEBEB', color: '#791F1F' }}>
-                          Low
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '12px', fontFamily: 'monospace', fontWeight: 500 }}>
-                        {item.quantity_on_hand} pcs
-                      </span>
-                      <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)',
-                                     marginLeft: '6px' }}>
-                        {N(item.total_value / 1000)}K ETB
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ height: '3px', background: 'var(--color-border-tertiary)',
-                                borderRadius: '99px', overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', borderRadius: '99px',
-                      width: `${Math.min(100, item.quantity_on_hand / 5)}%`,
-                      background: item.is_low ? '#E24B4A' : '#185FA5',
-                    }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Payables + Receivables */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-
-            <div style={card}>
-              <div style={{ ...cardHead, padding: '8px 12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px',
-                              fontSize: '11px', fontWeight: 500 }}>
-                  <Building2 size={13} color="#854F0B" /> Payables
-                </div>
-              </div>
-              <div style={{ padding: '10px 12px' }}>
-                <div style={{ fontSize: '14px', fontWeight: 500, color: '#633806',
-                              fontFamily: 'monospace', marginBottom: '8px' }}>
-                  ${N(d.totalPayableUsd)}
-                </div>
-                {d.payables.length === 0 ? (
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                    No outstanding payables.
-                  </div>
-                ) : d.payables.slice(0, 3).map(p => (
-                  <div key={p.supplier_name} style={{
-                    padding: '5px 0', borderBottom: '0.5px solid var(--color-border-tertiary)',
-                  }}>
-                    <div style={{ fontSize: '11px', fontWeight: 500,
-                                  whiteSpace: 'nowrap', overflow: 'hidden',
-                                  textOverflow: 'ellipsis' }}>
-                      {p.supplier_name.split(' ').slice(0, 2).join(' ')}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                                  fontSize: '10px', color: 'var(--color-text-tertiary)',
-                                  marginTop: '1px' }}>
-                      <span>{p.payment_terms}</span>
-                      <span style={{ color: '#633806', fontFamily: 'monospace', fontWeight: 500 }}>
-                        ${N(p.outstanding_usd)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={card}>
-              <div style={{ ...cardHead, padding: '8px 12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px',
-                              fontSize: '11px', fontWeight: 500 }}>
-                  <Receipt size={13} color="#A32D2D" /> Receivables
-                </div>
-              </div>
-              <div style={{ padding: '10px 12px' }}>
-                <div style={{ fontSize: '14px', fontWeight: 500, color: '#791F1F',
-                              fontFamily: 'monospace', marginBottom: '8px' }}>
-                  {N(d.totalReceivableEtb / 1000)}K ETB
-                </div>
-                {d.receivables.length === 0 ? (
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                    No outstanding invoices.
-                  </div>
-                ) : d.receivables.slice(0, 3).map(r => (
-                  <div key={r.customer_name} style={{
-                    padding: '5px 0', borderBottom: '0.5px solid var(--color-border-tertiary)',
-                  }}>
-                    <div style={{ fontSize: '11px', fontWeight: 500,
-                                  whiteSpace: 'nowrap', overflow: 'hidden',
-                                  textOverflow: 'ellipsis' }}>
-                      {r.customer_name.split(' ').slice(0, 2).join(' ')}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                                  fontSize: '10px', marginTop: '1px' }}>
-                      <span style={{ color: r.is_overdue ? '#A32D2D' : 'var(--color-text-tertiary)' }}>
-                        {r.is_overdue ? `${r.days}d overdue` : `${r.days}d`}
-                      </span>
-                      <span style={{ fontFamily: 'monospace', fontWeight: 500 }}>
-                        {N(r.outstanding_etb / 1000)}K
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
-          {/* Production */}
-          <div style={card}>
-            <div style={cardHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                            fontSize: '12px', fontWeight: 500 }}>
-                <Wrench size={14} color="#185FA5" /> Production today
-              </div>
-              <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
-                {new Date().toLocaleDateString('en-ET', { month: 'short', day: 'numeric' })}
-              </span>
-            </div>
-            <div style={{ padding: '10px 14px' }}>
-              {d.production.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '12px 0',
-                              fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                  No production logged today yet.{' '}
-                  <Link to="/production" style={{ color: '#185FA5' }}>Log now →</Link>
-                </div>
-              ) : d.production.map(p => {
-                const pct = p.target_units > 0
-                  ? Math.min(100, Math.round(p.today_units / p.target_units * 100))
-                  : 0
-                const barColor = pct >= 80 ? '#639922' : pct >= 50 ? '#185FA5' : '#EF9F27'
-                return (
-                  <div key={p.product_name} style={{ marginBottom: '10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                                  alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '12px' }}>{p.product_name}</span>
-                      <span style={{ fontSize: '12px', fontFamily: 'monospace',
-                                     fontWeight: 500, color: '#0C447C' }}>
-                        {p.today_units}
-                        <span style={{ color: 'var(--color-text-tertiary)',
-                                       fontWeight: 400 }}> / {p.target_units}</span>
-                      </span>
-                    </div>
-                    <div style={{ height: '5px', background: 'var(--color-border-tertiary)',
-                                  borderRadius: '99px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', borderRadius: '99px',
-                                    width: `${pct}%`, background: barColor,
-                                    transition: 'width .3s' }} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
+        <div className="flex gap-1">
+          {(['day', 'week', 'month'] as Period[]).map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors
+                ${period === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+            >
+              {PERIOD_LABEL[p]}
+            </button>
+          ))}
         </div>
       </div>
+
+      {d.error && (
+        <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{d.error}</div>
+      )}
+
+      {/* Top advice */}
+      {d.topAdvice && (
+        <div className="bg-indigo-600 text-white rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-2 text-indigo-200 text-xs uppercase tracking-wide font-medium">
+            <Sparkles size={13} /> {PERIOD_LABEL[period]}'s advice
+          </div>
+          <p className="text-lg leading-snug">{d.topAdvice.text}</p>
+          {d.secondaryAdvice && (
+            <p className="text-sm text-indigo-200 mt-3 flex items-start gap-1.5">
+              <ArrowRight size={14} className="shrink-0 mt-0.5" /> {d.secondaryAdvice.text}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Tier 1 — headline KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp}
+          value={`${N(d.revenueEtb)} ETB`} trend={revenueChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
+        <KpiCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package}
+          value={`${N(d.producedUnits)} units`} trend={productionChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
+        <KpiCard label="Net cash" icon={Wallet}
+          value={`${netCashEtb >= 0 ? '+' : ''}${N(netCashEtb)} ETB`}
+          sub={`${N(d.cashInEtb)} in · ${N(d.cashOutEtb)} out`}
+          tone={netCashEtb >= 0 ? 'good' : 'warn'} />
+        <KpiCard label="Days of stock" icon={Package}
+          value={d.daysOfStock !== null ? `${d.daysOfStock.toFixed(0)} days` : '—'}
+          sub={`${N(d.inventoryValueEtb)} ETB on hand`}
+          tone={d.daysOfStock !== null && d.daysOfStock < 7 ? 'warn' : undefined} />
+        <KpiCard label="Customers owe you" icon={CreditCard}
+          value={`${N(d.receivablesEtb)} ETB`}
+          tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
+        <KpiCard label="You owe suppliers" icon={Landmark}
+          value={`${N(d.payablesEtb)} ETB`}
+          tone={d.payablesEtb > 0 ? 'warn' : undefined} />
+        <KpiCard label="Active customers" icon={Users}
+          value={String(d.activeCustomers)}
+          sub={`${PERIOD_LABEL[period].toLowerCase()}`} />
+        <KpiCard label="Frequent customers" icon={Users}
+          value={String(d.frequentCustomers)}
+          sub="2+ orders in 30 days" />
+      </div>
+
+      {/* Tier 2 — trends */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <p className="text-xs font-medium text-gray-500 mb-3">Revenue trend</p>
+          <MiniTrend points={d.revenueTrend} formatValue={n => `${N(n)} ETB`} />
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <p className="text-xs font-medium text-gray-500 mb-3">Production trend</p>
+          <MiniTrend points={d.productionTrend} formatValue={n => `${N(n)} units`} />
+        </div>
+      </div>
+
+      {/* Tier 3 — drill-down */}
+      <div>
+        <p className="text-xs font-medium text-gray-500 mb-2">Ask the business</p>
+        <div className="space-y-2">
+          <QuestionCard question="What sold best?">
+            {d.topProducts.length === 0 ? (
+              <p className="text-sm text-gray-400">No sales recorded in this period yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {d.topProducts.map((p, i) => (
+                  <div key={p.name} className="flex items-center gap-3 text-sm">
+                    <span className="text-gray-300 font-medium w-4">{i + 1}.</span>
+                    <span className="flex-1">{p.name}</span>
+                    <span className="text-gray-500">{N(p.quantity)} sold</span>
+                    <span className="font-medium w-28 text-right">{N(p.revenue)} ETB</span>
+                  </div>
+                ))}
+                {d.topProducts[0] && d.revenueEtb > 0 && (
+                  <AdviceNote text={`${d.topProducts[0].name} contributes ${Math.round((d.topProducts[0].revenue / d.revenueEtb) * 100)}% of revenue this ${period} — prioritize its supply chain and production schedule.`} />
+                )}
+              </div>
+            )}
+          </QuestionCard>
+
+          <QuestionCard question="Where are we losing money?">
+            {d.lowMarginProducts.length === 0 ? (
+              <p className="text-sm text-gray-400">Not enough sales data yet to check margins.</p>
+            ) : (
+              <div className="space-y-2">
+                {d.lowMarginProducts.map(p => (
+                  <div key={p.name} className="flex justify-between text-sm">
+                    <span>{p.name}</span>
+                    <span className={`font-medium ${p.marginPct < 20 ? 'text-red-500' : 'text-gray-600'}`}>
+                      {p.marginPct.toFixed(0)}% margin
+                    </span>
+                  </div>
+                ))}
+                {d.lowMarginProducts[0].marginPct < 20 && (
+                  <AdviceNote text={`Review "${d.lowMarginProducts[0].name}" — its cost or price needs attention. Check its BOM cost and consider a price adjustment.`} />
+                )}
+              </div>
+            )}
+          </QuestionCard>
+
+          <QuestionCard question="What should I do today?">
+            {d.todoToday.length === 0 ? (
+              <p className="text-sm text-gray-400 flex items-center gap-2">
+                <CheckCircle2 size={14} className="text-green-500" /> Nothing urgent — everything's on track.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {d.todoToday.map((t, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm">
+                    <span className="text-gray-300 mt-0.5">•</span>
+                    <span>{t.text}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </QuestionCard>
+        </div>
+      </div>
+
+      <p className="text-center text-xs text-gray-300 pt-2">
+        Need the full picture? <Link to="/reports" className="text-indigo-500 hover:underline">See detailed reports</Link>
+      </p>
     </div>
   )
 }

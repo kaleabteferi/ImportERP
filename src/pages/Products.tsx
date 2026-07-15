@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, type ChangeEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Tag, X, Check, Loader2 } from 'lucide-react'
+import { uploadProductImage } from '../api/products'
+import { Plus, Tag, X, Check, Loader2, ImagePlus } from 'lucide-react'
 
 interface Product {
   id: string
@@ -13,6 +14,7 @@ interface Product {
   is_assembled: boolean
   assembly_type: string | null
   is_active: boolean
+  image_url: string | null
 }
 
 const EMPTY = {
@@ -30,6 +32,9 @@ export function Products() {
   const [saving, setSaving]     = useState(false)
   const [error, setError]       = useState<string | null>(null)
   const [editId, setEditId]     = useState<string | null>(null)
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -44,6 +49,7 @@ export function Products() {
   function openNew() {
     setForm({ ...EMPTY })
     setEditId(null)
+    setImageUrl(null)
     setError(null)
     setOpen(true)
   }
@@ -60,6 +66,7 @@ export function Products() {
       assembly_type:   p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED'),
     })
     setEditId(p.id)
+    setImageUrl(p.image_url)
     setError(null)
     setOpen(true)
   }
@@ -88,6 +95,22 @@ export function Products() {
     setSaving(false)
     setOpen(false)
     load()
+  }
+
+  async function handleImagePick(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !editId) return
+    setUploadingImage(true)
+    setError(null)
+    try {
+      const url = await uploadProductImage(editId, file)
+      setImageUrl(url)
+    } catch (err: any) {
+      setError(err?.message ?? 'Failed to upload image.')
+    } finally {
+      setUploadingImage(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   return (
@@ -135,9 +158,10 @@ export function Products() {
 
       {!loading && products.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
+          <div className="grid grid-cols-[40px_1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
                           px-4 py-2.5 bg-gray-50 border-b border-gray-100
                           text-xs font-medium text-gray-400 uppercase tracking-wide">
+            <div></div>
             <div>SKU</div>
             <div>Name</div>
             <div>Unit</div>
@@ -150,10 +174,17 @@ export function Products() {
           {products.map((p, i) => (
             <div
               key={p.id}
-              className={`grid grid-cols-[1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
+              className={`grid grid-cols-[40px_1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
                           px-4 py-3 items-center text-sm
                           ${i < products.length - 1 ? 'border-b border-gray-50' : ''}`}
             >
+              <div className="w-8 h-8 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
+                {p.image_url ? (
+                  <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                ) : (
+                  <Tag size={14} className="text-gray-300" />
+                )}
+              </div>
               <div className="font-mono text-xs text-blue-700 font-medium">{p.sku}</div>
               <div>
                 <p className="font-medium text-gray-900">{p.name}</p>
@@ -216,6 +247,38 @@ export function Products() {
             </div>
 
             <div className="px-5 py-4 space-y-4">
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Photo</label>
+                {editId ? (
+                  <div className="flex items-center gap-3">
+                    <div className="w-16 h-16 rounded-xl bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
+                      {imageUrl ? (
+                        <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImagePlus size={20} className="text-gray-300" />
+                      )}
+                    </div>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingImage}
+                        className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {uploadingImage ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+                        {imageUrl ? 'Replace photo' : 'Add photo'}
+                      </button>
+                      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePick} />
+                      <p className="text-xs text-gray-400 mt-1">Shown in the warehouse daily log so managers can pick products by sight.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+                    Save the product first, then reopen it here to add a photo.
+                  </p>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

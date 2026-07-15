@@ -48,11 +48,11 @@ export async function fetchOrdersWithMargins(limit = 50) {
     .from('sales_orders')
     .select(`
       id, order_number, invoice_number, sale_date, status,
-      total_etb, gross_profit_etb, gross_margin_pct,
+      total_etb, paid_amount, gross_profit_etb, gross_margin_pct,
       customers ( name, type ),
       sales_order_lines (
         product_id, quantity, unit_price_etb,
-        unit_cost_etb_snapshot, line_profit_etb, line_margin_pct, cost_source,
+        unit_cost_etb_snapshot, gross_profit_etb, cost_source,
         products ( name, sku )
       )
     `)
@@ -67,7 +67,7 @@ export async function recordPayment(
   orderId: string,
   amountEtb: number,
   method: string,
-  reference?: string,
+  options?: { reference?: string; sensitive?: boolean; notes?: string; accountId?: string },
 ) {
   const { error } = await supabase
     .from('sales_payments')
@@ -75,7 +75,10 @@ export async function recordPayment(
       sales_order_id: orderId,
       amount_etb:     amountEtb,
       method,
-      reference:      reference ?? null,
+      reference:      options?.reference ?? null,
+      sensitive_flag: options?.sensitive ?? false,
+      notes:          options?.notes ?? null,
+      account_id:     options?.accountId ?? null,
     });
 
   if (error) throw new Error(error.message);

@@ -74,6 +74,9 @@ export async function fetchFinalizationData(shipmentId: string) {
       .single(),
   ])
 
+  if (expRes.error) throw new Error(expRes.error.message)
+  if (itemRes.error) throw new Error(itemRes.error.message)
+
   const items: ItemForReview[] = (itemRes.data ?? []).map((row: any) => ({
     id:                   row.id,
     product_id:           row.product_id,
@@ -94,24 +97,19 @@ export async function fetchFinalizationData(shipmentId: string) {
   }
 }
 
-// Update a single expense amount before finalizing
+// Update the final ETB amount for a single expense before finalizing.
+// `finalAmountEtb` is already ETB (that's what the review step edits) — do
+// not reconvert by currency here, the original `amount`/`currency` columns
+// represent the source transaction and must stay untouched.
 export async function updateExpenseAmount(
   expenseId: string,
-  newAmount: number,
-  currency: string,
-  fxRate: number,
+  finalAmountEtb: number,
 ) {
-  const amountEtb = currency === 'ETB' ? newAmount
-    : currency === 'USD' ? newAmount * fxRate
-    : newAmount * (fxRate / 7.2)
-
   const { error } = await supabase
     .from('shipment_expenses')
     .update({
-      amount:        newAmount,
-      amount_etb:    Math.round(amountEtb * 100) / 100,
-      exchange_rate: fxRate,
-      updated_at:    new Date().toISOString(),
+      amount_etb: Math.round(finalAmountEtb * 100) / 100,
+      updated_at: new Date().toISOString(),
     })
     .eq('id', expenseId)
 
@@ -140,7 +138,7 @@ export function calculateCostPreview(
   return items.map((item, i) => {
     const share       = totalBasis > 0 ? bases[i] / totalBasis : 1 / items.length
     const overhead    = totalOverhead * share
-    const newCost     = Math.round(item.unit_price_usd * fxRate + overhead / item.quantity)
+    const newCost     = Math.round(item.unit_price_usd * fxRate + (item.quantity > 0 ? overhead / item.quantity : 0))
     const oldCost     = item.unit_landed_cost_etb ?? 0
 
     return {

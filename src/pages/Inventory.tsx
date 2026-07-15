@@ -1,7 +1,92 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { calculateInventoryBalances, type InventoryBalance } from '../lib/inventoryLedger'
-import { Package, AlertTriangle, Loader2 } from 'lucide-react'
+import { fetchAllProducts } from '../api/bom'
+import { fetchWarehousesList } from '../api/income'
+import { usePageState } from '../lib/pageState'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert } from 'lucide-react'
+
+interface Option { id: string; name: string }
+
+function AdjustStockForm({ products, warehouses, onDone, onCancel }: {
+  products: Array<{ id: string; name: string; sku: string }>
+  warehouses: Option[]
+  onDone: () => void
+  onCancel: () => void
+}) {
+  const [productId, setProductId] = useState('')
+  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id ?? '')
+  const [quantity, setQuantity] = useState('')
+  const [unitCost, setUnitCost] = useState('')
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    const qty = Number(quantity)
+    if (!productId) { setError('Choose a product.'); return }
+    if (!warehouseId) { setError('Choose a warehouse.'); return }
+    if (!qty || qty === 0) { setError('Enter a nonzero quantity — positive to add stock, negative to remove it.'); return }
+    if (!notes.trim()) { setError('Add a reason — this becomes part of the permanent audit trail.'); return }
+    setSaving(true); setError(null)
+    try {
+      const { error } = await supabase.from('inventory_ledger').insert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        quantity: qty,
+        unit_cost_etb: qty > 0 && unitCost ? Number(unitCost) : null,
+        movement_type: 'ADJUSTMENT',
+        movement_date: new Date().toISOString().split('T')[0],
+        notes,
+      })
+      if (error) throw error
+      onDone()
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to record adjustment.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+      <p className="text-xs font-medium text-amber-700 flex items-center gap-1"><ShieldAlert size={12} /> Manual stock adjustment</p>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <select value={productId} onChange={e => setProductId(e.target.value)}
+          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+          <option value="">Product</option>
+          {products.map(p => <option key={p.id} value={p.id}>{p.name} {p.sku && `(${p.sku})`}</option>)}
+        </select>
+        <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
+          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+          <option value="">Warehouse</option>
+          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </div>
+      <div className="flex gap-2">
+        <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)}
+          placeholder="Quantity (+ to add, − to remove)"
+          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+        {Number(quantity) > 0 && (
+          <input type="number" value={unitCost} onChange={e => setUnitCost(e.target.value)}
+            placeholder="Unit cost ETB (optional)"
+            className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+        )}
+      </div>
+      <input value={notes} onChange={e => setNotes(e.target.value)}
+        placeholder="Reason (e.g. physical count correction, damaged stock, opening balance)"
+        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
+        <button onClick={submit} disabled={saving}
+          className="px-3 py-1.5 text-xs rounded-lg bg-amber-600 text-white disabled:opacity-50">
+          {saving ? 'Saving…' : 'Record adjustment'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 interface InventoryRow extends InventoryBalance {}
 
@@ -34,8 +119,11 @@ export function Inventory() {
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
-  const [tab, setTab]             = useState<'stock' | 'movements'>('stock')
-  const [filterProd, setFilterProd] = useState('')
+  const [tab, setTab]             = usePageState<'stock' | 'movements'>('inventory.tab', 'stock')
+  const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
+  const [showAdjustForm, setShowAdjustForm] = useState(false)
+  const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string }>>([])
+  const [warehouses, setWarehouses] = useState<Option[]>([])
 
   async function load() {
     setLoading(true)
@@ -83,13 +171,20 @@ export function Inventory() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    fetchAllProducts().then((rows: any) => setProducts((rows ?? []).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku })))).catch(console.error)
+    fetchWarehousesList().then((rows: any) => setWarehouses((rows ?? []).map((w: any) => ({ id: w.id, name: w.name })))).catch(console.error)
+  }, [])
 
   const totalValue = inventory.reduce((s, i) => s + i.total_value, 0)
   const lowStock   = inventory.filter(i => i.quantity_on_hand < 20)
   const moves      = filterProd
     ? movements.filter(m => (m.products as any)?.name === filterProd)
     : movements
+  // inventory has one row per product+warehouse, but this filter is by
+  // product name only — dedupe so the same product isn't listed per warehouse.
+  const filterableProducts = [...new Map(inventory.map(i => [i.product_name, i])).values()]
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -104,6 +199,12 @@ export function Inventory() {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowAdjustForm(v => !v)}
+            className="px-3 py-1.5 text-xs rounded-lg bg-amber-600 text-white flex items-center gap-1"
+          >
+            {showAdjustForm ? <X size={12} /> : <Plus size={12} />} Adjust stock
+          </button>
           {(['stock', 'movements'] as const).map(t => (
             <button
               key={t}
@@ -118,6 +219,15 @@ export function Inventory() {
           ))}
         </div>
       </div>
+
+      {showAdjustForm && (
+        <AdjustStockForm
+          products={products}
+          warehouses={warehouses}
+          onCancel={() => setShowAdjustForm(false)}
+          onDone={() => { setShowAdjustForm(false); load() }}
+        />
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -171,7 +281,7 @@ export function Inventory() {
                 const isCritical = item.quantity_on_hand < 5
                 return (
                   <div
-                    key={item.product_id}
+                    key={`${item.product_id}:${item.warehouse_id ?? ''}`}
                     className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                                 items-center
                                 ${i < inventory.length - 1 ? 'border-b border-gray-50' : ''}`}
@@ -243,7 +353,7 @@ export function Inventory() {
                            bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
               >
                 <option value="">All products</option>
-                {inventory.map(i => (
+                {filterableProducts.map(i => (
                   <option key={i.product_id} value={i.product_name}>{i.product_name}</option>
                 ))}
               </select>

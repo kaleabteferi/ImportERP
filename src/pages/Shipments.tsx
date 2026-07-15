@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { Plus, Ship, X, Check, Loader2, AlertTriangle } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { receiveShipmentAtDjibouti, resolveAssemblyType } from '../lib/inventoryReceive'
+import { fetchAliWarehouseId } from '../api/warehouseTransfers'
 
 interface Shipment {
   id: string
@@ -11,10 +13,14 @@ interface Shipment {
   eta_djibouti: string | null
   arrived_addis_date: string | null
   allocation_method: string
+  company_id: string | null
+  djibouti_received_at: string | null
   suppliers: { name: string } | null
+  companies: { name: string } | null
 }
 
 interface Supplier { id: string; name: string }
+interface Company { id: string; name: string }
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   ORDERED:            { label: 'Ordered',       cls: 'bg-gray-100 text-gray-600'   },
@@ -28,7 +34,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 }
 
 const EMPTY_FORM = {
-  supplier_id: '', container_number: '', vessel_name: '',
+  supplier_id: '', company_id: '', container_number: '', vessel_name: '',
   etd_china: '', eta_djibouti: '', status: 'ORDERED',
   allocation_method: 'QUANTITY', notes: '',
 }
@@ -36,6 +42,7 @@ const EMPTY_FORM = {
 export function Shipments() {
   const [shipments, setShipments] = useState<Shipment[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading]     = useState(true)
   const [open, setOpen]           = useState(false)
   const [form, setForm]           = useState({ ...EMPTY_FORM })
@@ -44,18 +51,22 @@ export function Shipments() {
 
   async function load() {
     setLoading(true)
-    const [shRes, supRes] = await Promise.all([
+    const [shRes, supRes, coRes] = await Promise.all([
       supabase.from('shipments')
-        .select('id, shipment_number, container_number, status, eta_djibouti, arrived_addis_date, allocation_method, suppliers(name)')
+        .select('id, shipment_number, container_number, status, eta_djibouti, arrived_addis_date, allocation_method, company_id, djibouti_received_at, suppliers(name), companies(name)')
         .order('created_at', { ascending: false }),
       supabase.from('suppliers')
         .select('id, name').eq('is_active', true).order('name'),
+      supabase.from('companies')
+        .select('id, name').eq('is_active', true).order('is_primary', { ascending: false }).order('name'),
     ])
-    setShipments((shRes.data ?? []).map(s => ({
+    setShipments((shRes.data ?? []).map((s: any) => ({
       ...s,
       suppliers: Array.isArray(s.suppliers) ? s.suppliers[0] ?? null : s.suppliers,
+      companies: Array.isArray(s.companies) ? s.companies[0] ?? null : s.companies,
     })))
     setSuppliers(supRes.data ?? [])
+    setCompanies(coRes.data ?? [])
     setLoading(false)
   }
 
@@ -63,25 +74,42 @@ export function Shipments() {
 
   const set = (f: string, v: string) => setForm(p => ({ ...p, [f]: v }))
 
+  async function nextShipmentNumber(year: number): Promise<string> {
+    // Best-effort: count from the DB (not the possibly-stale client list) to
+    // shrink the race window. Two users creating a shipment in the same
+    // instant can still collide — a DB sequence/trigger is the real fix.
+    const { count } = await supabase
+      .from('shipments')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', `${year}-01-01`)
+      .lt('created_at', `${year + 1}-01-01`)
+    return `SHP-${year}-${String((count ?? 0) + 1).padStart(3, '0')}`
+  }
+
   async function save() {
     if (!form.supplier_id) { setError('Select a supplier'); return }
     setSaving(true)
     setError(null)
-    const year  = new Date().getFullYear()
-    const count = shipments.length + 1
-    const num   = `SHP-${year}-${String(count).padStart(3, '0')}`
+    const year = new Date().getFullYear()
 
-    const { error: err } = await supabase.from('shipments').insert({
-      shipment_number:   num,
-      supplier_id:       form.supplier_id,
-      container_number:  form.container_number || null,
-      vessel_name:       form.vessel_name || null,
-      etd_china:         form.etd_china || null,
-      eta_djibouti:      form.eta_djibouti || null,
-      status:            form.status,
-      allocation_method: form.allocation_method,
-      notes:             form.notes || null,
-    })
+    let err: { message: string; code?: string } | null = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const num = await nextShipmentNumber(year)
+      const res = await supabase.from('shipments').insert({
+        shipment_number:   num,
+        supplier_id:       form.supplier_id,
+        company_id:        form.company_id || null,
+        container_number:  form.container_number || null,
+        vessel_name:       form.vessel_name || null,
+        etd_china:         form.etd_china || null,
+        eta_djibouti:      form.eta_djibouti || null,
+        status:            form.status,
+        allocation_method: form.allocation_method,
+        notes:             form.notes || null,
+      })
+      err = res.error
+      if (!err || err.code !== '23505') break // stop unless it's a unique-constraint collision
+    }
     if (err) { setError(err.message); setSaving(false); return }
     setSaving(false)
     setOpen(false)
@@ -91,6 +119,37 @@ export function Shipments() {
 
   async function updateStatus(id: string, status: string) {
     await supabase.from('shipments').update({ status }).eq('id', id)
+
+    const shipment = shipments.find(s => s.id === id)
+    if (status === 'AT_DJIBOUTI' && shipment && !shipment.djibouti_received_at) {
+      try {
+        const { data: itemRows, error: itemsError } = await supabase
+          .from('shipment_items')
+          .select('id, product_id, quantity, unit_landed_cost_etb, products(name, assembly_type, is_assembled)')
+          .eq('shipment_id', id)
+        if (itemsError) throw itemsError
+
+        const items = (itemRows ?? []).map((row: any) => {
+          const product = Array.isArray(row.products) ? row.products[0] : row.products
+          return {
+            shipment_item_id: row.id,
+            product_id: row.product_id,
+            product_name: product?.name ?? 'Unknown product',
+            quantity: Number(row.quantity ?? 0),
+            unit_landed_cost_etb: row.unit_landed_cost_etb,
+            assembly_type: resolveAssemblyType(product ?? {}),
+          }
+        })
+
+        if (items.length > 0) {
+          const aliWarehouseId = await fetchAliWarehouseId()
+          await receiveShipmentAtDjibouti(id, items, aliWarehouseId)
+        }
+      } catch (e: any) {
+        setError(`Status updated, but couldn't post items into Ali's warehouse: ${e?.message ?? e}`)
+      }
+    }
+
     load()
   }
 
@@ -115,6 +174,12 @@ export function Shipments() {
           <Plus size={13} /> New shipment
         </button>
       </div>
+
+      {!open && error && (
+        <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <AlertTriangle size={12} /> {error}
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -175,6 +240,7 @@ export function Shipments() {
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {(sh.suppliers as any)?.name ?? '—'}
+                          {sh.companies?.name && ` · ${sh.companies.name}`}
                         </p>
                       </div>
                       <div className="text-xs font-mono text-gray-500">
@@ -237,6 +303,7 @@ export function Shipments() {
                         <p className="text-sm font-medium">{sh.shipment_number}</p>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {(sh.suppliers as any)?.name ?? '—'}
+                          {sh.companies?.name && ` · ${sh.companies.name}`}
                         </p>
                       </div>
                       <div className="text-xs font-mono text-gray-400">
@@ -302,6 +369,23 @@ export function Shipments() {
                   ))}
                 </select>
               </div>
+
+              {companies.length > 0 && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Company</label>
+                  <select
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                               focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                    value={form.company_id}
+                    onChange={e => set('company_id', e.target.value)}
+                  >
+                    <option value="">— unassigned —</option>
+                    {companies.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

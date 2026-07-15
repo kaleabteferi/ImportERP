@@ -90,7 +90,7 @@ export function useCostFinalization(shipmentId: string) {
         await Promise.all(
           expenses
             .filter(e => e.cost_status === 'PROVISIONAL')
-            .map(e => updateExpenseAmount(e.id, e.finalAmount, e.currency, fxRate))
+            .map(e => updateExpenseAmount(e.id, e.finalAmount))
         )
       } catch (e: any) {
         setError(e.message)

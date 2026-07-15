@@ -48,6 +48,20 @@ interface Warehouse {
   city: string | null
 }
 
+interface CompanySettings {
+  company_name: string
+  address: string | null
+  city: string | null
+  tin_number: string | null
+}
+
+interface Consignee {
+  name: string
+  address: string | null
+  city: string | null
+  tin_number: string | null
+}
+
 interface ShipmentItem {
   id: string
   product_id: string
@@ -200,6 +214,8 @@ export function ShipmentDetail() {
   const [receiving, setReceiving] = useState(false)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('')
+  const [company, setCompany]     = useState<CompanySettings | null>(null)
+  const [consignee, setConsignee] = useState<Consignee | null>(null)
   
 
   const load = useCallback(async () => {
@@ -207,7 +223,7 @@ export function ShipmentDetail() {
     setLoading(true)
     setError(null)
 
-    const [shRes, itemsRes, expRes, prodRes, fxRes, whRes] = await Promise.all([
+    const [shRes, itemsRes, expRes, prodRes, fxRes, whRes, coRes, cnRes] = await Promise.all([
       supabase.from('shipments')
         .select('*, suppliers(name, contact_person, email)')
         .eq('id', id)
@@ -219,6 +235,9 @@ export function ShipmentDetail() {
         .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
         .order('effective_date', { ascending: false }).limit(1),
       supabase.from('warehouses').select('*').order('name'),
+      supabase.from('company_settings').select('company_name, address, city, tin_number').limit(1).maybeSingle(),
+      supabase.from('consignees').select('name, address, city, tin_number')
+        .order('is_default', { ascending: false }).limit(1).maybeSingle(),
     ])
 
     const prodMap = new Map((prodRes.data ?? []).map((p: Product) => [p.id, p]))
@@ -239,6 +258,8 @@ export function ShipmentDetail() {
         || whRes.data?.[0]?.id
         || ''
       setSelectedWarehouseId(defaultWarehouse)
+      setCompany(coRes.data ?? null)
+      setConsignee(cnRes.data ?? null)
     }
     setLoading(false)
   }, [id])
@@ -1172,9 +1193,11 @@ export function ShipmentDetail() {
               <div className="px-6 py-4">
                 <p className="text-xs font-medium text-gray-400 uppercase
                               tracking-wide mb-2">Buyer (Importer)</p>
-                <p className="text-sm font-medium">Your Company Name</p>
-                <p className="text-xs text-gray-500 mt-1">Addis Ababa, Ethiopia</p>
-                <p className="text-xs text-gray-400 mt-0.5">TIN: 0012345678</p>
+                <p className="text-sm font-medium">{company?.company_name ?? consignee?.name ?? 'Set company name in Settings'}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {[company?.address ?? consignee?.address, company?.city ?? consignee?.city ?? 'Addis Ababa', 'Ethiopia'].filter(Boolean).join(', ')}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">TIN: {company?.tin_number ?? consignee?.tin_number ?? '-'}</p>
               </div>
             </div>
 
@@ -1286,7 +1309,7 @@ export function ShipmentDetail() {
                 </div>
                 <div className="text-right text-xs text-gray-400">
                   <p>Shipper: {supplier?.name ?? '-'}</p>
-                  <p className="mt-0.5">Consignee: Your Company Name</p>
+                  <p className="mt-0.5">Consignee: {consignee?.name ?? company?.company_name ?? '-'}</p>
                 </div>
               </div>
             </div>
@@ -1449,8 +1472,10 @@ export function ShipmentDetail() {
                 <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
                   Consignee (Receiver)
                 </p>
-                <p className="text-sm font-medium">Your Company Name</p>
-                <p className="text-xs text-gray-500 mt-1">Kaliti, Addis Ababa, Ethiopia</p>
+                <p className="text-sm font-medium">{consignee?.name ?? company?.company_name ?? 'Set consignee in Settings'}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {[consignee?.address ?? company?.address, consignee?.city ?? company?.city ?? 'Addis Ababa', 'Ethiopia'].filter(Boolean).join(', ')}
+                </p>
               </div>
             </div>
 

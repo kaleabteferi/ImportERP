@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAccounts, createAccount, updateAccount } from '../api/accounts'
+import type { Account } from '../api/accounts'
 import {
   Building2, DollarSign, Users, Check,
-  Loader2, Plus, X, Info
+  Loader2, Plus, X, Info, Wallet
 } from 'lucide-react'
 
 interface CompanySettings {
@@ -47,19 +49,35 @@ interface Warehouse {
   address: string | null
   city: string | null
   is_active: boolean
+  has_production: boolean
+  production_manager_employee_id: string | null
   created_at: string
+}
+
+interface Company {
+  id: string
+  name: string
+  license_type: string | null
+  tin_number: string | null
+  is_primary: boolean
+  is_active: boolean
+}
+
+interface Employee {
+  id: string
+  full_name: string
 }
 
 const RATE_TYPES = [
   {
     key: 'CUSTOMS',
     label: 'Customs rate',
-    desc: 'NBE rate used by ERCA for customs valuation. This is the rate that determines your duty amount.',
+    desc: 'Reference rate ERCA uses for customs valuation (duty/VAT/surtax base). Confirm with your clearing agent — it can diverge from bank rates since the 2024 market-based FX reform.',
   },
   {
     key: 'BANK_TT',
     label: 'TT transfer rate',
-    desc: 'Rate used when paying supplier by Telegraphic Transfer (TT). Usually slightly higher than customs rate.',
+    desc: 'Rate your bank actually quotes when paying a supplier by Telegraphic Transfer (TT). Bank-negotiated since the 2024 reform, so check it per-payment rather than assuming it matches the customs rate.',
   },
   {
     key: 'BANK_LC',
@@ -70,12 +88,14 @@ const RATE_TYPES = [
 
 const TABS = [
   { key: 'company',    label: 'Company',       icon: Building2  },
+  { key: 'companies',  label: 'Companies',      icon: Building2  },
+  { key: 'accounts',   label: 'Accounts',       icon: Wallet     },
   { key: 'forex',      label: 'Exchange rates', icon: DollarSign },
   { key: 'warehouses', label: 'Warehouses',     icon: Building2  },
   { key: 'consignees', label: 'Consignees',     icon: Users      },
 ]
 
-type TabKey = 'company' | 'forex' | 'warehouses' | 'consignees'
+type TabKey = 'company' | 'companies' | 'accounts' | 'forex' | 'warehouses' | 'consignees'
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -108,10 +128,27 @@ export function Settings() {
   const [rates, setRates]     = useState<ForexRate[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [consignees, setConsignees] = useState<Consignee[]>([])
+  const [companiesList, setCompaniesList] = useState<Company[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [saved, setSaved]     = useState(false)
   const [error, setError]     = useState<string | null>(null)
+
+  // Company (multi-company) modal
+  const [ownOpen, setOwnOpen] = useState(false)
+  const [ownForm, setOwnForm] = useState({
+    name: '', license_type: 'PLC', tin_number: '', is_primary: false, is_active: true,
+  })
+  const [ownEditId, setOwnEditId] = useState<string | null>(null)
+  const [ownSaving, setOwnSaving] = useState(false)
+
+  // Account (cash/bank) modal
+  const [acctOpen, setAcctOpen] = useState(false)
+  const [acctForm, setAcctForm] = useState({ name: '', type: 'bank' as 'cash' | 'bank', currency: 'ETB', companyId: '' })
+  const [acctEditId, setAcctEditId] = useState<string | null>(null)
+  const [acctSaving, setAcctSaving] = useState(false)
 
   // Consignee modal
   const [cOpen, setCOpen]     = useState(false)
@@ -125,6 +162,7 @@ export function Settings() {
   const [wOpen, setWOpen] = useState(false)
   const [wForm, setWForm] = useState({
     name: '', code: '', address: '', city: 'Addis Ababa', is_active: true,
+    has_production: false, production_manager_employee_id: '',
   })
   const [wEditId, setWEditId] = useState<string | null>(null)
   const [wSaving, setWSaving] = useState(false)
@@ -137,7 +175,7 @@ export function Settings() {
 
   async function load() {
     setLoading(true)
-    const [coRes, fxRes, whRes, cnRes] = await Promise.all([
+    const [coRes, fxRes, whRes, cnRes, ownRes, empRes, acctRows] = await Promise.all([
       supabase.from('company_settings').select('*').limit(1).single(),
       supabase.from('forex_rates')
         .select('*')
@@ -147,11 +185,17 @@ export function Settings() {
         .limit(20),
       supabase.from('warehouses').select('*').order('name'),
       supabase.from('consignees').select('*').order('name'),
+      supabase.from('companies').select('*').order('is_primary', { ascending: false }).order('name'),
+      supabase.from('employees').select('id, full_name').order('full_name'),
+      fetchAccounts().catch(() => []),
     ])
     if (coRes.data) setCompany(coRes.data)
     setRates(fxRes.data ?? [])
     setWarehouses(whRes.data ?? [])
     setConsignees(cnRes.data ?? [])
+    setCompaniesList(ownRes.data ?? [])
+    setEmployees(empRes.data ?? [])
+    setAccounts(acctRows)
     setLoading(false)
   }
 
@@ -226,7 +270,15 @@ export function Settings() {
 
   async function saveWarehouse() {
     setWSaving(true)
-    const payload = { ...wForm }
+    const payload = {
+      name: wForm.name,
+      code: wForm.code,
+      address: wForm.address,
+      city: wForm.city,
+      is_active: wForm.is_active,
+      has_production: wForm.has_production,
+      production_manager_employee_id: wForm.production_manager_employee_id || null,
+    }
     if (wEditId) {
       await supabase.from('warehouses').update(payload).eq('id', wEditId)
     } else {
@@ -235,7 +287,7 @@ export function Settings() {
     setWSaving(false)
     setWOpen(false)
     setWEditId(null)
-    setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true })
+    setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true, has_production: false, production_manager_employee_id: '' })
     load()
   }
 
@@ -246,9 +298,80 @@ export function Settings() {
       address: w.address ?? '',
       city: w.city ?? 'Addis Ababa',
       is_active: w.is_active,
+      has_production: w.has_production,
+      production_manager_employee_id: w.production_manager_employee_id ?? '',
     })
     setWEditId(w.id)
     setWOpen(true)
+  }
+
+  // ── Companies (multi-company / multi-license) ────────────────────────
+  async function saveCompanyEntity() {
+    if (!ownForm.name.trim()) return
+    setOwnSaving(true)
+    const payload = {
+      name: ownForm.name,
+      license_type: ownForm.license_type || null,
+      tin_number: ownForm.tin_number || null,
+      is_primary: ownForm.is_primary,
+      is_active: ownForm.is_active,
+    }
+    if (ownForm.is_primary) {
+      // only one company can be primary at a time
+      await supabase.from('companies').update({ is_primary: false }).neq('id', ownEditId ?? '00000000-0000-0000-0000-000000000000')
+    }
+    if (ownEditId) {
+      await supabase.from('companies').update(payload).eq('id', ownEditId)
+    } else {
+      await supabase.from('companies').insert(payload)
+    }
+    setOwnSaving(false)
+    setOwnOpen(false)
+    setOwnEditId(null)
+    setOwnForm({ name: '', license_type: 'PLC', tin_number: '', is_primary: false, is_active: true })
+    load()
+  }
+
+  function openEditCompanyEntity(c: Company) {
+    setOwnForm({
+      name: c.name,
+      license_type: c.license_type ?? 'PLC',
+      tin_number: c.tin_number ?? '',
+      is_primary: c.is_primary,
+      is_active: c.is_active,
+    })
+    setOwnEditId(c.id)
+    setOwnOpen(true)
+  }
+
+  // ── Accounts (cash tills / bank accounts) ────────────────────────────
+  async function saveAccount() {
+    if (!acctForm.name.trim()) return
+    setAcctSaving(true)
+    try {
+      if (acctEditId) {
+        await updateAccount(acctEditId, { name: acctForm.name, type: acctForm.type, currency: acctForm.currency })
+      } else {
+        await createAccount({ name: acctForm.name, type: acctForm.type, currency: acctForm.currency, companyId: acctForm.companyId || undefined })
+      }
+      setAcctOpen(false)
+      setAcctEditId(null)
+      setAcctForm({ name: '', type: 'bank', currency: 'ETB', companyId: '' })
+      load()
+    } finally {
+      setAcctSaving(false)
+    }
+  }
+
+  function openEditAccount(a: Account) {
+    setAcctForm({ name: a.name, type: a.type, currency: a.currency, companyId: a.company_id ?? '' })
+    setAcctEditId(a.id)
+    setAcctOpen(true)
+  }
+
+  async function deactivateAccount(a: Account) {
+    await updateAccount(a.id, { isActive: false })
+    load()
   }
 
   if (loading) return (
@@ -347,7 +470,7 @@ export function Settings() {
                 <div>
                   <div className="flex items-center gap-1 mb-1">
                     <label className="text-xs text-gray-500">VAT registration</label>
-                    <InfoTip text="Your VAT registration number. Required if your annual turnover exceeds 500,000 ETB (Ethiopian VAT threshold as of 2024)." />
+                    <InfoTip text="Your VAT registration number. Mandatory once your taxable turnover exceeds 2,000,000 ETB in any 12-month period (raised from 1,000,000 ETB by VAT Proclamation No. 1341/2024). Voluntary registration is allowed between 1,000,000 and 2,000,000 ETB if you want to claim input VAT credits." />
                   </div>
                   <input
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
@@ -434,6 +557,352 @@ export function Settings() {
         </div>
       )}
 
+      {/* ── Companies tab (multi-company / multi-license) ────── */}
+      {tab === 'companies' && (
+        <div className="space-y-4">
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-2 text-xs text-gray-500 max-w-md">
+              <Info size={13} className="mt-0.5 shrink-0 text-blue-400" />
+              <span>
+                Each licensed entity (the main PLC and any individually-licensed
+                companies) gets its own row here. Shipments, sales, purchases,
+                and expenses can be attributed to a company so books and
+                receipts stay separate even though people and warehouses are
+                shared.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setOwnForm({ name: '', license_type: 'PLC', tin_number: '', is_primary: companiesList.length === 0, is_active: true })
+                setOwnEditId(null)
+                setOwnOpen(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                         text-white text-xs rounded-lg hover:bg-blue-700
+                         transition-colors shrink-0 ml-3"
+            >
+              <Plus size={13} /> Add company
+            </button>
+          </div>
+
+          {companiesList.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+              <Building2 size={32} className="mx-auto text-gray-200 mb-3" />
+              <p className="text-sm font-medium text-gray-500 mb-1">No companies yet</p>
+              <p className="text-xs text-gray-400 mb-4">
+                Add the main PLC and any other licensed entities you operate under.
+              </p>
+              <button
+                onClick={() => setOwnOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                           text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus size={13} /> Add first company
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {companiesList.map((c, i) => (
+                <div
+                  key={c.id}
+                  className={`px-5 py-4 flex items-start justify-between ${i > 0 ? 'border-t border-gray-100' : ''}`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-sm font-medium">{c.name}</p>
+                      {c.is_primary && (
+                        <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-medium">
+                          Primary
+                        </span>
+                      )}
+                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${c.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {c.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {[c.license_type, c.tin_number ? `TIN: ${c.tin_number}` : null].filter(Boolean).join(' • ') || 'No license details yet'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => openEditCompanyEntity(c)}
+                    className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-500 shrink-0 ml-3"
+                  >
+                    Edit
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {ownOpen && (
+            <div
+              className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+              onClick={e => e.target === e.currentTarget && setOwnOpen(false)}
+            >
+              <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <h2 className="text-sm font-medium">{ownEditId ? 'Edit company' : 'New company'}</h2>
+                  <button onClick={() => setOwnOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Company name <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      value={ownForm.name}
+                      onChange={e => setOwnForm(p => ({ ...p, name: e.target.value }))}
+                      placeholder="HBK Trading PLC"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">License type</label>
+                      <select
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        value={ownForm.license_type}
+                        onChange={e => setOwnForm(p => ({ ...p, license_type: e.target.value }))}
+                      >
+                        <option value="PLC">PLC</option>
+                        <option value="Personal">Personal</option>
+                        <option value="Sole Proprietorship">Sole Proprietorship</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">TIN number</label>
+                      <input
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+                        value={ownForm.tin_number}
+                        onChange={e => setOwnForm(p => ({ ...p, tin_number: e.target.value }))}
+                        placeholder="0012345678"
+                      />
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={ownForm.is_primary}
+                      onChange={e => setOwnForm(p => ({ ...p, is_primary: e.target.checked }))}
+                      className="form-checkbox rounded border-gray-300 text-blue-600"
+                    />
+                    Primary company (default for new records)
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={ownForm.is_active}
+                      onChange={e => setOwnForm(p => ({ ...p, is_active: e.target.checked }))}
+                      className="form-checkbox rounded border-gray-300 text-blue-600"
+                    />
+                    Active
+                  </label>
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
+                  <button
+                    onClick={() => setOwnOpen(false)}
+                    className="px-4 py-2 text-xs text-gray-600 border border-gray-200
+                               rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveCompanyEntity}
+                    disabled={ownSaving || !ownForm.name}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
+                               text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50
+                               transition-colors min-w-[110px] justify-center"
+                  >
+                    {ownSaving
+                      ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
+                      : <><Check size={12} /> {ownEditId ? 'Save' : 'Add company'}</>
+                    }
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Accounts tab (cash tills / bank accounts) ────────── */}
+      {tab === 'accounts' && (
+        <div className="space-y-4">
+          <div className="flex items-start justify-between">
+            <div className="flex items-start gap-2 text-xs text-gray-500 max-w-md">
+              <Info size={13} className="mt-0.5 shrink-0 text-blue-400" />
+              <span>
+                Every cash till and bank account money actually moves through.
+                Payments (sales, purchases, expenses, credit) record which account
+                received or paid the money, so Money Tracking can show real balances,
+                not just payment methods.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setAcctForm({ name: '', type: 'bank', currency: 'ETB', companyId: '' })
+                setAcctEditId(null)
+                setAcctOpen(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                         text-white text-xs rounded-lg hover:bg-blue-700
+                         transition-colors shrink-0 ml-3"
+            >
+              <Plus size={13} /> Add account
+            </button>
+          </div>
+
+          {accounts.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+              <Wallet size={32} className="mx-auto text-gray-200 mb-3" />
+              <p className="text-sm font-medium text-gray-500 mb-1">No accounts yet</p>
+              <p className="text-xs text-gray-400 mb-4">
+                Add your cash till and bank accounts (e.g. CBE, Awash) so payments can be tied to a real balance.
+              </p>
+              <button
+                onClick={() => setAcctOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                           text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus size={13} /> Add first account
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {accounts.map((a, i) => (
+                <div
+                  key={a.id}
+                  className={`px-5 py-4 flex items-center justify-between ${i > 0 ? 'border-t border-gray-100' : ''}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${a.type === 'cash' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
+                      <Wallet size={14} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{a.name}</p>
+                      <p className="text-xs text-gray-400 capitalize">{a.type} · {a.currency}
+                        {a.company_id && ` · ${companiesList.find(c => c.id === a.company_id)?.name ?? ''}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => openEditAccount(a)}
+                      className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-500"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deactivateAccount(a)}
+                      className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors text-gray-500"
+                    >
+                      Deactivate
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {acctOpen && (
+            <div
+              className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+              onClick={e => e.target === e.currentTarget && setAcctOpen(false)}
+            >
+              <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <h2 className="text-sm font-medium">{acctEditId ? 'Edit account' : 'New account'}</h2>
+                  <button onClick={() => setAcctOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Account name <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      value={acctForm.name}
+                      onChange={e => setAcctForm(p => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. CBE - HBK PLC, Cash till"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Type</label>
+                      <select
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        value={acctForm.type}
+                        onChange={e => setAcctForm(p => ({ ...p, type: e.target.value as 'cash' | 'bank' }))}
+                      >
+                        <option value="bank">Bank</option>
+                        <option value="cash">Cash</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Currency</label>
+                      <select
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        value={acctForm.currency}
+                        onChange={e => setAcctForm(p => ({ ...p, currency: e.target.value }))}
+                      >
+                        <option value="ETB">ETB</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </div>
+                  </div>
+                  {companiesList.length > 0 && (
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Company (optional)</label>
+                      <select
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        value={acctForm.companyId}
+                        onChange={e => setAcctForm(p => ({ ...p, companyId: e.target.value }))}
+                      >
+                        <option value="">Shared / not company-specific</option>
+                        {companiesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
+                  <button
+                    onClick={() => setAcctOpen(false)}
+                    className="px-4 py-2 text-xs text-gray-600 border border-gray-200
+                               rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveAccount}
+                    disabled={acctSaving || !acctForm.name}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
+                               text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50
+                               transition-colors min-w-[110px] justify-center"
+                  >
+                    {acctSaving
+                      ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
+                      : <><Check size={12} /> {acctEditId ? 'Save' : 'Add account'}</>
+                    }
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Forex tab ─────────────────────────────────────── */}
       {tab === 'forex' && (
         <div className="space-y-4">
@@ -443,11 +912,15 @@ export function Settings() {
             <div>
               <p className="font-medium mb-1">How exchange rates work</p>
               <p className="leading-relaxed">
-                Ethiopia uses three different rates. The <strong>Customs rate</strong> (set by NBE)
-                is used by ERCA to calculate duty and is the most important one for imports.
-                The <strong>TT rate</strong> is used when you pay your supplier by bank transfer.
-                The <strong>LC rate</strong> is locked when you open a Letter of Credit.
-                Update rates here whenever the NBE publishes a new rate — usually daily.
+                Ethiopia uses three different rates. The <strong>Customs rate</strong> is the
+                reference value ERCA uses for duty/VAT valuation. The <strong>TT rate</strong> is
+                what your bank actually charges when you wire your supplier. The <strong>LC
+                rate</strong> is locked when you open a Letter of Credit. Since the July 2024
+                move to a market-based exchange system, banks negotiate rates directly with
+                clients rather than following one fixed NBE rate — the birr has moved
+                substantially since then, and the gap between these three rates can now be
+                large and change often. Update all three here whenever your bank or clearing
+                agent quotes a new number, not just daily.
               </p>
             </div>
           </div>
@@ -550,6 +1023,14 @@ export function Settings() {
                           <p className="text-xs text-gray-400">
                             as of {latest.effective_date}
                           </p>
+                          {(() => {
+                            const days = Math.floor((Date.now() - new Date(latest.effective_date).getTime()) / 86400000)
+                            return days > 3 ? (
+                              <p className="text-xs text-amber-600 font-medium mt-0.5">
+                                {days} days old — confirm before use
+                              </p>
+                            ) : null
+                          })()}
                         </div>
                       </div>
                       {typeRates.length > 1 && (
@@ -583,7 +1064,7 @@ export function Settings() {
             </div>
             <button
               onClick={() => {
-                setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true })
+                setWForm({ name: '', code: '', address: '', city: 'Addis Ababa', is_active: true, has_production: false, production_manager_employee_id: '' })
                 setWEditId(null)
                 setWOpen(true)
               }}
@@ -625,6 +1106,14 @@ export function Settings() {
                       </p>
                       {w.address && (
                         <p className="text-xs text-gray-400 mt-1">{w.address}</p>
+                      )}
+                      {w.has_production && (
+                        <p className="text-xs text-blue-600 mt-1">
+                          Production site
+                          {w.production_manager_employee_id && (
+                            <> · Manager: {employees.find(e => e.id === w.production_manager_employee_id)?.full_name ?? 'Unknown'}</>
+                          )}
+                        </p>
                       )}
                     </div>
                     <div className="text-right">
@@ -703,6 +1192,31 @@ export function Settings() {
                     />
                     Active warehouse
                   </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={wForm.has_production}
+                      onChange={e => setWForm(p => ({ ...p, has_production: e.target.checked }))}
+                      className="form-checkbox rounded border-gray-300 text-blue-600"
+                    />
+                    Production site (has a factory / production manager)
+                  </label>
+                  {wForm.has_production && (
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Production manager</label>
+                      <select
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                                   focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        value={wForm.production_manager_employee_id}
+                        onChange={e => setWForm(p => ({ ...p, production_manager_employee_id: e.target.value }))}
+                      >
+                        <option value="">Not assigned yet</option>
+                        {employees.map(e => (
+                          <option key={e.id} value={e.id}>{e.full_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
                   <button

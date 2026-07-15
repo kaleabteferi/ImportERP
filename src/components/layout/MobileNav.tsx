@@ -1,12 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Ship, Wrench, Package, BarChart3 } from 'lucide-react'
+import { LayoutDashboard, Ship, Wrench, Banknote, BarChart3 } from 'lucide-react'
 
 const tabs = [
-  { to: '/',           icon: LayoutDashboard, label: 'Home'       },
-  { to: '/shipments',  icon: Ship,            label: 'Shipments'  },
-  { to: '/production', icon: Wrench,          label: 'Production' },
-  { to: '/inventory',  icon: Package,         label: 'Inventory'  },
-  { to: '/reports',    icon: BarChart3,       label: 'Reports'    },
+  { to: '/',              icon: LayoutDashboard, label: 'Home'       },
+  { to: '/shipments',     icon: Ship,            label: 'Shipments'  },
+  { to: '/production',    icon: Wrench,          label: 'Production' },
+  { to: '/money-tracking',icon: Banknote,        label: 'Money'      },
+  { to: '/reports',       icon: BarChart3,       label: 'Reports'    },
 ]
 
 export function MobileNav() {
