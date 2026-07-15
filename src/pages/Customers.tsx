@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchCustomers, fetchCustomerHistory, createCustomer } from '../api/customers'
+import { openCreditAccount } from '../api/credit'
 import { usePageState } from '../lib/pageState'
-import { Users, Loader2, Plus, X, Search, ChevronDown, ChevronRight, Flame } from 'lucide-react'
+import { Users, Loader2, Plus, X, Search, ChevronDown, ChevronRight, Flame, CreditCard } from 'lucide-react'
 
 interface Customer {
   id: string; name: string; type: string | null; phone: string | null
@@ -19,14 +20,22 @@ function NewCustomerForm({ onDone, onCancel }: { onDone: () => void; onCancel: (
   const [type, setType] = useState('')
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
+  const [giveCredit, setGiveCredit] = useState(false)
+  const [creditLimit, setCreditLimit] = useState('')
+  const [dueDate, setDueDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function submit() {
     if (!name.trim()) { setError('Enter a customer name.'); return }
+    if (giveCredit && (!creditLimit || Number(creditLimit) <= 0)) { setError('Enter a credit limit greater than 0.'); return }
+    if (giveCredit && !dueDate) { setError('Choose a due date for the credit account.'); return }
     setSaving(true); setError(null)
     try {
-      await createCustomer({ name, type: type || undefined, phone: phone || undefined, address: address || undefined })
+      const id = await createCustomer({ name, type: type || undefined, phone: phone || undefined, address: address || undefined })
+      if (giveCredit) {
+        await openCreditAccount(id, Number(creditLimit), dueDate)
+      }
       onDone()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to add customer.')
@@ -48,6 +57,18 @@ function NewCustomerForm({ onDone, onCancel }: { onDone: () => void; onCancel: (
       </div>
       <input value={address} onChange={e => setAddress(e.target.value)} placeholder="Address (optional)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+      <label className="flex items-center gap-1.5 text-xs text-gray-600 pt-1">
+        <input type="checkbox" checked={giveCredit} onChange={e => setGiveCredit(e.target.checked)} />
+        <CreditCard size={12} className="text-blue-500" /> Open a credit account for this customer
+      </label>
+      {giveCredit && (
+        <div className="flex gap-2">
+          <input type="number" value={creditLimit} onChange={e => setCreditLimit(e.target.value)} placeholder="Credit limit (ETB)"
+            className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+            className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
         <button onClick={submit} disabled={saving}
@@ -59,32 +80,94 @@ function NewCustomerForm({ onDone, onCancel }: { onDone: () => void; onCancel: (
   )
 }
 
+function OpenCreditForm({ customerId, onDone, onCancel }: { customerId: string; onDone: () => void; onCancel: () => void }) {
+  const [creditLimit, setCreditLimit] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    if (!creditLimit || Number(creditLimit) <= 0) { setError('Enter a credit limit greater than 0.'); return }
+    if (!dueDate) { setError('Choose a due date.'); return }
+    setSaving(true); setError(null)
+    try {
+      await openCreditAccount(customerId, Number(creditLimit), dueDate)
+      onDone()
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to open credit account.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <input type="number" value={creditLimit} onChange={e => setCreditLimit(e.target.value)} placeholder="Credit limit (ETB)"
+          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+        <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
+        <button onClick={submit} disabled={saving}
+          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
+          {saving ? 'Saving…' : 'Open credit account'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function CustomerDetail({ customerId }: { customerId: string }) {
   const [orders, setOrders] = useState<Order[]>([])
   const [credit, setCredit] = useState<CreditAcct[]>([])
   const [loading, setLoading] = useState(true)
+  const [openingCredit, setOpeningCredit] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true)
     fetchCustomerHistory(customerId)
       .then(({ orders, creditAccounts }) => { setOrders(orders as any); setCredit(creditAccounts as any) })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [customerId])
 
+  useEffect(() => { load() }, [load])
+
   if (loading) return <div className="px-4 py-3 text-xs text-gray-400">Loading history…</div>
 
   return (
     <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 space-y-3">
-      {credit.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-gray-500 mb-1">Credit</p>
-          {credit.map(c => (
-            <p key={c.id} className="text-xs text-gray-600">
-              {N(c.balance)} / {N(c.credit_limit)} ETB owed · due {c.due_date} · <span className="capitalize">{c.status}</span>
-            </p>
-          ))}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs font-medium text-gray-500">Credit</p>
+          {!openingCredit && (
+            <button onClick={() => setOpeningCredit(true)}
+              className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+              <CreditCard size={11} /> {credit.length > 0 ? 'Open another account' : 'Open credit account'}
+            </button>
+          )}
         </div>
-      )}
+        {credit.map(c => (
+          <p key={c.id} className="text-xs text-gray-600">
+            {N(c.balance)} / {N(c.credit_limit)} ETB owed · due {c.due_date} · <span className="capitalize">{c.status}</span>
+          </p>
+        ))}
+        {credit.length === 0 && !openingCredit && (
+          <p className="text-xs text-gray-400">No credit account.</p>
+        )}
+        {openingCredit && (
+          <div className="mt-2">
+            <OpenCreditForm
+              customerId={customerId}
+              onCancel={() => setOpeningCredit(false)}
+              onDone={() => { setOpeningCredit(false); load() }}
+            />
+          </div>
+        )}
+      </div>
       <div>
         <p className="text-xs font-medium text-gray-500 mb-1">Orders ({orders.length})</p>
         {orders.length === 0 ? (
