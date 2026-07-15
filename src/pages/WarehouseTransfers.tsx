@@ -123,7 +123,15 @@ export function WarehouseTransfers() {
     }
   }
 
-  const visible = transfers.filter(t => statusFilter === 'ALL' || t.status === statusFilter)
+  // Djibouti-forwarder dispatches (requested_quantity is only ever set by
+  // createDjiboutiRequest) live in this same table but go through their own
+  // request -> dispatch -> confirm-receipt lifecycle on the Djibouti
+  // Forwarder page. Letting them also be "received" here called a second,
+  // unrelated inventory-posting function on top of that — double-deducting
+  // the forwarder's warehouse. Keep them off this page entirely.
+  const visible = transfers
+    .filter(t => t.requested_quantity === null)
+    .filter(t => statusFilter === 'ALL' || t.status === statusFilter)
 
   return (
     <div className="p-5 max-w-4xl mx-auto">

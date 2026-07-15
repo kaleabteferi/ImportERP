@@ -106,6 +106,13 @@ export async function createWarehouseTransfer(input: NewTransferInput) {
 // TRANSFER_OUT posted; the ledger and transfer status should be reconciled
 // manually in that rare case.
 export async function receiveWarehouseTransfer(transfer: WarehouseTransfer) {
+  if (transfer.requested_quantity !== null) {
+    throw new Error(
+      `${transfer.transfer_number} is a Djibouti forwarder dispatch — confirm its receipt from the ` +
+      `Djibouti Forwarder page, not here, or its stock gets deducted twice.`
+    )
+  }
+
   const { error: updateError } = await supabase
     .from('warehouse_transfers')
     .update({ status: 'RECEIVED', received_at: new Date().toISOString() })
@@ -191,6 +198,76 @@ export async function fetchAliStock(): Promise<AliStockRow[]> {
       quantity: qty,
     }))
     .sort((a, b) => a.product_name.localeCompare(b.product_name))
+}
+
+export interface DjiboutiReconciliationLine {
+  shipment_id: string
+  shipment_number: string
+  container_number: string | null
+  status: string
+  product_id: string
+  product_name: string
+  sku: string
+  sent_quantity: number
+  received_quantity: number
+}
+
+// "What was documented as shipped from China (PI/packing-list quantities on
+// the shipment) vs what actually got posted into Ali's Djibouti warehouse" —
+// per shipment, per product line, for every shipment that has actually left
+// China (status beyond ORDERED/IN_PRODUCTION).
+export async function fetchDjiboutiReconciliation(): Promise<DjiboutiReconciliationLine[]> {
+  const aliWarehouseId = await fetchAliWarehouseId()
+
+  const [{ data: shipments, error: shError }, { data: products, error: prodError }] = await Promise.all([
+    supabase.from('shipments')
+      .select('id, shipment_number, container_number, status, shipment_items(product_id, quantity)')
+      .not('status', 'in', '(ORDERED,IN_PRODUCTION)')
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase.from('products').select('id, name, sku'),
+  ])
+  if (shError) throw new Error(shError.message)
+  if (prodError) throw new Error(prodError.message)
+
+  const shipmentIds = (shipments ?? []).map((s: any) => s.id)
+  if (shipmentIds.length === 0) return []
+
+  const { data: receivedRows, error: recvError } = await supabase
+    .from('inventory_ledger')
+    .select('reference_id, product_id, quantity')
+    .eq('warehouse_id', aliWarehouseId)
+    .eq('reference_type', 'shipment')
+    .eq('movement_type', 'SHIPMENT_RECEIVED')
+    .in('reference_id', shipmentIds)
+  if (recvError) throw new Error(recvError.message)
+
+  const productMap = new Map((products ?? []).map((p: any) => [p.id, p]))
+  const receivedMap = new Map<string, number>()
+  for (const r of receivedRows ?? []) {
+    const key = `${r.reference_id}:${r.product_id}`
+    receivedMap.set(key, (receivedMap.get(key) ?? 0) + Number(r.quantity ?? 0))
+  }
+
+  const lines: DjiboutiReconciliationLine[] = []
+  for (const s of (shipments ?? []) as any[]) {
+    for (const item of s.shipment_items ?? []) {
+      const key = `${s.id}:${item.product_id}`
+      const product = productMap.get(item.product_id)
+      lines.push({
+        shipment_id: s.id,
+        shipment_number: s.shipment_number,
+        container_number: s.container_number,
+        status: s.status,
+        product_id: item.product_id,
+        product_name: product?.name ?? 'Unknown product',
+        sku: product?.sku ?? '',
+        sent_quantity: Number(item.quantity ?? 0),
+        received_quantity: receivedMap.get(key) ?? 0,
+      })
+    }
+  }
+  return lines
 }
 
 export interface DjiboutiRequestInput {
@@ -303,6 +380,12 @@ export async function recordDjiboutiDispatch(transfer: WarehouseTransfer, input:
 // Stage 3: confirm what actually arrived (may differ from what was
 // dispatched). Posts TRANSFER_IN to the destination warehouse for the
 // confirmed quantity, not the dispatched one.
+//
+// CKD/SKD kits travel from China through Ali's Djibouti warehouse as
+// sealed kits (receiveShipmentAtDjibouti deliberately doesn't decompose
+// them) and only become usable as their individual components once
+// they're actually at the assembly warehouse — so decompose here, the
+// same way a direct (non-Djibouti) receipt does in postReceivedItems.
 export async function confirmDjiboutiReceipt(transfer: WarehouseTransfer, receivedQuantity: number): Promise<void> {
   if (!transfer.to_warehouse_id) throw new Error('This dispatch has no destination warehouse set.')
 
@@ -316,15 +399,58 @@ export async function confirmDjiboutiReceipt(transfer: WarehouseTransfer, receiv
     .eq('id', transfer.id)
   if (updateError) throw new Error(updateError.message)
 
+  const movementDate = new Date().toISOString().split('T')[0]
+  const notes = `Received · ${transfer.transfer_number}${transfer.waybill_number ? ` · WB ${transfer.waybill_number}` : ''}`
+
+  const { data: product } = await supabase
+    .from('products')
+    .select('assembly_type')
+    .eq('id', transfer.product_id)
+    .maybeSingle()
+
+  if (product?.assembly_type === 'CKD' || product?.assembly_type === 'SKD') {
+    const { data: bomHeader } = await supabase
+      .from('bom_headers')
+      .select('id')
+      .eq('product_id', transfer.product_id)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (bomHeader) {
+      const { data: bomLines } = await supabase
+        .from('bom_lines')
+        .select('component_product_id, quantity_required')
+        .eq('bom_header_id', bomHeader.id)
+
+      for (const line of bomLines ?? []) {
+        const { error: compError } = await supabase.from('inventory_ledger').insert({
+          product_id: line.component_product_id,
+          quantity: Math.abs(receivedQuantity) * line.quantity_required,
+          movement_type: 'TRANSFER_IN',
+          movement_date: movementDate,
+          warehouse_id: transfer.to_warehouse_id,
+          reference_type: 'warehouse_transfer',
+          reference_id: transfer.id,
+          notes: `${notes} · component of ${product.assembly_type} kit`,
+        })
+        if (compError) throw new Error(compError.message)
+      }
+      return
+    }
+    // No BOM defined yet — fall through and credit the kit product
+    // directly so the stock isn't silently lost, same fallback used for
+    // direct receipts without Djibouti in postReceivedItems.
+  }
+
   const { error: inError } = await supabase.from('inventory_ledger').insert({
     product_id: transfer.product_id,
     quantity: Math.abs(receivedQuantity),
     movement_type: 'TRANSFER_IN',
-    movement_date: new Date().toISOString().split('T')[0],
+    movement_date: movementDate,
     warehouse_id: transfer.to_warehouse_id,
     reference_type: 'warehouse_transfer',
     reference_id: transfer.id,
-    notes: `Received · ${transfer.transfer_number}${transfer.waybill_number ? ` · WB ${transfer.waybill_number}` : ''}`,
+    notes,
   })
   if (inError) throw new Error(inError.message)
 }

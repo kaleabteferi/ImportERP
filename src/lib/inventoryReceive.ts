@@ -174,13 +174,38 @@ async function postReceivedItems(shipmentId: string, items: ReceiveItem[], wareh
 // does not touch shipment.status — the user already set it to AT_DJIBOUTI,
 // and WAREHOUSE_RECEIVED/COMPLETED are earned later via dispatch + receipt
 // confirmations in the Djibouti Forwarder flow, not by this step.
+//
+// Deliberately does NOT go through postReceivedItems: that helper
+// decomposes CKD/SKD products into their BOM components, which is correct
+// once a kit reaches the assembly warehouse but wrong here — Ali's
+// warehouse just holds sealed kits in transit, so "what's in the
+// container" (the product itself) is exactly what should land in his
+// stock. Decomposition happens later, when the kit is confirmed received
+// at the final warehouse (see confirmDjiboutiReceipt in
+// api/warehouseTransfers.ts).
 export async function receiveShipmentAtDjibouti(
   shipmentId: string,
   items: ReceiveItem[],
   aliWarehouseId: string,
 ): Promise<void> {
   if (!shipmentId || items.length === 0) return
-  await postReceivedItems(shipmentId, items, aliWarehouseId)
+  const movementDate = new Date().toISOString().split('T')[0]
+
+  for (const item of items) {
+    if (!item.product_id || item.quantity <= 0) continue
+    await postInventoryMovement({
+      product_id: item.product_id,
+      quantity: item.quantity,
+      unit_cost_etb: item.unit_landed_cost_etb ?? 0,
+      movement_type: 'SHIPMENT_RECEIVED',
+      movement_date: movementDate,
+      warehouse_id: aliWarehouseId,
+      reference_type: 'shipment',
+      reference_id: shipmentId,
+      notes: `Landed at Djibouti · ${item.assembly_type}`,
+    })
+  }
+
   await supabase.from('shipments')
     .update({ djibouti_received_at: new Date().toISOString() })
     .eq('id', shipmentId)

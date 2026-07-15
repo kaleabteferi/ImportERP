@@ -6,10 +6,11 @@ import { fetchEmployeesList } from '../api/companyExpenses'
 import {
   fetchAliStock, fetchWarehouseTransfers, createDjiboutiRequest,
   recordDjiboutiDispatch, confirmDjiboutiReceipt, cancelWarehouseTransfer,
+  fetchDjiboutiReconciliation,
 } from '../api/warehouseTransfers'
-import type { WarehouseTransfer, AliStockRow } from '../api/warehouseTransfers'
+import type { WarehouseTransfer, AliStockRow, DjiboutiReconciliationLine } from '../api/warehouseTransfers'
 import {
-  Truck, Loader2, Plus, X, AlertTriangle, CheckCircle2, Package, Ship,
+  Truck, Loader2, Plus, X, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight,
 } from 'lucide-react'
 
 interface Option { id: string; name: string }
@@ -34,6 +35,8 @@ export function DjiboutiForwarder() {
   const [products, setProducts] = useState<Option[]>([])
   const [employees, setEmployees] = useState<Option[]>([])
   const [shipments, setShipments] = useState<Option[]>([])
+  const [reconciliation, setReconciliation] = useState<DjiboutiReconciliationLine[]>([])
+  const [reconOpen, setReconOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -59,13 +62,14 @@ export function DjiboutiForwarder() {
     setLoading(true)
     setError(null)
     try {
-      const [stockRows, transferRows, w, p, e, shRes] = await Promise.all([
+      const [stockRows, transferRows, w, p, e, shRes, reconRows] = await Promise.all([
         fetchAliStock(),
         fetchWarehouseTransfers(200),
         fetchWarehousesList(),
         fetchAllProducts(),
         fetchEmployeesList(),
         supabase.from('shipments').select('id, shipment_number').order('created_at', { ascending: false }).limit(100),
+        fetchDjiboutiReconciliation(),
       ])
       setStock(stockRows)
       setTransfers(transferRows)
@@ -73,6 +77,7 @@ export function DjiboutiForwarder() {
       setProducts((p ?? []).map((x: any) => ({ id: x.id, name: x.name })))
       setEmployees((e ?? []).map((x: any) => ({ id: x.id, name: x.full_name })))
       setShipments((shRes.data ?? []).map((s: any) => ({ id: s.id, name: s.shipment_number })))
+      setReconciliation(reconRows)
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load Djibouti data.')
     } finally {
@@ -222,6 +227,58 @@ export function DjiboutiForwarder() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* Sent from China vs received at Ali */}
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+            <button
+              onClick={() => setReconOpen(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                {reconOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                Sent from China vs received at Ali
+              </span>
+              <span className="text-xs text-gray-400 normal-case">{reconciliation.length} lines</span>
+            </button>
+            {reconOpen && (
+              reconciliation.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-gray-400">
+                  No shipments have left China yet — this fills in once a shipment's status moves past "In production".
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {[...new Map(reconciliation.map(l => [l.shipment_id, l])).keys()].map(shipmentId => {
+                    const lines = reconciliation.filter(l => l.shipment_id === shipmentId)
+                    const { shipment_number, container_number, status } = lines[0]
+                    return (
+                      <div key={shipmentId} className="px-4 py-3">
+                        <p className="text-xs font-medium text-gray-700 mb-1.5">
+                          {shipment_number}{container_number && ` · ${container_number}`}
+                          <span className="text-gray-400 font-normal"> · {status.replace(/_/g, ' ').toLowerCase()}</span>
+                        </p>
+                        <div className="space-y-1">
+                          {lines.map(l => {
+                            const short = l.received_quantity < l.sent_quantity
+                            const over = l.received_quantity > l.sent_quantity
+                            return (
+                              <div key={l.product_id} className="flex items-center justify-between text-xs">
+                                <span className="text-gray-600">{l.product_name} {l.sku && <span className="text-gray-400 font-mono">({l.sku})</span>}</span>
+                                <span className={`font-mono ${short ? 'text-amber-700' : over ? 'text-red-600' : 'text-green-700'}`}>
+                                  {N(l.received_quantity)} / {N(l.sent_quantity)} received
+                                  {short && ' · short'}
+                                  {over && ' · over'}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
             )}
           </div>
 

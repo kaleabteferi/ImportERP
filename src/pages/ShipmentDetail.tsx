@@ -34,7 +34,8 @@ interface Shipment {
   notes: string | null
   supplier_id: string
   warehouse_id: string | null
-  suppliers: { 
+  djibouti_received_at: string | null
+  suppliers: {
     name: string; 
     contact_person?: string | null; // Added ? to make optional
     email?: string | null;          // Added ? to make optional
@@ -552,8 +553,23 @@ export function ShipmentDetail() {
         ))}
       </div>
 
+      {/* Shipment already landed at Ali's Djibouti warehouse — receiving it
+          again here directly into a warehouse would double-credit
+          inventory on top of whatever the Djibouti dispatch/receive cycle
+          transfers. That flow owns getting it into the final warehouse. */}
+      {items.length > 0 && shipment.djibouti_received_at && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
+        <div className="flex items-start gap-2 px-4 py-3 mb-5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+          <Info size={14} className="shrink-0 mt-0.5" />
+          <span>
+            This shipment already landed at Ali's Djibouti warehouse. Get it into your warehouse via{' '}
+            <Link to="/djibouti" className="underline font-medium">Djibouti Forwarder</Link> (request → dispatch → confirm receipt),
+            not by receiving it directly here — that would double-count the stock.
+          </span>
+        </div>
+      )}
+
       {/* Receive into inventory */}
-      {items.length > 0 && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
+      {items.length > 0 && !shipment.djibouti_received_at && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
         <div className="flex flex-col gap-3 px-4 py-3 mb-5 bg-green-50 border border-green-200 rounded-xl md:flex-row md:items-center md:justify-between">
           <div className="text-xs text-green-800">
             <p className="font-medium">Ready for warehouse receipt</p>
