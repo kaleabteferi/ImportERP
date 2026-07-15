@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { recordPayment } from '../api/sales'
+import { fetchAccounts } from '../api/accounts'
+import type { Account } from '../api/accounts'
 import { CreditCard, Loader2, AlertTriangle, ShieldAlert, X } from 'lucide-react'
 
 interface Receivable {
@@ -24,14 +26,16 @@ const METHODS = [
   { value: 'mobile_money', label: 'Mobile money' },
 ]
 
-function RecordPaymentForm({ receivable, onDone, onCancel }: {
+function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
   receivable: Receivable
+  accounts: Account[]
   onDone: () => void
   onCancel: () => void
 }) {
   const outstanding = receivable.total_etb - receivable.paid_etb
   const [amount, setAmount] = useState(String(outstanding))
   const [method, setMethod] = useState('cash')
+  const [accountId, setAccountId] = useState('')
   const [reference, setReference] = useState('')
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
@@ -41,10 +45,11 @@ function RecordPaymentForm({ receivable, onDone, onCancel }: {
   async function submit() {
     const amt = Number(amount)
     if (!amt || amt <= 0) { setError('Enter an amount greater than 0.'); return }
+    if (method !== 'credit' && !accountId) { setError('Choose which account received the money.'); return }
     setSaving(true)
     setError(null)
     try {
-      await recordPayment(receivable.id, amt, method, { reference, sensitive, notes })
+      await recordPayment(receivable.id, amt, method, { reference, sensitive, notes, accountId: method !== 'credit' ? accountId : undefined })
       onDone()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to record payment.')
@@ -69,6 +74,15 @@ function RecordPaymentForm({ receivable, onDone, onCancel }: {
           {METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
+      {method !== 'credit' && (
+        <select
+          value={accountId} onChange={e => setAccountId(e.target.value)}
+          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
+        >
+          <option value="">Which account received it?</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      )}
       <input
         value={reference} onChange={e => setReference(e.target.value)}
         placeholder="Reference (optional)"
@@ -100,13 +114,14 @@ function RecordPaymentForm({ receivable, onDone, onCancel }: {
 
 export function Receivables() {
   const [rows, setRows]           = useState<Receivable[]>([])
+  const [accounts, setAccounts]   = useState<Account[]>([])
   const [loading, setLoading]     = useState(true)
   const [openFormId, setOpenFormId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-        const [salesRes, paymentsRes] = await Promise.all([
+        const [salesRes, paymentsRes, accountRows] = await Promise.all([
           (async () => {
             try {
               return await supabase
@@ -132,7 +147,10 @@ export function Receivables() {
               return { data: [], error: null }
             }
           })(),
+          fetchAccounts().catch(() => []),
         ])
+
+        setAccounts(accountRows)
 
         const paymentMap = new Map<string, number>()
         for (const payment of (paymentsRes.data ?? []) as Array<{ sales_order_id: string; amount_etb: number }>) {
@@ -242,6 +260,7 @@ export function Receivables() {
                 {openFormId === r.id && (
                   <RecordPaymentForm
                     receivable={r}
+                    accounts={accounts}
                     onCancel={() => setOpenFormId(null)}
                     onDone={() => { setOpenFormId(null); load() }}
                   />

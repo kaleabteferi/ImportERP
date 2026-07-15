@@ -33,11 +33,15 @@ export async function createCustomer(input: {
   phone?: string
   address?: string
 }) {
+  // customers.type is NOT NULL with a DB default ('DISTRIBUTOR') — omit the
+  // key entirely when not provided so that default applies. Sending an
+  // explicit `type: null` (as `input.type ?? null` used to) overrides the
+  // default and trips the NOT NULL constraint.
   const { data, error } = await supabase
     .from('customers')
     .insert({
       name: input.name,
-      type: input.type ?? null,
+      ...(input.type ? { type: input.type } : {}),
       phone: input.phone ?? null,
       address: input.address ?? null,
     })

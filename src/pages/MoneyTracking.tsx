@@ -4,6 +4,7 @@ import { recordQuickIncome, fetchWarehousesList } from '../api/income'
 import { recordCompanyExpense, fetchCompaniesList, fetchEmployeesList } from '../api/companyExpenses'
 import { fetchCustomers } from '../api/customers'
 import { fetchCreditAccounts } from '../api/credit'
+import { fetchAccounts } from '../api/accounts'
 import { updateTransaction, deleteTransaction } from '../api/transactions'
 import { usePageState } from '../lib/pageState'
 import {
@@ -15,7 +16,8 @@ type Direction = 'in' | 'out'
 interface Txn {
   id: string; direction: Direction; party: string; amount: number; currency: string
   method: string; date: string | null; sensitive: boolean; notes: string | null
-  source: 'sale' | 'purchase' | 'credit_repayment' | 'expense'
+  source: 'sale' | 'purchase' | 'credit_repayment' | 'expense' | 'shipment_expense'
+  accountName: string | null
 }
 interface CreditAccount { id: string; customer_id: string; customer_name: string; credit_limit: number; balance: number; due_date: string; status: string }
 interface Option { id: string; name: string }
@@ -24,8 +26,8 @@ const METHOD_LABEL: Record<string, string> = { cash: 'Cash', bank_transfer: 'Tra
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const CATEGORIES = ['rent', 'salary', 'fuel', 'supplies', 'utilities', 'maintenance', 'other']
 
-function AddIncomeForm({ customers, warehouses, creditAccounts, onDone, onCancel }: {
-  customers: Option[]; warehouses: Option[]; creditAccounts: CreditAccount[]
+function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone, onCancel }: {
+  customers: Option[]; warehouses: Option[]; creditAccounts: CreditAccount[]; accounts: Option[]
   onDone: () => void; onCancel: () => void
 }) {
   const [customerId, setCustomerId] = useState('')
@@ -33,6 +35,7 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, onDone, onCancel
   const [amount, setAmount] = useState('')
   const [method, setMethod] = useState('cash')
   const [creditAccountId, setCreditAccountId] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
@@ -47,11 +50,13 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, onDone, onCancel
     if (!warehouseId) { setError('Choose a warehouse.'); return }
     if (!amt || amt <= 0) { setError('Enter an amount greater than 0.'); return }
     if (method === 'credit' && !creditAccountId) { setError('Choose which credit account this draws against.'); return }
+    if (method !== 'credit' && !accountId) { setError('Choose which account received the money.'); return }
     setSaving(true); setError(null)
     try {
       await recordQuickIncome({
         customerId, warehouseId, amount: amt, method: method as any,
         creditAccountId: method === 'credit' ? creditAccountId : undefined,
+        accountId: method !== 'credit' ? accountId : undefined,
         sensitive, notes, date,
       })
       onDone()
@@ -97,6 +102,13 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, onDone, onCancel
           {customerCreditAccounts.length === 0 && <option value="" disabled>No credit account for this customer — open one first</option>}
         </select>
       )}
+      {method !== 'credit' && (
+        <select value={accountId} onChange={e => setAccountId(e.target.value)}
+          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+          <option value="">Which account received it?</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      )}
       <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -114,8 +126,8 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, onDone, onCancel
   )
 }
 
-function AddExpenseForm({ companies, employees, onDone, onCancel }: {
-  companies: Option[]; employees: Option[]; onDone: () => void; onCancel: () => void
+function AddExpenseForm({ companies, employees, accounts, onDone, onCancel }: {
+  companies: Option[]; employees: Option[]; accounts: Option[]; onDone: () => void; onCancel: () => void
 }) {
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState(CATEGORIES[0])
@@ -124,6 +136,7 @@ function AddExpenseForm({ companies, employees, onDone, onCancel }: {
   const [method, setMethod] = useState('cash')
   const [companyId, setCompanyId] = useState('')
   const [paidBy, setPaidBy] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
@@ -134,12 +147,14 @@ function AddExpenseForm({ companies, employees, onDone, onCancel }: {
     const amt = Number(amount)
     if (!description.trim()) { setError('Add a short description.'); return }
     if (!amt || amt <= 0) { setError('Enter an amount greater than 0.'); return }
+    if (method !== 'credit' && !accountId) { setError('Choose which account paid it.'); return }
     setSaving(true); setError(null)
     try {
       await recordCompanyExpense({
         companyId: companyId || undefined, category, description, amount: amt, currency,
         method: method as "cash" | "bank_transfer" | "credit" | "mobile_money",
         paidBy: paidBy || undefined, expenseDate: date, sensitive, notes,
+        accountId: method !== 'credit' ? accountId : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -187,6 +202,13 @@ function AddExpenseForm({ companies, employees, onDone, onCancel }: {
           {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
       </div>
+      {method !== 'credit' && (
+        <select value={accountId} onChange={e => setAccountId(e.target.value)}
+          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+          <option value="">Which account paid it?</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      )}
       <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -278,6 +300,7 @@ export function MoneyTracking() {
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [companies, setCompanies] = useState<Option[]>([])
   const [employees, setEmployees] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Option[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [direction, setDirection] = usePageState<'all' | Direction>('moneyTracking.direction', 'all')
@@ -290,47 +313,58 @@ export function MoneyTracking() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [salesRes, poRes, creditTxRes, expenseRes, creditAcctRows, customerRows, warehouseRows, companyRows, employeeRows] =
+      const [salesRes, poRes, creditTxRes, expenseRes, shipExpRes, creditAcctRows, customerRows, warehouseRows, companyRows, employeeRows, accountRows] =
         await Promise.all([
-          supabase.from('sales_payments').select('id, amount_etb, method, sensitive_flag, notes, created_at, sales_orders(order_number, customers(name))').order('created_at', { ascending: false }).limit(200),
-          supabase.from('purchase_order_payments').select('id, amount, currency, method, sensitive_flag, notes, payment_date, purchase_orders(po_number, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
-          supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
-          supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name').order('expense_date', { ascending: false }).limit(200),
+          supabase.from('sales_payments').select('id, amount_etb, method, sensitive_flag, notes, created_at, account_id, sales_orders(order_number, customers(name))').order('created_at', { ascending: false }).limit(200),
+          supabase.from('purchase_order_payments').select('id, amount, currency, method, sensitive_flag, notes, payment_date, account_id, purchase_orders(po_number, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
+          supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
+          supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name, account_id').order('expense_date', { ascending: false }).limit(200),
+          // Shipment expenses paid via Payables -> "Mark as paid" — otherwise
+          // invisible here even though real cash left the business.
+          supabase.from('shipment_expenses').select('id, description, amount_etb, currency, payment_method, sensitive_flag, notes, expense_date, vendor_name, account_id, paid_at').eq('is_paid', true).order('paid_at', { ascending: false }).limit(200),
           fetchCreditAccounts(),
           fetchCustomers(),
           fetchWarehousesList(),
           fetchCompaniesList(),
           fetchEmployeesList(),
+          fetchAccounts(),
         ])
 
       if (salesRes.error) throw salesRes.error
       if (poRes.error) throw poRes.error
       if (creditTxRes.error) throw creditTxRes.error
       if (expenseRes.error) throw expenseRes.error
+      if (shipExpRes.error) throw shipExpRes.error
+
+      const accountNameById = new Map(accountRows.map(a => [a.id, a.name]))
 
       const salesTxns: Txn[] = (salesRes.data ?? []).map((r: any) => {
         const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
-        return { id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale' } as Txn
+        return { id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null } as Txn
       })
       const poTxns: Txn[] = (poRes.data ?? []).map((r: any) => {
         const po = one(r.purchase_orders); const supplier = po ? one(po.suppliers) : null
-        return { id: `po-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: r.currency ?? 'USD', method: r.method ?? 'cash', date: r.payment_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'purchase' } as Txn
+        return { id: `po-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: r.currency ?? 'USD', method: r.method ?? 'cash', date: r.payment_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'purchase', accountName: accountNameById.get(r.account_id) ?? null } as Txn
       })
       const creditTxns: Txn[] = (creditTxRes.data ?? []).map((r: any) => {
         const account = one(r.credit_accounts); const customer = account ? one(account.customers) : null
-        return { id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment' } as Txn
+        return { id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment', accountName: accountNameById.get(r.account_id) ?? null } as Txn
       })
       const expenseTxns: Txn[] = (expenseRes.data ?? []).map((r: any) => ({
-        id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', method: r.method ?? 'cash', date: r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'expense',
+        id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', method: r.method ?? 'cash', date: r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'expense', accountName: accountNameById.get(r.account_id) ?? null,
+      } as Txn))
+      const shipExpTxns: Txn[] = (shipExpRes.data ?? []).map((r: any) => ({
+        id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
       } as Txn))
 
-      setTxns([...salesTxns, ...poTxns, ...creditTxns, ...expenseTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
+      setTxns([...salesTxns, ...poTxns, ...creditTxns, ...expenseTxns, ...shipExpTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
       setCredit((creditAcctRows ?? []).map((r: any) => ({
         id: r.id, customer_id: one(r.customers)?.id ?? '', customer_name: one(r.customers)?.name ?? 'Unknown',
         credit_limit: Number(r.credit_limit ?? 0), balance: Number(r.balance ?? 0), due_date: r.due_date, status: r.status,
       })))
       setCustomers((customerRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
       setWarehouses((warehouseRows ?? []).map((w: any) => ({ id: w.id, name: w.name })))
+      setAccounts(accountRows.map(a => ({ id: a.id, name: a.name })))
       setCompanies((companyRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
       setEmployees((employeeRows ?? []).map((e: any) => ({ id: e.id, name: e.full_name })))
     } catch (e: any) {
@@ -380,11 +414,11 @@ export function MoneyTracking() {
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
       {activeForm === 'income' && (
-        <AddIncomeForm customers={customers} warehouses={warehouses} creditAccounts={credit}
+        <AddIncomeForm customers={customers} warehouses={warehouses} creditAccounts={credit} accounts={accounts}
           onCancel={() => setActiveForm(null)} onDone={() => { setActiveForm(null); load() }} />
       )}
       {activeForm === 'expense' && (
-        <AddExpenseForm companies={companies} employees={employees}
+        <AddExpenseForm companies={companies} employees={employees} accounts={accounts}
           onCancel={() => setActiveForm(null)} onDone={() => { setActiveForm(null); load() }} />
       )}
 
@@ -447,16 +481,18 @@ export function MoneyTracking() {
                       {t.sensitive && <ShieldAlert size={11} className="text-amber-500 shrink-0" aria-label="Sensitive" />}
                     </p>
                     <p className="text-gray-400">
-                      {METHOD_LABEL[t.method] ?? t.method} · {t.date ?? '—'}{t.notes && ` · ${t.notes}`}
+                      {METHOD_LABEL[t.method] ?? t.method}{t.accountName && ` · ${t.accountName}`} · {t.date ?? '—'}{t.notes && ` · ${t.notes}`}
                     </p>
                   </div>
                   <div className={`font-mono font-medium shrink-0 ${t.direction === 'in' ? 'text-green-700' : 'text-red-600'}`}>
                     {t.direction === 'in' ? '+' : '−'}{N(t.amount)} {t.currency}
                   </div>
-                  <button onClick={() => setEditingTxnId(editingTxnId === t.id ? null : t.id)}
-                    className="p-1 text-gray-300 hover:text-blue-600 shrink-0">
-                    <Pencil size={12} />
-                  </button>
+                  {t.source !== 'shipment_expense' && (
+                    <button onClick={() => setEditingTxnId(editingTxnId === t.id ? null : t.id)}
+                      className="p-1 text-gray-300 hover:text-blue-600 shrink-0">
+                      <Pencil size={12} />
+                    </button>
+                  )}
                 </div>
                 {editingTxnId === t.id && (
                   <EditTxnForm txn={t} onCancel={() => setEditingTxnId(null)} onDone={() => { setEditingTxnId(null); load() }} />

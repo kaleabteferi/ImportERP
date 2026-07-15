@@ -8,6 +8,7 @@ export async function recordQuickIncome(input: {
   amount: number
   method: 'cash' | 'bank_transfer' | 'credit' | 'mobile_money'
   creditAccountId?: string   // required when method === 'credit'
+  accountId?: string         // which cash/bank account received it (not used for credit)
   reference?: string
   sensitive?: boolean
   notes?: string
@@ -52,6 +53,7 @@ export async function recordQuickIncome(input: {
       reference: input.reference ?? null,
       sensitive_flag: input.sensitive ?? false,
       notes: input.notes ?? null,
+      account_id: input.accountId ?? null,
     })
     if (error) throw new Error(error.message)
     await supabase.rpc('update_customer_outstanding', { p_order_id: order.id })

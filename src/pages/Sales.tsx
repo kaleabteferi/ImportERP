@@ -76,7 +76,12 @@ export function Sales() {
         supabase.from('products').select('id, name, sku, image_url').eq('is_active', true).order('name'),
         fetchWarehousesList(),
         fetchAccounts(),
-        supabase.from('sales_order_lines').select('product_id, unit_price_etb, created_at').order('created_at', { ascending: false }).limit(300),
+        // sales_order_lines has no created_at of its own — order by the
+        // parent order's created_at instead to get the most recent price per product.
+        supabase.from('sales_order_lines')
+          .select('product_id, unit_price_etb, sales_orders!inner(created_at)')
+          .order('created_at', { referencedTable: 'sales_orders', ascending: false })
+          .limit(300),
       ])
       setOrders((orderRows ?? []) as any)
       setCustomers((customerRows ?? []).map((c: any) => ({ id: c.id, name: c.name, type: c.type, outstanding_etb: Number(c.outstanding_etb ?? 0) })))

@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 export async function recordPurchasePayment(
   purchaseOrderId: string,
   amount: number,
-  currency: 'USD' | 'ETB',
+  currency: 'USD' | 'ETB' | 'CNY',
   method: string,
   options?: { reference?: string; sensitive?: boolean; notes?: string; accountId?: string },
 ) {
