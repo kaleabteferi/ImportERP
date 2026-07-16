@@ -22,10 +22,14 @@ export async function produceAssembly(
 export interface AssemblableProduct { bomHeaderId: string; productId: string; productName: string }
 
 export async function fetchAssemblableProducts(): Promise<AssemblableProduct[]> {
+  // Must match produce_assembly's own BOM selection (stage = 'ASSEMBLY')
+  // — otherwise this page could offer a product whose only active BOM is
+  // STICKER/OTHER stage, which the RPC would then reject.
   const { data: headers, error: headersError } = await supabase
     .from('bom_headers')
     .select('id, product_id, finished_product_id')
     .eq('is_active', true)
+    .eq('stage', 'ASSEMBLY')
   if (headersError) throw new Error(headersError.message)
 
   const rows = headers ?? []

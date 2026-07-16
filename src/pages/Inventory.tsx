@@ -5,7 +5,28 @@ import { fetchAllProducts, fetchBoms } from '../api/bom'
 import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
 import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
-import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge } from 'lucide-react'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock } from 'lucide-react'
+
+function LiveClock() {
+  const [now, setNow] = useState(new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-gradient-to-br from-blue-50 to-white border border-blue-100 shadow-sm">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+        <Calendar size={13} className="text-blue-400 shrink-0" />
+        {now.toLocaleDateString('en-ET', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+      </div>
+      <div className="w-px h-3.5 bg-blue-100" />
+      <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-blue-700 tabular-nums">
+        <Clock size={13} className="text-blue-400 shrink-0" />
+        {now.toLocaleTimeString('en-ET', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+      </div>
+    </div>
+  )
+}
 
 interface Option { id: string; name: string }
 
@@ -298,6 +319,10 @@ export function Inventory() {
             {' '}total value
           </p>
         </div>
+        <LiveClock />
+      </div>
+
+      <div className="flex items-center justify-end mb-5 -mt-3">
         <div className="flex gap-2">
           <button
             onClick={() => setShowAdjustForm(v => !v)}
