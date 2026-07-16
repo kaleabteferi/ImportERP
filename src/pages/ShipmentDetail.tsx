@@ -1,12 +1,12 @@
 // src/pages/ShipmentDetail.tsx
 
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Loader2, X, Check,
   RefreshCw, Package, Receipt, Calculator,
-  FileText, Truck, Lock, Info, Paperclip,
+  FileText, Truck, Lock, Info, Paperclip, Trash2,
 } from 'lucide-react'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -15,6 +15,7 @@ import { MarginAnalysis } from '../components/shipments/MarginAnalysis'
 import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
 import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments'
+import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
 
 
@@ -197,6 +198,8 @@ function InfoTip({ text }: { text: string }) {
 export function ShipmentDetail() {
   const { confirm, close, state } = useConfirm();
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
 
   const [shipment, setShipment]   = useState<Shipment | null>(null)
   const [items, setItems]         = useState<ShipmentItem[]>([])
@@ -511,6 +514,15 @@ export function ShipmentDetail() {
               >
               <FileText size={12} /> Documents
             </Link>
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              title="Delete shipment"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
+                          border-gray-200 bg-white text-gray-400 rounded-lg
+                          hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+              >
+              <Trash2 size={12} />
+            </button>
         </div>
       </div>
 
@@ -1914,6 +1926,15 @@ export function ShipmentDetail() {
         onConfirm={state.onConfirm}
         onClose={close}
       />
+      {showDeleteModal && shipment && (
+        <DeleteShipmentModal
+          shipmentId={shipment.id}
+          shipmentNumber={shipment.shipment_number}
+          status={shipment.status}
+          onCancel={() => setShowDeleteModal(false)}
+          onDeleted={() => navigate('/shipments')}
+        />
+      )}
     </div>
   )
 }

@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Ship, X, Check, Loader2, AlertTriangle } from 'lucide-react'
+import { Plus, Ship, X, Check, Loader2, AlertTriangle, Trash2, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { receiveShipmentAtDjibouti, resolveAssemblyType } from '../lib/inventoryReceive'
 import { fetchAliWarehouseId } from '../api/warehouseTransfers'
+import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
+import { usePageState } from '../lib/pageState'
 
 interface Shipment {
   id: string
@@ -48,6 +50,12 @@ export function Shipments() {
   const [form, setForm]           = useState({ ...EMPTY_FORM })
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState<string | null>(null)
+  const [search, setSearch]           = usePageState('shipments.search', '')
+  const [statusFilter, setStatusFilter] = usePageState('shipments.statusFilter', '')
+  const [etaFrom, setEtaFrom]         = usePageState('shipments.etaFrom', '')
+  const [etaTo, setEtaTo]             = usePageState('shipments.etaTo', '')
+  const [deleteTarget, setDeleteTarget] = useState<Shipment | null>(null)
+  const [notice, setNotice]           = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -153,8 +161,27 @@ export function Shipments() {
     load()
   }
 
-  const active    = shipments.filter(s => !['COMPLETED','WAREHOUSE_RECEIVED'].includes(s.status))
-  const completed = shipments.filter(s =>  ['COMPLETED','WAREHOUSE_RECEIVED'].includes(s.status))
+  const filteredShipments = useMemo(() => shipments
+    .filter(s => !statusFilter || s.status === statusFilter)
+    .filter(s => !etaFrom || (s.eta_djibouti ?? '') >= etaFrom)
+    .filter(s => !etaTo || (s.eta_djibouti ?? '') <= etaTo)
+    .filter(s => {
+      if (!search.trim()) return true
+      const q = search.trim().toLowerCase()
+      return s.shipment_number.toLowerCase().includes(q)
+        || (s.container_number ?? '').toLowerCase().includes(q)
+        || (s.suppliers?.name ?? '').toLowerCase().includes(q)
+        || (s.companies?.name ?? '').toLowerCase().includes(q)
+    }),
+    [shipments, statusFilter, etaFrom, etaTo, search])
+
+  const hasActiveFilters = !!(search || statusFilter || etaFrom || etaTo)
+  const active    = filteredShipments.filter(s => !['COMPLETED','WAREHOUSE_RECEIVED'].includes(s.status))
+  const completed = filteredShipments.filter(s =>  ['COMPLETED','WAREHOUSE_RECEIVED'].includes(s.status))
+
+  function clearFilters() {
+    setSearch(''); setStatusFilter(''); setEtaFrom(''); setEtaTo('')
+  }
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -180,6 +207,40 @@ export function Shipments() {
           <AlertTriangle size={12} /> {error}
         </div>
       )}
+      {notice && (
+        <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+          <Check size={12} /> {notice}
+        </div>
+      )}
+
+      {!loading && shipments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search shipment, container, supplier"
+              className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-56
+                         focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          </div>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                       focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">All statuses</option>
+            {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <div className="flex items-center gap-1.5 text-xs text-gray-400">
+            ETA
+            <input type="date" value={etaFrom} onChange={e => setEtaFrom(e.target.value)}
+              className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            <span>–</span>
+            <input type="date" value={etaTo} onChange={e => setEtaTo(e.target.value)}
+              className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+          </div>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="text-xs text-blue-600 hover:underline">Clear filters</button>
+          )}
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -202,7 +263,11 @@ export function Shipments() {
         </div>
       )}
 
-      {!loading && shipments.length > 0 && (
+      {!loading && shipments.length > 0 && filteredShipments.length === 0 && (
+        <div className="text-center py-12 text-gray-400 text-sm">No shipments match this filter.</div>
+      )}
+
+      {!loading && filteredShipments.length > 0 && (
         <div className="space-y-5">
 
           {/* Active */}
@@ -275,6 +340,13 @@ export function Shipments() {
                         >
                           Open →
                         </Link>
+                        <button
+                          onClick={() => setDeleteTarget(sh)}
+                          title="Delete shipment"
+                          className="p-1.5 text-gray-300 hover:text-red-600 transition-colors shrink-0"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     </div>
                   )
@@ -318,13 +390,22 @@ export function Shipments() {
                           {st.label}
                         </span>
                       </div>
-                      <Link
-                        to={`/shipments/${sh.id}`}
-                        className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg
-                                   hover:bg-gray-50 transition-colors text-gray-600"
-                      >
-                        Open →
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to={`/shipments/${sh.id}`}
+                          className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg
+                                     hover:bg-gray-50 transition-colors text-gray-600 whitespace-nowrap"
+                        >
+                          Open →
+                        </Link>
+                        <button
+                          onClick={() => setDeleteTarget(sh)}
+                          title="Delete shipment"
+                          className="p-1.5 text-gray-300 hover:text-red-600 transition-colors shrink-0"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
                   )
                 })}
@@ -332,6 +413,20 @@ export function Shipments() {
             </div>
           )}
         </div>
+      )}
+
+      {deleteTarget && (
+        <DeleteShipmentModal
+          shipmentId={deleteTarget.id}
+          shipmentNumber={deleteTarget.shipment_number}
+          status={deleteTarget.status}
+          onCancel={() => setDeleteTarget(null)}
+          onDeleted={(result) => {
+            setDeleteTarget(null)
+            setNotice(`Deleted ${result.shipment_number} — removed ${result.deleted_items} item${result.deleted_items === 1 ? '' : 's'}, ${result.deleted_expenses} expense${result.deleted_expenses === 1 ? '' : 's'}${result.deleted_inventory_movements > 0 ? `, ${result.deleted_inventory_movements} inventory movement${result.deleted_inventory_movements === 1 ? '' : 's'}` : ''}.`)
+            load()
+          }}
+        />
       )}
 
       {/* Modal */}
