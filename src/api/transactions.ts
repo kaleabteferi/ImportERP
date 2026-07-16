@@ -9,6 +9,7 @@
 // Txn.source field values ('sale' | 'purchase' | 'credit_repayment' |
 // 'expense'), so this is intentionally NOT keyed off `source`.
 import { supabase } from '../lib/supabase'
+import type { AnomalyTxn } from '../lib/anomalyDetection'
 
 export type TxnIdPrefix = 'sale' | 'po' | 'credit' | 'expense'
 
@@ -58,4 +59,41 @@ export async function deleteTransaction(compositeId: string) {
   const table = TABLE_BY_PREFIX[prefix]
   const { error } = await supabase.from(table).delete().eq('id', realId)
   if (error) throw new Error(error.message)
+}
+
+// Minimal version of the same unified ledger MoneyTracking.tsx builds in
+// full — just enough fields to run the anomaly checks — so the Dashboard can
+// surface "N unusual transactions" without duplicating MoneyTracking's whole
+// load() or its extra edit/display fields.
+export async function fetchTransactionsForAnomalies(sinceDate: string): Promise<AnomalyTxn[]> {
+  const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
+
+  const [salesRes, poRes, creditRes, expenseRes, shipExpRes] = await Promise.all([
+    supabase.from('sales_payments').select('id, amount_etb, payment_date, sales_orders(customers(name))').gte('payment_date', sinceDate),
+    supabase.from('purchase_order_payments').select('id, amount, currency, payment_date, purchase_orders(suppliers(name))').gte('payment_date', sinceDate),
+    supabase.from('credit_transactions').select('id, amount, transaction_date, credit_accounts(customers(name))').eq('type', 'repayment').gte('transaction_date', sinceDate),
+    supabase.from('company_expenses').select('id, amount, currency, expense_date, vendor_name, description').gte('expense_date', sinceDate),
+    supabase.from('shipment_expenses').select('id, amount_etb, currency, paid_at, vendor_name, description').eq('is_paid', true).gte('paid_at', sinceDate),
+  ])
+
+  const txns: AnomalyTxn[] = []
+  for (const r of (salesRes.data ?? []) as any[]) {
+    const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
+    txns.push({ id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', date: r.payment_date, source: 'sale' })
+  }
+  for (const r of (poRes.data ?? []) as any[]) {
+    const po = one(r.purchase_orders); const supplier = po ? one(po.suppliers) : null
+    txns.push({ id: `po-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: r.currency ?? 'USD', date: r.payment_date, source: 'purchase' })
+  }
+  for (const r of (creditRes.data ?? []) as any[]) {
+    const acct = one(r.credit_accounts); const customer = acct ? one(acct.customers) : null
+    txns.push({ id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', date: r.transaction_date, source: 'credit_repayment' })
+  }
+  for (const r of (expenseRes.data ?? []) as any[]) {
+    txns.push({ id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', date: r.expense_date, source: 'expense' })
+  }
+  for (const r of (shipExpRes.data ?? []) as any[]) {
+    txns.push({ id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount_etb ?? 0), currency: 'ETB', date: r.paid_at ? String(r.paid_at).slice(0, 10) : null, source: 'shipment_expense' })
+  }
+  return txns
 }

@@ -5,6 +5,8 @@
 // advisor dashboard.
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchTransactionsForAnomalies } from '../api/transactions'
+import { detectAnomalies } from '../lib/anomalyDetection'
 
 export type Period = 'day' | 'week' | 'month'
 
@@ -35,6 +37,7 @@ export interface DashboardData {
   // there's no reliable ETB-converted total to sum them into without risking
   // the same currency-drift bug fixed elsewhere in this app.
   payablesUsd: number
+  unusualTransactionCount: number
   inventoryValueEtb: number
   daysOfStock: number | null
   activeCustomers: number
@@ -59,7 +62,7 @@ export interface DashboardData {
 export function useDashboardData(period: Period): DashboardData {
   const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated'>>({
     revenueEtb: 0, revenuePrevEtb: 0, producedUnits: 0, producedPrevUnits: 0,
-    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0,
+    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, unusualTransactionCount: 0,
     inventoryValueEtb: 0, daysOfStock: null, activeCustomers: 0, frequentCustomers: 0,
     revenueTrend: [], productionTrend: [],
     topProducts: [], lowMarginProducts: [], topAdvice: null, secondaryAdvice: null, todoToday: [],
@@ -84,7 +87,7 @@ export function useDashboardData(period: Period): DashboardData {
         salesPaymentsRes, purchasePaymentsRes, expensesRes,
         creditRepaymentsRes, shipmentExpensesPaidRes, shipmentExpensesUnpaidRes,
         customersRes, purchaseOrdersRes, inventoryRes,
-        productionOrdersRes, bomHeadersRes, monthOrdersRes,
+        productionOrdersRes, bomHeadersRes, monthOrdersRes, anomalyTxns,
       ] = await Promise.all([
         supabase.from('sales_orders').select('id, sale_date, total_etb, gross_profit_etb, customer_id, status').gte('sale_date', periodStart).in('status', ['INVOICED', 'PAID']),
         supabase.from('sales_orders').select('total_etb').gte('sale_date', prevPeriodStart).lte('sale_date', prevPeriodEnd).in('status', ['INVOICED', 'PAID']),
@@ -111,6 +114,10 @@ export function useDashboardData(period: Period): DashboardData {
         // was a bug: on the Day/Week views it only ever contains today's or
         // this week's orders, so dividing by 30 wildly overstated days-of-stock.
         supabase.from('sales_orders').select('sale_date, total_etb, gross_profit_etb').gte('sale_date', monthAgo).in('status', ['INVOICED', 'PAID']),
+        // Statistical anomaly checks (amount outliers, possible duplicates) —
+        // no external API, same detector Money Tracking runs, just over a
+        // fixed trailing 90-day window regardless of the selected period.
+        fetchTransactionsForAnomalies(isoDate(daysAgo(89))),
       ])
 
       const critical = [
@@ -224,6 +231,10 @@ export function useDashboardData(period: Period): DashboardData {
           .slice(0, 3)
       }
 
+      const anomalies = detectAnomalies(anomalyTxns)
+      const unusualTransactionCount = anomalies.length
+      const highSeverityAnomalies = anomalies.filter(a => a.severity === 'high').length
+
       const todoToday: TodoItem[] = []
       const overduePOs = (purchaseOrdersRes.data ?? []).filter((po: any) => Number(po.paid_amount ?? 0) < Number(po.total_amount ?? 0))
       const outstandingCount = overduePOs.length + (shipmentExpensesUnpaidRes.data ?? []).length
@@ -232,6 +243,7 @@ export function useDashboardData(period: Period): DashboardData {
       const draftOrders = (productionOrdersRes.data ?? []).length
       const weeklyTargetTotal = (productionOrdersRes.data ?? []).reduce((s: number, o: any) => s + Number(o.target_quantity ?? 0), 0)
       if (bomHeadersRes.data && bomHeadersRes.data.length === 0) todoToday.push({ text: 'No active BOMs — assembly and sticker stages can\'t be logged yet.', link: '/boms' })
+      if (unusualTransactionCount > 0) todoToday.push({ text: `${unusualTransactionCount} unusual transaction${unusualTransactionCount > 1 ? 's' : ''} flagged in the last 90 days${highSeverityAnomalies > 0 ? ` (${highSeverityAnomalies} high-priority)` : ''} — review.`, link: '/money-tracking' })
 
       let topAdvice: AdviceItem | null = null
       let secondaryAdvice: AdviceItem | null = null
@@ -239,7 +251,9 @@ export function useDashboardData(period: Period): DashboardData {
       const topProduct = topProducts[0]
       const topShare = topProduct && revenueEtb > 0 ? (topProduct.revenue / revenueEtb) * 100 : 0
 
-      if (draftOrders > 0 && gapVsTarget > 0 && topProduct && topShare > 40) {
+      if (highSeverityAnomalies > 0) {
+        topAdvice = { impact: 'high', text: `${highSeverityAnomalies} transaction${highSeverityAnomalies > 1 ? 's' : ''} flagged as likely duplicates or way outside the normal amount — check Money Tracking before they're missed.` }
+      } else if (draftOrders > 0 && gapVsTarget > 0 && topProduct && topShare > 40) {
         topAdvice = { impact: 'high', text: `Increase ${topProduct.name} production — demand is outpacing output and it drives ${Math.round(topShare)}% of revenue this ${period}.` }
       } else if (lowMarginProducts.length > 0 && lowMarginProducts[0].marginPct < 20) {
         topAdvice = { impact: 'high', text: `Review pricing or cost on "${lowMarginProducts[0].name}" — its margin is only ${lowMarginProducts[0].marginPct.toFixed(0)}%.` }
@@ -254,7 +268,7 @@ export function useDashboardData(period: Period): DashboardData {
 
       setData({
         revenueEtb, revenuePrevEtb, producedUnits, producedPrevUnits,
-        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd,
+        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd, unusualTransactionCount,
         inventoryValueEtb, daysOfStock, activeCustomers, frequentCustomers,
         revenueTrend, productionTrend,
         topProducts, lowMarginProducts, topAdvice, secondaryAdvice, todoToday,

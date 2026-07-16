@@ -7,9 +7,10 @@ import { fetchCreditAccounts } from '../api/credit'
 import { fetchAccounts } from '../api/accounts'
 import { updateTransaction, deleteTransaction } from '../api/transactions'
 import { usePageState } from '../lib/pageState'
+import { detectAnomalies } from '../lib/anomalyDetection'
 import {
   Banknote, Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
-  Search, Plus, X, Pencil, Trash2,
+  Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight,
 } from 'lucide-react'
 
 type Direction = 'in' | 'out'
@@ -307,6 +308,7 @@ export function MoneyTracking() {
   const [query, setQuery] = usePageState('moneyTracking.query', '')
   const [activeForm, setActiveForm] = useState<'income' | 'expense' | null>(null)
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null)
+  const [insightsOpen, setInsightsOpen] = usePageState('moneyTracking.insightsOpen', false)
 
   const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
@@ -396,6 +398,19 @@ export function MoneyTracking() {
     return { inEtb, outEtb, outUsd, outCny, sensitiveCount, outstandingCredit }
   }, [txns, credit])
 
+  // Statistical anomaly checks (amount outliers + possible duplicates) — no
+  // external API, just runs against the transactions already loaded above.
+  const anomalies = useMemo(() => detectAnomalies(txns), [txns])
+  const anomaliesByTxnId = useMemo(() => {
+    const map = new Map<string, typeof anomalies>()
+    for (const a of anomalies) {
+      if (!map.has(a.txnId)) map.set(a.txnId, [])
+      map.get(a.txnId)!.push(a)
+    }
+    return map
+  }, [anomalies])
+  const highSeverityCount = anomalies.filter(a => a.severity === 'high').length
+
   return (
     <div className="p-5 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-5">
@@ -453,6 +468,38 @@ export function MoneyTracking() {
             </div>
           </div>
 
+          {anomalies.length > 0 && (
+            <div className="bg-white border border-amber-200 rounded-xl overflow-hidden mb-5">
+              <button onClick={() => setInsightsOpen(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                  <Sparkles size={14} className="text-amber-500" />
+                  {anomalies.length} unusual transaction{anomalies.length > 1 ? 's' : ''} flagged
+                  {highSeverityCount > 0 && <span className="text-xs font-normal text-red-600">· {highSeverityCount} high</span>}
+                </span>
+                {insightsOpen ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+              </button>
+              {insightsOpen && (
+                <div className="border-t border-amber-100 divide-y divide-amber-50">
+                  {anomalies.slice(0, 20).map((a, i) => {
+                    const t = txns.find(x => x.id === a.txnId)
+                    return (
+                      <div key={`${a.txnId}-${a.type}-${i}`} className="flex items-start gap-2.5 px-4 py-2.5 text-xs bg-amber-50/40">
+                        {a.type === 'possible_duplicate'
+                          ? <Copy size={13} className={`shrink-0 mt-0.5 ${a.severity === 'high' ? 'text-red-500' : 'text-amber-500'}`} />
+                          : <TrendingUp size={13} className={`shrink-0 mt-0.5 ${a.severity === 'high' ? 'text-red-500' : 'text-amber-500'}`} />}
+                        <div className="min-w-0">
+                          <p className="text-gray-700">{a.reason}</p>
+                          {t && <p className="text-gray-400 mt-0.5">{t.party} · {t.date ?? '—'}</p>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-2 gap-2">
             <div className="text-xs font-medium text-gray-500">Transactions</div>
             <div className="flex items-center gap-2">
@@ -483,6 +530,10 @@ export function MoneyTracking() {
                     <p className="font-medium truncate flex items-center gap-1.5">
                       {t.party}
                       {t.sensitive && <ShieldAlert size={11} className="text-amber-500 shrink-0" aria-label="Sensitive" />}
+                      {anomaliesByTxnId.has(t.id) && (
+                        <Sparkles size={11} className={`shrink-0 ${anomaliesByTxnId.get(t.id)!.some(a => a.severity === 'high') ? 'text-red-500' : 'text-amber-500'}`}
+                          aria-label="Flagged as unusual" />
+                      )}
                     </p>
                     <p className="text-gray-400">
                       {METHOD_LABEL[t.method] ?? t.method}{t.accountName && ` · ${t.accountName}`} · {t.date ?? '—'}{t.notes && ` · ${t.notes}`}
