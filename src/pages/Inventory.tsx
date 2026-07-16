@@ -4,7 +4,8 @@ import { calculateInventoryBalances, type InventoryBalance } from '../lib/invent
 import { fetchAllProducts, fetchBoms } from '../api/bom'
 import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
-import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes } from 'lucide-react'
+import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge } from 'lucide-react'
 
 interface Option { id: string; name: string }
 
@@ -123,7 +124,8 @@ export function Inventory() {
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
-  const [tab, setTab]             = usePageState<'stock' | 'movements' | 'warehouses'>('inventory.tab', 'stock')
+  const [tab, setTab]             = usePageState<'stock' | 'movements' | 'warehouses' | 'forecast'>('inventory.tab', 'stock')
+  const [salesLines, setSalesLines] = useState<SalesLine[]>([])
   const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
   const [filterWarehouse, setFilterWarehouse] = usePageState('inventory.filterWarehouse', '')
   const [stockSearch, setStockSearch] = usePageState('inventory.stockSearch', '')
@@ -192,6 +194,19 @@ export function Inventory() {
       .filter((b: any) => b.lines.length > 0)
       .map((b: any) => ({ id: b.id, isActive: b.isActive, productId: b.productId, productName: b.productName, lines: b.lines.map((l: any) => ({ componentProductId: l.componentProductId, quantityRequired: l.quantityRequired })) }))
     )).catch(console.error)
+    const sixtyAgo = new Date(); sixtyAgo.setDate(sixtyAgo.getDate() - 60)
+    const sixtyAgoIso = sixtyAgo.toISOString().slice(0, 10)
+    supabase.from('sales_order_lines')
+      .select('product_id, quantity, sales_orders(sale_date, status)')
+      .then(({ data }) => setSalesLines((data ?? [])
+        .map((r: any) => {
+          const order = Array.isArray(r.sales_orders) ? r.sales_orders[0] : r.sales_orders
+          return { product_id: r.product_id, quantity: Number(r.quantity ?? 0), sale_date: order?.sale_date ?? '', status: order?.status ?? '' }
+        })
+        .filter((r: any) => r.sale_date >= sixtyAgoIso && (r.status === 'INVOICED' || r.status === 'PAID'))
+        .map((r: any) => ({ product_id: r.product_id, quantity: r.quantity, sale_date: r.sale_date }))
+      ))
+      .then(undefined, console.error)
   }, [])
 
   // Buildable finished units per warehouse, computed from BOM component stock
@@ -219,6 +234,34 @@ export function Inventory() {
     }
     return map
   }, [inventory, boms])
+
+  // Company-wide effective stock per product: on-hand quantity plus whatever
+  // can still be assembled from SKD/CKD component stock (summed across
+  // warehouses — components in different warehouses can't be combined into
+  // one kit, but each warehouse's own buildable count still adds to the
+  // company-wide total that's actually sellable).
+  const stockByProductTotal = useMemo(() => {
+    const map = new Map<string, { onHand: number; buildable: number }>()
+    for (const item of inventory) {
+      const entry = map.get(item.product_id) ?? { onHand: 0, buildable: 0 }
+      entry.onHand += item.quantity_on_hand
+      map.set(item.product_id, entry)
+    }
+    for (const list of buildableByWarehouse.values()) {
+      for (const b of list) {
+        const entry = map.get(b.productId) ?? { onHand: 0, buildable: 0 }
+        entry.buildable += b.buildable
+        map.set(b.productId, entry)
+      }
+    }
+    return map
+  }, [inventory, buildableByWarehouse])
+
+  const forecast = useMemo(() => computeDemandForecast(salesLines, stockByProductTotal), [salesLines, stockByProductTotal])
+  const forecastRows = useMemo(() => [...forecast.values()]
+    .filter(f => f.avgDailyDemand > 0)
+    .sort((a, b) => (a.daysUntilStockout ?? Infinity) - (b.daysUntilStockout ?? Infinity)),
+    [forecast])
 
   const warehouseGroups = useMemo(() => {
     const map = new Map<string, { name: string; items: InventoryRow[] }>()
@@ -262,7 +305,7 @@ export function Inventory() {
           >
             {showAdjustForm ? <X size={12} /> : <Plus size={12} />} Adjust stock
           </button>
-          {(['stock', 'warehouses', 'movements'] as const).map(t => (
+          {(['stock', 'warehouses', 'forecast', 'movements'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -272,7 +315,8 @@ export function Inventory() {
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
             >
               {t === 'warehouses' && <LayoutGrid size={12} />}
-              {t === 'stock' ? 'Stock levels' : t === 'warehouses' ? 'Warehouse view' : 'Movement history'}
+              {t === 'forecast' && <Gauge size={12} />}
+              {t === 'stock' ? 'Stock levels' : t === 'warehouses' ? 'Warehouse view' : t === 'forecast' ? 'Forecast' : 'Movement history'}
             </button>
           ))}
         </div>
@@ -509,6 +553,68 @@ export function Inventory() {
                         </div>
                       )
                     })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      )}
+
+      {/* Forecast tab — recency-weighted demand vs. effective stock (on hand
+          + buildable from SKD/CKD components), no external API */}
+      {!loading && tab === 'forecast' && (
+        forecastRows.length === 0 ? (
+          <div className="text-center py-16">
+            <Gauge size={36} className="mx-auto text-gray-200 mb-3" />
+            <p className="text-sm font-medium text-gray-500 mb-1">Not enough sales history yet</p>
+            <p className="text-xs text-gray-400">Forecasts need at least some sales in the last 60 days to estimate demand.</p>
+          </div>
+        ) : (
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
+                            bg-gray-50 border-b border-gray-100
+                            text-xs font-medium text-gray-400 uppercase tracking-wide">
+              <div>Product</div>
+              <div className="text-right">Avg daily sales</div>
+              <div>Trend</div>
+              <div className="text-right">Effective stock</div>
+              <div className="text-right">Runway</div>
+              <div>Reorder by</div>
+            </div>
+            {forecastRows.map((f, i) => {
+              const meta = productMeta.get(f.productId)
+              const urgent = f.daysUntilStockout !== null && f.daysUntilStockout <= STOCKOUT_WARNING_DAYS
+              return (
+                <div key={f.productId}
+                  className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 items-center
+                              ${i < forecastRows.length - 1 ? 'border-b border-gray-50' : ''} ${urgent ? 'bg-red-50/40' : ''}`}>
+                  <div>
+                    <p className="text-sm font-medium">{meta?.name ?? 'Unknown product'}</p>
+                    <p className="text-xs font-mono text-gray-400">{meta?.sku ?? ''}</p>
+                  </div>
+                  <div className="text-right text-sm font-mono">{f.avgDailyDemand.toFixed(1)}/day</div>
+                  <div className="flex items-center gap-1 text-xs">
+                    {f.trendPct === null ? (
+                      <span className="text-gray-400">—</span>
+                    ) : f.trendPct > 15 ? (
+                      <span className="flex items-center gap-0.5 text-red-600"><TrendingUp size={12} /> {f.trendPct.toFixed(0)}%</span>
+                    ) : f.trendPct < -15 ? (
+                      <span className="flex items-center gap-0.5 text-blue-600"><TrendingDown size={12} /> {f.trendPct.toFixed(0)}%</span>
+                    ) : (
+                      <span className="flex items-center gap-0.5 text-gray-400"><Minus size={12} /> steady</span>
+                    )}
+                  </div>
+                  <div className="text-right text-sm font-mono">
+                    {N(f.effectiveStock)}
+                    {f.buildableStock > 0 && <p className="text-xs text-violet-500">{N(f.onHandStock)} + {N(f.buildableStock)} buildable</p>}
+                  </div>
+                  <div className={`text-right text-sm font-mono font-medium ${urgent ? 'text-red-600' : 'text-gray-700'}`}>
+                    {f.daysUntilStockout === null ? '—' : f.daysUntilStockout >= 90 ? '90+ days' : `${Math.round(f.daysUntilStockout)} days`}
+                  </div>
+                  <div className={`text-xs ${urgent ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
+                    {f.recommendReorderBy ?? '—'}
+                    {urgent && <AlertTriangle size={11} className="inline ml-1 -mt-0.5" />}
                   </div>
                 </div>
               )
