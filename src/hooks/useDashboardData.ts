@@ -86,8 +86,8 @@ export function useDashboardData(period: Period): DashboardData {
         customersRes, purchaseOrdersRes, inventoryRes,
         productionOrdersRes, bomHeadersRes, monthOrdersRes,
       ] = await Promise.all([
-        supabase.from('sales_orders').select('id, sale_date, total_etb, gross_profit_etb, customer_id, status').gte('sale_date', periodStart).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
-        supabase.from('sales_orders').select('total_etb').gte('sale_date', prevPeriodStart).lte('sale_date', prevPeriodEnd).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
+        supabase.from('sales_orders').select('id, sale_date, total_etb, gross_profit_etb, customer_id, status').gte('sale_date', periodStart).in('status', ['INVOICED', 'PAID']),
+        supabase.from('sales_orders').select('total_etb').gte('sale_date', prevPeriodStart).lte('sale_date', prevPeriodEnd).in('status', ['INVOICED', 'PAID']),
         supabase.from('production_daily_logs').select('log_date, quantity_produced').gte('log_date', periodStart),
         supabase.from('production_daily_logs').select('quantity_produced').gte('log_date', prevPeriodStart).lte('log_date', prevPeriodEnd),
         supabase.from('sales_payments').select('amount_etb, payment_date').gte('payment_date', periodStart),
@@ -110,7 +110,7 @@ export function useDashboardData(period: Period): DashboardData {
         // 30-day COGS figure. Reusing the period-filtered `orders` array here
         // was a bug: on the Day/Week views it only ever contains today's or
         // this week's orders, so dividing by 30 wildly overstated days-of-stock.
-        supabase.from('sales_orders').select('sale_date, total_etb, gross_profit_etb').gte('sale_date', monthAgo).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
+        supabase.from('sales_orders').select('sale_date, total_etb, gross_profit_etb').gte('sale_date', monthAgo).in('status', ['INVOICED', 'PAID']),
       ])
 
       const critical = [
@@ -174,7 +174,7 @@ export function useDashboardData(period: Period): DashboardData {
       const frequentCustomers = [...ordersPerCustomer.values()].filter(n => n >= 2).length
 
       // ---- Tier 2: trends ----
-      const { data: trendSales } = await supabase.from('sales_orders').select('sale_date, total_etb').gte('sale_date', trendStart).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID'])
+      const { data: trendSales } = await supabase.from('sales_orders').select('sale_date, total_etb').gte('sale_date', trendStart).in('status', ['INVOICED', 'PAID'])
       const { data: trendProd } = await supabase.from('production_daily_logs').select('log_date, quantity_produced').gte('log_date', trendStart)
 
       const revenueTrend: DayPoint[] = []

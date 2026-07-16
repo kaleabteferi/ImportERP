@@ -129,7 +129,7 @@ function MarkExpensePaidForm({ payable, accounts, onDone, onCancel }: {
     try {
       const { error } = await supabase
         .from('shipment_expenses')
-        .update({ is_paid: true, payment_method: method, sensitive_flag: sensitive, account_id: method !== 'credit' ? accountId : null })
+        .update({ is_paid: true, paid_at: new Date().toISOString(), payment_method: method, sensitive_flag: sensitive, account_id: method !== 'credit' ? accountId : null })
         .eq('id', rawId)
       if (error) throw error
       onDone()
