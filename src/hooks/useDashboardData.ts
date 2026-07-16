@@ -30,6 +30,11 @@ export interface DashboardData {
   cashOutEtb: number
   receivablesEtb: number
   payablesEtb: number
+  // Payables run mostly USD-priced (purchase orders quoted to suppliers in
+  // USD) — surfaced separately rather than folded into payablesEtb, since
+  // there's no reliable ETB-converted total to sum them into without risking
+  // the same currency-drift bug fixed elsewhere in this app.
+  payablesUsd: number
   inventoryValueEtb: number
   daysOfStock: number | null
   activeCustomers: number
@@ -54,7 +59,7 @@ export interface DashboardData {
 export function useDashboardData(period: Period): DashboardData {
   const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated'>>({
     revenueEtb: 0, revenuePrevEtb: 0, producedUnits: 0, producedPrevUnits: 0,
-    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0,
+    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0,
     inventoryValueEtb: 0, daysOfStock: null, activeCustomers: 0, frequentCustomers: 0,
     revenueTrend: [], productionTrend: [],
     topProducts: [], lowMarginProducts: [], topAdvice: null, secondaryAdvice: null, todoToday: [],
@@ -77,8 +82,9 @@ export function useDashboardData(period: Period): DashboardData {
       const [
         salesRes, prevSalesRes, prodLogsRes, prevProdLogsRes,
         salesPaymentsRes, purchasePaymentsRes, expensesRes,
+        creditRepaymentsRes, shipmentExpensesPaidRes, shipmentExpensesUnpaidRes,
         customersRes, purchaseOrdersRes, inventoryRes,
-        productionOrdersRes, bomHeadersRes,
+        productionOrdersRes, bomHeadersRes, monthOrdersRes,
       ] = await Promise.all([
         supabase.from('sales_orders').select('id, sale_date, total_etb, gross_profit_etb, customer_id, status').gte('sale_date', periodStart).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
         supabase.from('sales_orders').select('total_etb').gte('sale_date', prevPeriodStart).lte('sale_date', prevPeriodEnd).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
@@ -87,18 +93,34 @@ export function useDashboardData(period: Period): DashboardData {
         supabase.from('sales_payments').select('amount_etb, payment_date').gte('payment_date', periodStart),
         supabase.from('purchase_order_payments').select('amount, currency, payment_date').gte('payment_date', periodStart),
         supabase.from('company_expenses').select('amount, currency, expense_date').gte('expense_date', periodStart),
+        // Credit repayments are real cash in — a customer paying down a credit
+        // account — but weren't being counted in cashInEtb before.
+        supabase.from('credit_transactions').select('amount, transaction_date').eq('type', 'repayment').gte('transaction_date', periodStart),
+        // Shipment expenses paid via Payables -> "Mark as paid" are real cash
+        // out but were invisible here (only purchase_order_payments and
+        // company_expenses were counted).
+        supabase.from('shipment_expenses').select('amount_etb, currency, paid_at').eq('is_paid', true).gte('paid_at', periodStart),
+        supabase.from('shipment_expenses').select('amount_etb, currency').eq('is_paid', false),
         supabase.from('customers').select('id, outstanding_etb'),
         supabase.from('purchase_orders').select('total_amount, paid_amount, currency'),
         supabase.from('current_inventory').select('quantity_on_hand, avg_unit_cost_etb'),
         supabase.from('production_orders').select('id, target_quantity, planned_start_date').gte('planned_start_date', periodStart),
         supabase.from('bom_headers').select('id, product_id, finished_product_id, is_active').eq('is_active', true),
+        // Independent of `period` — "days of stock" needs a real trailing
+        // 30-day COGS figure. Reusing the period-filtered `orders` array here
+        // was a bug: on the Day/Week views it only ever contains today's or
+        // this week's orders, so dividing by 30 wildly overstated days-of-stock.
+        supabase.from('sales_orders').select('sale_date, total_etb, gross_profit_etb').gte('sale_date', monthAgo).in('status', ['CONFIRMED', 'INVOICED', 'PARTIAL', 'PAID']),
       ])
 
       const critical = [
         ['sales', salesRes.error], ['production logs', prodLogsRes.error],
         ['sales payments', salesPaymentsRes.error], ['purchase payments', purchasePaymentsRes.error],
-        ['expenses', expensesRes.error], ['customers', customersRes.error],
+        ['expenses', expensesRes.error], ['credit repayments', creditRepaymentsRes.error],
+        ['shipment expenses (paid)', shipmentExpensesPaidRes.error], ['shipment expenses (unpaid)', shipmentExpensesUnpaidRes.error],
+        ['customers', customersRes.error],
         ['purchase orders', purchaseOrdersRes.error], ['inventory', inventoryRes.error],
+        ['30-day sales', monthOrdersRes.error],
       ] as const
       const failed = critical.filter(([, err]) => err)
       if (failed.length > 0) throw new Error(`Failed to load: ${failed.map(([n]) => n).join(', ')}`)
@@ -115,22 +137,32 @@ export function useDashboardData(period: Period): DashboardData {
       // Cash in/out are ETB-only sums where currency=ETB; USD payment rows are
       // rare on these tables in practice (purchases run mostly USD-priced but
       // paid_amount tracked in order currency) — flagged as an approximation.
-      const cashInEtb = (salesPaymentsRes.data ?? []).reduce((s, p) => s + Number(p.amount_etb ?? 0), 0)
+      const cashInEtb =
+        (salesPaymentsRes.data ?? []).reduce((s, p) => s + Number(p.amount_etb ?? 0), 0) +
+        (creditRepaymentsRes.data ?? []).reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0)
       const cashOutEtb =
         (purchasePaymentsRes.data ?? []).filter((p: any) => p.currency === 'ETB').reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0) +
-        (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0)
+        (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0) +
+        (shipmentExpensesPaidRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
 
       const receivablesEtb = (customersRes.data ?? []).reduce((s, c: any) => s + Number(c.outstanding_etb ?? 0), 0)
-      const payablesEtb = (purchaseOrdersRes.data ?? [])
-        .filter((po: any) => po.currency === 'ETB')
+      const payablesEtb =
+        (purchaseOrdersRes.data ?? [])
+          .filter((po: any) => po.currency === 'ETB')
+          .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0) +
+        (shipmentExpensesUnpaidRes.data ?? [])
+          .filter((e: any) => e.currency === 'ETB')
+          .reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
+      const payablesUsd = (purchaseOrdersRes.data ?? [])
+        .filter((po: any) => po.currency === 'USD')
         .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0)
 
       const inventoryRows = inventoryRes.data ?? []
       const inventoryValueEtb = inventoryRows.reduce((s: number, r: any) => s + Number(r.quantity_on_hand ?? 0) * Number(r.avg_unit_cost_etb ?? 0), 0)
 
-      // Days of stock: inventory value / average daily COGS over the last 30 days
-      const monthCogs = orders
-        .filter(o => o.sale_date >= monthAgo)
+      // Days of stock: inventory value / average daily COGS over the last 30
+      // days — always the trailing 30 days regardless of the selected period.
+      const monthCogs = (monthOrdersRes.data ?? [])
         .reduce((s: number, o: any) => s + Math.max(0, Number(o.total_etb ?? 0) - Number(o.gross_profit_etb ?? 0)), 0)
       const avgDailyCogs = monthCogs / 30
       const daysOfStock = avgDailyCogs > 0 ? inventoryValueEtb / avgDailyCogs : null
@@ -194,7 +226,8 @@ export function useDashboardData(period: Period): DashboardData {
 
       const todoToday: TodoItem[] = []
       const overduePOs = (purchaseOrdersRes.data ?? []).filter((po: any) => Number(po.paid_amount ?? 0) < Number(po.total_amount ?? 0))
-      if (overduePOs.length > 0) todoToday.push({ text: `${overduePOs.length} supplier payment${overduePOs.length > 1 ? 's' : ''} still outstanding.`, link: '/payables' })
+      const outstandingCount = overduePOs.length + (shipmentExpensesUnpaidRes.data ?? []).length
+      if (outstandingCount > 0) todoToday.push({ text: `${outstandingCount} supplier payment${outstandingCount > 1 ? 's' : ''} still outstanding.`, link: '/payables' })
       if (receivablesEtb > 0) todoToday.push({ text: `${Math.round(receivablesEtb).toLocaleString()} ETB owed by customers — follow up on overdue accounts.`, link: '/receivables' })
       const draftOrders = (productionOrdersRes.data ?? []).length
       const weeklyTargetTotal = (productionOrdersRes.data ?? []).reduce((s: number, o: any) => s + Number(o.target_quantity ?? 0), 0)
@@ -221,7 +254,7 @@ export function useDashboardData(period: Period): DashboardData {
 
       setData({
         revenueEtb, revenuePrevEtb, producedUnits, producedPrevUnits,
-        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb,
+        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd,
         inventoryValueEtb, daysOfStock, activeCustomers, frequentCustomers,
         revenueTrend, productionTrend,
         topProducts, lowMarginProducts, topAdvice, secondaryAdvice, todoToday,

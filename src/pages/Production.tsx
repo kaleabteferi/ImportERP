@@ -303,6 +303,36 @@ export function Production() {
 
   // Withdraws a BOM's components for `delta` extra units produced, at the
   // given warehouse. Shared by both the order-linked and order-less paths.
+  // Read-only pre-flight check, run before ANY writes for a log entry. Without
+  // this, insufficient component stock was only discovered inside
+  // consumeBomComponents — by which point the finished-goods PRODUCTION_OUTPUT
+  // movement (and the daily-log/production-order rows) had already been
+  // written, leaving phantom finished units in inventory with nothing consumed
+  // to make them.
+  async function checkBomComponentsAvailable(bomHeaderId: string, warehouseId: string, delta: number) {
+    const { data: bomLines } = await supabase
+      .from('bom_lines')
+      .select('component_product_id, quantity_required')
+      .eq('bom_header_id', bomHeaderId)
+
+    for (const line of bomLines ?? []) {
+      const needed = line.quantity_required * delta
+      const { data: ledgerRows } = await supabase
+        .from('inventory_ledger')
+        .select('quantity')
+        .eq('product_id', line.component_product_id)
+        .eq('warehouse_id', warehouseId)
+      const available = (ledgerRows ?? []).reduce((s: number, r: any) => s + Number(r.quantity ?? 0), 0)
+
+      if (available < needed) {
+        throw new Error(
+          `Not enough component stock at this warehouse to log ${delta} units — ` +
+          `have ${available}, need ${needed}.`
+        )
+      }
+    }
+  }
+
   async function consumeBomComponents(bomHeaderId: string, warehouseId: string, delta: number, refType: string, refId: string, label: string) {
     const { data: bomLines } = await supabase
       .from('bom_lines')
@@ -360,6 +390,7 @@ export function Production() {
           o.bom_header_id === bom.id && o.warehouse_id === selectedWarehouseId &&
           ['DRAFT', 'IN_PROGRESS'].includes(o.status) && o.target_quantity > o.completed_quantity,
         )
+        const warehouseId = order?.warehouse_id ?? selectedWarehouseId
 
         const { data: existing } = order
           ? await supabase.from('production_daily_logs')
@@ -377,6 +408,11 @@ export function Production() {
 
         const prevQty = existing?.quantity_produced ?? 0
         const delta   = qty - prevQty
+
+        // Validate component stock before writing anything — finished-goods
+        // credit and log/order rows must not land if the components to make
+        // them don't actually exist at this warehouse.
+        if (delta > 0) await checkBomComponentsAvailable(bom.id, warehouseId, delta)
 
         if (existing) {
           const { error: updErr } = await supabase.from('production_daily_logs')
@@ -398,7 +434,6 @@ export function Production() {
 
         if (delta === 0) continue
 
-        const warehouseId = order?.warehouse_id ?? selectedWarehouseId
         const label = order ? order.order_number : `${bom.name} (${logDate})`
         const refType = order ? 'production_order' : 'production_log'
         const refId = order ? order.id : bom.id

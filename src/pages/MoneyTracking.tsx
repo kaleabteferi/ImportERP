@@ -387,9 +387,13 @@ export function MoneyTracking() {
     const inEtb = txns.filter(t => t.direction === 'in' && t.currency === 'ETB').reduce((s, t) => s + t.amount, 0)
     const outEtb = txns.filter(t => t.direction === 'out' && t.currency === 'ETB').reduce((s, t) => s + t.amount, 0)
     const outUsd = txns.filter(t => t.direction === 'out' && t.currency === 'USD').reduce((s, t) => s + t.amount, 0)
+    // CNY payments (rare, but a real supplier-payment currency) were silently
+    // dropped from every KPI tile before — they still appeared in the list
+    // below, just uncounted anywhere in the summary.
+    const outCny = txns.filter(t => t.direction === 'out' && t.currency === 'CNY').reduce((s, t) => s + t.amount, 0)
     const sensitiveCount = txns.filter(t => t.sensitive).length
     const outstandingCredit = credit.reduce((s, c) => s + c.balance, 0)
-    return { inEtb, outEtb, outUsd, sensitiveCount, outstandingCredit }
+    return { inEtb, outEtb, outUsd, outCny, sensitiveCount, outstandingCredit }
   }, [txns, credit])
 
   return (
@@ -436,7 +440,7 @@ export function MoneyTracking() {
             <div className="bg-gray-50 rounded-xl px-4 py-3">
               <p className="text-xs text-gray-400">Paid out</p>
               <p className="text-xl font-medium font-mono text-red-700">
-                {N(totals.outEtb)} ETB{totals.outUsd > 0 && ` · $${N(totals.outUsd)}`}
+                {N(totals.outEtb)} ETB{totals.outUsd > 0 && ` · $${N(totals.outUsd)}`}{totals.outCny > 0 && ` · ¥${N(totals.outCny)}`}
               </p>
             </div>
             <div className="bg-gray-50 rounded-xl px-4 py-3">

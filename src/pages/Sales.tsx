@@ -199,13 +199,27 @@ export function Sales() {
         lines: cart.map(l => ({ product_id: l.productId, quantity: l.quantity, unit_price_etb: l.unitPriceEtb })),
       })
 
+      // The order (and its stock deduction) is now committed. If the payment
+      // step below fails, the order still exists — reporting a generic
+      // "failed to record sale" and leaving the same cart on screen would
+      // invite the user to resubmit and create a second, duplicate order.
+      // Treat a payment failure as its own outcome: the order stands, close
+      // the form, and point at Receivables to record payment manually.
       if (payNow) {
-        if (method === 'credit') {
-          await recordCreditTransaction(creditAcctId, 'draw', result.total_etb, {
-            method, salesOrderId: result.order_id,
-          })
-        } else {
-          await recordPayment(result.order_id, result.total_etb, method, { accountId })
+        try {
+          if (method === 'credit') {
+            await recordCreditTransaction(creditAcctId, 'draw', result.total_etb, {
+              method, salesOrderId: result.order_id,
+            })
+          } else {
+            await recordPayment(result.order_id, result.total_etb, method, { accountId })
+          }
+        } catch (payErr: any) {
+          setError(`${result.order_number} was recorded, but the payment failed: ${payErr?.message ?? 'unknown error'}. Go to Receivables to record it — don't resubmit this sale.`)
+          setOpen(false)
+          resetForm()
+          load()
+          return
         }
       }
 

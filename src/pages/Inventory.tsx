@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { calculateInventoryBalances, type InventoryBalance } from '../lib/inventoryLedger'
-import { fetchAllProducts } from '../api/bom'
+import { fetchAllProducts, fetchBoms } from '../api/bom'
 import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
-import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert } from 'lucide-react'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes } from 'lucide-react'
 
 interface Option { id: string; name: string }
 
@@ -90,6 +90,10 @@ function AdjustStockForm({ products, warehouses, onDone, onCancel }: {
 
 interface InventoryRow extends InventoryBalance {}
 
+interface ProductMeta { id: string; name: string; sku: string; imageUrl: string | null; assemblyType: string | null }
+interface BomLine { componentProductId: string; quantityRequired: number }
+interface BomEntry { id: string; isActive: boolean; productId: string; productName: string; lines: BomLine[] }
+
 interface Movement {
   id: string
   movement_type: string
@@ -119,13 +123,15 @@ export function Inventory() {
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
-  const [tab, setTab]             = usePageState<'stock' | 'movements'>('inventory.tab', 'stock')
+  const [tab, setTab]             = usePageState<'stock' | 'movements' | 'warehouses'>('inventory.tab', 'stock')
   const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
   const [filterWarehouse, setFilterWarehouse] = usePageState('inventory.filterWarehouse', '')
   const [stockSearch, setStockSearch] = usePageState('inventory.stockSearch', '')
   const [showAdjustForm, setShowAdjustForm] = useState(false)
   const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string }>>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
+  const [productMeta, setProductMeta] = useState<Map<string, ProductMeta>>(new Map())
+  const [boms, setBoms] = useState<BomEntry[]>([])
 
   async function load() {
     setLoading(true)
@@ -177,7 +183,52 @@ export function Inventory() {
     load()
     fetchAllProducts().then((rows: any) => setProducts((rows ?? []).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku })))).catch(console.error)
     fetchWarehousesList().then((rows: any) => setWarehouses((rows ?? []).map((w: any) => ({ id: w.id, name: w.name })))).catch(console.error)
+    supabase.from('products').select('id, name, sku, image_url, assembly_type').then(({ data }) => {
+      const map = new Map<string, ProductMeta>()
+      for (const p of data ?? []) map.set(p.id, { id: p.id, name: p.name, sku: p.sku, imageUrl: p.image_url, assemblyType: p.assembly_type })
+      setProductMeta(map)
+    })
+    fetchBoms().then((rows: any) => setBoms((rows ?? [])
+      .filter((b: any) => b.lines.length > 0)
+      .map((b: any) => ({ id: b.id, isActive: b.isActive, productId: b.productId, productName: b.productName, lines: b.lines.map((l: any) => ({ componentProductId: l.componentProductId, quantityRequired: l.quantityRequired })) }))
+    )).catch(console.error)
   }, [])
+
+  // Buildable finished units per warehouse, computed from BOM component stock
+  // — this is what lets an SKD/CKD kit ("2 boxes of parts") answer "how many
+  // finished units can I actually assemble from what's on hand right now".
+  const buildableByWarehouse = useMemo(() => {
+    const stockByKey = new Map<string, number>()
+    for (const item of inventory) stockByKey.set(`${item.warehouse_id ?? ''}:${item.product_id}`, item.quantity_on_hand)
+
+    const warehouseIds = new Set(inventory.map(i => i.warehouse_id ?? ''))
+    const map = new Map<string, Array<{ bomId: string; productId: string; productName: string; buildable: number }>>()
+    for (const whId of warehouseIds) {
+      const list: Array<{ bomId: string; productId: string; productName: string; buildable: number }> = []
+      for (const bom of boms) {
+        if (!bom.isActive) continue
+        let buildable = Infinity
+        for (const line of bom.lines) {
+          const stock = stockByKey.get(`${whId}:${line.componentProductId}`) ?? 0
+          const possible = line.quantityRequired > 0 ? Math.floor(stock / line.quantityRequired) : 0
+          buildable = Math.min(buildable, possible)
+        }
+        if (buildable !== Infinity && buildable > 0) list.push({ bomId: bom.id, productId: bom.productId, productName: bom.productName, buildable })
+      }
+      if (list.length > 0) map.set(whId, list)
+    }
+    return map
+  }, [inventory, boms])
+
+  const warehouseGroups = useMemo(() => {
+    const map = new Map<string, { name: string; items: InventoryRow[] }>()
+    for (const item of inventory) {
+      const key = item.warehouse_id ?? ''
+      if (!map.has(key)) map.set(key, { name: item.warehouse_name, items: [] })
+      map.get(key)!.items.push(item)
+    }
+    return [...map.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name))
+  }, [inventory])
 
   const totalValue = inventory.reduce((s, i) => s + i.total_value, 0)
   const outOfStock = inventory.filter(i => i.quantity_on_hand <= 0)
@@ -211,16 +262,17 @@ export function Inventory() {
           >
             {showAdjustForm ? <X size={12} /> : <Plus size={12} />} Adjust stock
           </button>
-          {(['stock', 'movements'] as const).map(t => (
+          {(['stock', 'warehouses', 'movements'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors capitalize
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors capitalize flex items-center gap-1
                 ${tab === t
                   ? 'bg-blue-600 text-white border-blue-600'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
             >
-              {t === 'stock' ? 'Stock levels' : 'Movement history'}
+              {t === 'warehouses' && <LayoutGrid size={12} />}
+              {t === 'stock' ? 'Stock levels' : t === 'warehouses' ? 'Warehouse view' : 'Movement history'}
             </button>
           ))}
         </div>
@@ -383,6 +435,86 @@ export function Inventory() {
             </>
           )}
         </>
+      )}
+
+      {/* Warehouse view tab — pictorial, grouped by warehouse */}
+      {!loading && tab === 'warehouses' && (
+        warehouseGroups.length === 0 ? (
+          <div className="text-center py-16">
+            <Boxes size={36} className="mx-auto text-gray-200 mb-3" />
+            <p className="text-sm font-medium text-gray-500 mb-1">No inventory yet</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {warehouseGroups.map(([whId, group]) => {
+              const buildable = buildableByWarehouse.get(whId) ?? []
+              const maxQty = Math.max(1, ...group.items.map(i => i.quantity_on_hand))
+              return (
+                <div key={whId || 'unassigned'}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-sm font-medium flex items-center gap-1.5">
+                      <LayoutGrid size={14} className="text-gray-400" /> {group.name}
+                    </h2>
+                    <span className="text-xs text-gray-400">
+                      {group.items.length} products · {N(group.items.reduce((s, i) => s + i.total_value, 0))} ETB
+                    </span>
+                  </div>
+
+                  {buildable.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {buildable.map(b => (
+                        <div key={b.bomId} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200">
+                          <Wrench size={14} className="text-violet-600 shrink-0" />
+                          <div>
+                            <p className="text-xs text-violet-700 font-medium leading-tight">Can build {N(b.buildable)} × {b.productName}</p>
+                            <p className="text-xs text-violet-400 leading-tight">from SKD/CKD parts on hand, per active BOM</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                    {group.items.map(item => {
+                      const isOut      = item.quantity_on_hand <= 0
+                      const isCritical = !isOut && item.quantity_on_hand < 5
+                      const isLow      = !isOut && !isCritical && item.quantity_on_hand < 20
+                      const meta = productMeta.get(item.product_id)
+                      const barColor = isOut ? 'bg-red-400' : isCritical ? 'bg-red-400' : isLow ? 'bg-amber-400' : 'bg-green-500'
+                      const ringColor = isOut ? 'border-red-200' : isCritical ? 'border-red-200' : isLow ? 'border-amber-200' : 'border-gray-200'
+                      return (
+                        <div key={`${whId}:${item.product_id}`} className={`bg-white border ${ringColor} rounded-xl p-3 flex flex-col gap-2`}>
+                          <div className="flex items-center gap-2">
+                            <div className="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center shrink-0 overflow-hidden">
+                              {meta?.imageUrl
+                                ? <img src={meta.imageUrl} alt="" className="w-full h-full object-cover" />
+                                : <Package size={16} className="text-gray-300" />}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium truncate">{item.product_name}</p>
+                              <p className="text-xs text-gray-400 font-mono truncate">{item.sku}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-baseline justify-between">
+                            <span className={`text-lg font-mono font-medium ${isOut || isCritical ? 'text-red-600' : isLow ? 'text-amber-700' : 'text-gray-900'}`}>
+                              {N(item.quantity_on_hand)}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {meta?.assemblyType === 'CKD' || meta?.assemblyType === 'SKD' ? meta.assemblyType : 'units'}
+                            </span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(4, (item.quantity_on_hand / maxQty) * 100)}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
       )}
 
       {/* Movements tab */}

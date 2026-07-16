@@ -208,7 +208,8 @@ export function Dashboard() {
           tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
         <KpiCard label="You owe suppliers" icon={Landmark} to="/payables"
           value={`${N(d.payablesEtb)} ETB`}
-          tone={d.payablesEtb > 0 ? 'warn' : undefined} />
+          sub={d.payablesUsd > 0 ? `+ $${N(d.payablesUsd)} USD` : undefined}
+          tone={d.payablesEtb > 0 || d.payablesUsd > 0 ? 'warn' : undefined} />
         <KpiCard label="Active customers" icon={Users} to="/customers"
           value={String(d.activeCustomers)}
           sub={`${PERIOD_LABEL[period].toLowerCase()}`} />

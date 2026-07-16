@@ -83,6 +83,10 @@ export async function recordPayment(
 
   if (error) throw new Error(error.message);
 
-  // Update outstanding on customer record
-  await supabase.rpc('update_customer_outstanding', { p_order_id: orderId });
+  // Update outstanding on customer record — the payment row above is already
+  // committed at this point, so a failure here must surface loudly rather
+  // than leave customers.outstanding_etb silently stale (it feeds the
+  // Dashboard, Reports, and the "already owes" banner on this page).
+  const { error: outstandingError } = await supabase.rpc('update_customer_outstanding', { p_order_id: orderId });
+  if (outstandingError) throw new Error(outstandingError.message);
 }
