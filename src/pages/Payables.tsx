@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { recordPurchasePayment } from '../api/purchases'
 import { fetchAccounts } from '../api/accounts'
 import type { Account } from '../api/accounts'
-import { Wallet, Loader2, AlertTriangle, ShieldAlert, X } from 'lucide-react'
+import { usePageState } from '../lib/pageState'
+import { Wallet, Loader2, AlertTriangle, ShieldAlert, X, Search } from 'lucide-react'
 
 interface Payable {
   id: string
@@ -184,6 +185,11 @@ export function Payables() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [openFormId, setOpenFormId] = useState<string | null>(null)
+  const [search, setSearch]           = usePageState('payables.search', '')
+  const [currencyFilter, setCurrencyFilter] = usePageState('payables.currencyFilter', '')
+  const [overdueOnly, setOverdueOnly] = usePageState('payables.overdueOnly', false)
+  const [dueFrom, setDueFrom]         = usePageState('payables.dueFrom', '')
+  const [dueTo, setDueTo]             = usePageState('payables.dueTo', '')
 
   const load = useCallback(async () => {
       setLoading(true)
@@ -283,6 +289,22 @@ export function Payables() {
 
   const overdue = rows.filter(r => r.due_date && new Date(r.due_date) < new Date())
 
+  const filteredRows = useMemo(() => rows
+    .filter(r => !currencyFilter || r.currency === currencyFilter)
+    .filter(r => !overdueOnly || (r.due_date && new Date(r.due_date) < new Date()))
+    .filter(r => !dueFrom || (r.due_date ?? '') >= dueFrom)
+    .filter(r => !dueTo || (r.due_date ?? '') <= dueTo)
+    .filter(r => {
+      if (!search.trim()) return true
+      const q = search.trim().toLowerCase()
+      return r.supplier_name.toLowerCase().includes(q) || (r.po_number ?? '').toLowerCase().includes(q)
+    }),
+    [rows, currencyFilter, overdueOnly, dueFrom, dueTo, search])
+  const hasFilters = !!(search || currencyFilter || overdueOnly || dueFrom || dueTo)
+  function clearFilters() {
+    setSearch(''); setCurrencyFilter(''); setOverdueOnly(false); setDueFrom(''); setDueTo('')
+  }
+
   return (
     <div className="p-5 max-w-5xl mx-auto">
       <div className="mb-5">
@@ -324,12 +346,48 @@ export function Payables() {
           No open payables. Supplier POs and unpaid shipment expenses appear here.
         </div>
       ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Search supplier or PO"
+                className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-52
+                           focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+            <select value={currencyFilter} onChange={e => setCurrencyFilter(e.target.value)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                         focus:outline-none focus:ring-1 focus:ring-blue-400">
+              <option value="">All currencies</option>
+              <option value="USD">USD</option>
+              <option value="ETB">ETB</option>
+              <option value="CNY">CNY</option>
+            </select>
+            <div className="flex items-center gap-1.5 text-xs text-gray-400">
+              Due
+              <input type="date" value={dueFrom} onChange={e => setDueFrom(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+              <span>–</span>
+              <input type="date" value={dueTo} onChange={e => setDueTo(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-gray-500">
+              <input type="checkbox" checked={overdueOnly} onChange={e => setOverdueOnly(e.target.checked)} />
+              Overdue only
+            </label>
+            {hasFilters && (
+              <button onClick={clearFilters} className="text-xs text-blue-600 hover:underline">Clear filters</button>
+            )}
+          </div>
+          {filteredRows.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-sm">No payables match this filter.</div>
+          ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {rows.map((r, i) => {
+          {filteredRows.map((r, i) => {
             const outstanding = r.total_amount - r.paid_amount
             const isOverdue = r.due_date && new Date(r.due_date) < new Date()
             return (
-              <div key={r.id} className={i < rows.length - 1 ? 'border-b border-gray-50' : ''}>
+              <div key={r.id} className={i < filteredRows.length - 1 ? 'border-b border-gray-50' : ''}>
                 <div className="flex items-center gap-4 px-4 py-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium flex items-center gap-1.5">
@@ -382,6 +440,8 @@ export function Payables() {
             )
           })}
         </div>
+          )}
+        </>
       )}
     </div>
   )

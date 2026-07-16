@@ -9,7 +9,7 @@ import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import {
   ShoppingCart, Loader2, Plus, X, Check, AlertTriangle, CheckCircle2,
-  Package, Minus, Trash2, TrendingUp,
+  Package, Minus, Trash2, TrendingUp, Search,
 } from 'lucide-react'
 
 interface Customer { id: string; name: string; type: string | null; outstanding_etb: number }
@@ -68,6 +68,11 @@ export function Sales() {
   const [newCustomerName, setNewCustomerName] = useState('')
   const [justCreatedCustomerId, setJustCreatedCustomerId] = useState<string | null>(null)
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
+  const [listSearch, setListSearch] = usePageState('sales.listSearch', '')
+  const [statusFilter, setStatusFilter] = usePageState('sales.statusFilter', '')
+  const [customerFilter, setCustomerFilter] = usePageState('sales.customerFilter', '')
+  const [dateFrom, setDateFrom] = usePageState('sales.dateFrom', '')
+  const [dateTo, setDateTo] = usePageState('sales.dateTo', '')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -236,6 +241,25 @@ export function Sales() {
 
   const selectedCustomer = customers.find(c => c.id === customerId)
 
+  const orderStatuses = useMemo(() => [...new Set(orders.map(o => o.status))].sort(), [orders])
+  const filteredOrders = useMemo(() => orders
+    .filter(o => !statusFilter || o.status === statusFilter)
+    .filter(o => !customerFilter || oneName(o.customers) === customerFilter)
+    .filter(o => !dateFrom || o.sale_date >= dateFrom)
+    .filter(o => !dateTo || o.sale_date <= dateTo)
+    .filter(o => {
+      if (!listSearch.trim()) return true
+      const q = listSearch.trim().toLowerCase()
+      return o.order_number.toLowerCase().includes(q)
+        || (o.invoice_number ?? '').toLowerCase().includes(q)
+        || oneName(o.customers).toLowerCase().includes(q)
+    }),
+    [orders, statusFilter, customerFilter, dateFrom, dateTo, listSearch])
+  const hasListFilters = !!(listSearch || statusFilter || customerFilter || dateFrom || dateTo)
+  function clearListFilters() {
+    setListSearch(''); setStatusFilter(''); setCustomerFilter(''); setDateFrom(''); setDateTo('')
+  }
+
   return (
     <div className="p-5 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-5">
@@ -273,6 +297,41 @@ export function Sales() {
           <p className="text-xs text-gray-400">Record your first sale to start tracking revenue, margin, and stock.</p>
         </div>
       ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <input value={listSearch} onChange={e => setListSearch(e.target.value)}
+                placeholder="Search order, invoice, customer"
+                className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-52
+                           focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                         focus:outline-none focus:ring-1 focus:ring-blue-400">
+              <option value="">All statuses</option>
+              {orderStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                         focus:outline-none focus:ring-1 focus:ring-blue-400">
+              <option value="">All customers</option>
+              {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </select>
+            <div className="flex items-center gap-1.5 text-xs text-gray-400">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+              <span>–</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            </div>
+            {hasListFilters && (
+              <button onClick={clearListFilters} className="text-xs text-blue-600 hover:underline">Clear filters</button>
+            )}
+          </div>
+          {filteredOrders.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-sm">No orders match this filter.</div>
+          ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -283,8 +342,8 @@ export function Sales() {
             <div className="text-right">Margin</div>
             <div>Status</div>
           </div>
-          {orders.map((o, i) => (
-            <div key={o.id} className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm ${i < orders.length - 1 ? 'border-b border-gray-50' : ''}`}>
+          {filteredOrders.map((o, i) => (
+            <div key={o.id} className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm ${i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}`}>
               <div>
                 <p className="font-medium">{o.order_number}</p>
                 {o.invoice_number && <p className="text-xs text-gray-400">{o.invoice_number}</p>}
@@ -311,6 +370,8 @@ export function Sales() {
             </div>
           ))}
         </div>
+          )}
+        </>
       )}
 
       {open && (
