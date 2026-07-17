@@ -37,6 +37,9 @@ import { Boms } from './pages/Boms'
 import { WarehouseTransfers } from './pages/WarehouseTransfers'
 import { DjiboutiForwarder } from './pages/DjiboutiForwarder'
 import { Users } from './pages/Users'
+import { Employees } from './pages/Employees'
+import { Payroll } from './pages/Payroll'
+import { HrNotes } from './pages/HrNotes'
 import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 import { Calculator }         from './pages/Calculator'
@@ -143,6 +146,15 @@ export default function App() {
 
               <Route path="users" element={
                 <RequireRole allow={['hr_system']}><Users /></RequireRole>
+              } />
+              <Route path="employees" element={
+                <RequireRole allow={['hr_system']}><Employees /></RequireRole>
+              } />
+              <Route path="payroll" element={
+                <RequireRole allow={['hr_system']}><Payroll /></RequireRole>
+              } />
+              <Route path="hr-notes" element={
+                <RequireRole allow={['hr_system']}><HrNotes /></RequireRole>
               } />
               <Route path="settings" element={
                 <RequireRole allow={['hr_system']}><Settings /></RequireRole>

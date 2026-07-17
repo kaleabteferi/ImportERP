@@ -6,7 +6,7 @@ import {
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
   ShoppingCart, Sigma,
 } from 'lucide-react'
-import { Settings as SettingsIcon, UserCog, LogOut, KeyRound } from 'lucide-react'
+import { Settings as SettingsIcon, UserCog, LogOut, KeyRound, IdCard, Wallet as WalletIcon, BookOpen } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
 import type { Role } from '../../lib/roles'
@@ -46,6 +46,11 @@ const links = [
     { to: '/expenses',       icon: Receipt,     label: 'Expenses',        allow: ['accounting_finance'] as Role[] },
     { to: '/reports',        icon: BarChart3,   label: 'Reports',         allow: [] as Role[] },
   ]},
+  { section: 'HR', items: [
+  { to: '/employees', icon: IdCard,      label: 'Employees',  allow: ['hr_system'] as Role[] },
+  { to: '/payroll',   icon: WalletIcon,  label: 'Payroll',    allow: ['hr_system'] as Role[] },
+  { to: '/hr-notes',  icon: BookOpen,    label: 'HR Notes',   allow: ['hr_system'] as Role[] },
+]},
   { section: 'System', items: [
   { to: '/users',    icon: UserCog,    label: 'Users & Roles', allow: ['hr_system'] as Role[] },
   { to: '/settings', icon: SettingsIcon, label: 'Settings',    allow: ['hr_system'] as Role[] },

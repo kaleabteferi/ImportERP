@@ -51,8 +51,12 @@ export async function fetchCompaniesList() {
   return data
 }
 
+// Reads the employee_directory view (id/full_name/department/title only),
+// not the employees table directly — employees now holds salary/bank/TIN
+// data restricted to hr_system, but "who paid/logged this" dropdowns
+// across every role still need a plain name lookup.
 export async function fetchEmployeesList() {
-  const { data, error } = await supabase.from('employees').select('id, full_name').order('full_name')
+  const { data, error } = await supabase.from('employee_directory').select('id, full_name').order('full_name')
   if (error) throw new Error(error.message)
   return data
 }
