@@ -6,7 +6,7 @@ import {
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
   ShoppingCart, Sigma,
 } from 'lucide-react'
-import { Settings as SettingsIcon, UserCog, LogOut, KeyRound, IdCard, Wallet as WalletIcon, BookOpen } from 'lucide-react'
+import { Settings as SettingsIcon, UserCog, LogOut, KeyRound, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
 import type { Role } from '../../lib/roles'
@@ -18,6 +18,7 @@ const links = [
     { to: '/',              icon: LayoutDashboard, label: 'Dashboard',      allow: [] as Role[] },
     { to: '/daily-activity',icon: CalendarDays,    label: 'Daily Activity', allow: [] as Role[] },
     { to: '/calculator',    icon: Sigma,            label: 'Calculator',     allow: [] as Role[] },
+    { to: '/documentation', icon: FileQuestion,     label: 'Documentation',  allow: [] as Role[] },
   ]},
  { section: 'Import', items: [
   { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] as Role[] },

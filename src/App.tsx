@@ -43,6 +43,7 @@ import { HrNotes } from './pages/HrNotes'
 import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 import { Calculator }         from './pages/Calculator'
+import { Documentation }      from './pages/Documentation'
 
 
 function PinGate({ children }: { children: ReactNode }) {
@@ -77,6 +78,7 @@ export default function App() {
               <Route path="daily-activity"  element={<DailyActivity />}  />
               <Route path="reports"         element={<Reports />}        />
               <Route path="calculator"      element={<Calculator />}     />
+              <Route path="documentation"   element={<Documentation />}  />
 
               <Route path="shipments" element={
                 <RequireRole allow={['operations_marketing']}><Shipments /></RequireRole>
