@@ -34,6 +34,7 @@ import { DjiboutiForwarder } from './pages/DjiboutiForwarder'
 import { Users } from './pages/Users'
 import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
+import { Calculator }         from './pages/Calculator'
 
 
 function PinGate({ children }: { children: ReactNode }) {
@@ -57,6 +58,7 @@ export default function App() {
               <Route index                  element={<Dashboard />}      />
               <Route path="daily-activity"  element={<DailyActivity />}  />
               <Route path="reports"         element={<Reports />}        />
+              <Route path="calculator"      element={<Calculator />}     />
 
               <Route path="shipments" element={
                 <RequireRole allow={['operations_marketing']}><Shipments /></RequireRole>

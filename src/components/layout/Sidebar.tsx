@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Ship, Building2,
   Wrench, Package, Calculator, BarChart3,
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
-  ShoppingCart,
+  ShoppingCart, Sigma,
 } from 'lucide-react'
 import { Settings as SettingsIcon, UserCog, LogOut, KeyRound } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
@@ -17,6 +17,7 @@ const links = [
   { section: 'Overview', items: [
     { to: '/',              icon: LayoutDashboard, label: 'Dashboard',      allow: [] as Role[] },
     { to: '/daily-activity',icon: CalendarDays,    label: 'Daily Activity', allow: [] as Role[] },
+    { to: '/calculator',    icon: Sigma,            label: 'Calculator',     allow: [] as Role[] },
   ]},
  { section: 'Import', items: [
   { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] as Role[] },
