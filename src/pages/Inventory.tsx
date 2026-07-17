@@ -5,6 +5,7 @@ import { fetchAllProducts, fetchBoms } from '../api/bom'
 import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
 import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
+import { SearchableSelect } from '../components/SearchableSelect'
 import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock } from 'lucide-react'
 
 function LiveClock() {
@@ -14,13 +15,13 @@ function LiveClock() {
     return () => clearInterval(id)
   }, [])
   return (
-    <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-gradient-to-br from-blue-50 to-white border border-blue-100 shadow-sm">
+    <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-gray-900 border border-blue-100 dark:border-blue-900/40 shadow-sm">
       <div className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
         <Calendar size={13} className="text-blue-400 shrink-0" />
         {now.toLocaleDateString('en-ET', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
       </div>
-      <div className="w-px h-3.5 bg-blue-100" />
-      <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-blue-700 tabular-nums">
+      <div className="w-px h-3.5 bg-blue-100 dark:bg-blue-900/40" />
+      <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-blue-700 dark:text-blue-300 tabular-nums">
         <Clock size={13} className="text-blue-400 shrink-0" />
         {now.toLocaleTimeString('en-ET', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
       </div>
@@ -75,11 +76,13 @@ function AdjustStockForm({ products, warehouses, onDone, onCancel }: {
       <p className="text-xs font-medium text-amber-700 flex items-center gap-1"><ShieldAlert size={12} /> Manual stock adjustment</p>
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="flex gap-2">
-        <select value={productId} onChange={e => setProductId(e.target.value)}
-          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-          <option value="">Product</option>
-          {products.map(p => <option key={p.id} value={p.id}>{p.name} {p.sku && `(${p.sku})`}</option>)}
-        </select>
+        <SearchableSelect
+          className="flex-1"
+          options={products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))}
+          value={productId}
+          onChange={setProductId}
+          placeholder="Product"
+        />
         <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
           className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
           <option value="">Warehouse</option>

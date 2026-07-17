@@ -5,7 +5,7 @@ import { fetchWarehousesList } from '../api/income'
 import { createDamageReport, fetchDamageReports } from '../api/damageReports'
 import type { DamageReport } from '../api/damageReports'
 import { usePageState } from '../lib/pageState'
-import { Plus, Wrench, X, Check, Loader2, BarChart3, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList } from 'lucide-react'
+import { Plus, Wrench, X, Check, Loader2, BarChart3, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search } from 'lucide-react'
 
 type BomStage = 'ASSEMBLY' | 'STICKER' | 'OTHER'
 
@@ -97,6 +97,8 @@ export function Production() {
     productId: '', quantity: '', reason: '', shipmentId: '', purchaseOrderId: '',
     reportDate: new Date().toISOString().split('T')[0],
   })
+  const [bomQuery, setBomQuery] = useState('')
+  const [damageQuery, setDamageQuery] = useState('')
 
   async function load() {
     setLoading(true)
@@ -830,8 +832,15 @@ export function Production() {
                 </div>
               ) : (
                 <div className="space-y-4">
+                  {bomOptions.length > 6 && (
+                    <div className="relative">
+                      <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input value={bomQuery} onChange={e => setBomQuery(e.target.value)} placeholder="Search products…"
+                        className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+                    </div>
+                  )}
                   {(['ASSEMBLY', 'STICKER', 'OTHER'] as BomStage[]).map(stage => {
-                    const stageBoms = bomOptions.filter(b => b.stage === stage)
+                    const stageBoms = bomOptions.filter(b => b.stage === stage && b.product_name.toLowerCase().includes(bomQuery.toLowerCase()))
                     if (stageBoms.length === 0) return null
                     const info = STAGE_INFO[stage]
                     return (
@@ -918,8 +927,15 @@ export function Production() {
             <div className="px-5 py-4 space-y-3">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Item</label>
+                {products.length > 6 && (
+                  <div className="relative mb-1.5">
+                    <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input value={damageQuery} onChange={e => setDamageQuery(e.target.value)} placeholder="Search products…"
+                      className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+                  </div>
+                )}
                 <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto p-1">
-                  {products.map(p => (
+                  {products.filter(p => p.name.toLowerCase().includes(damageQuery.toLowerCase()) || p.sku?.toLowerCase().includes(damageQuery.toLowerCase())).map(p => (
                     <button
                       key={p.id}
                       type="button"

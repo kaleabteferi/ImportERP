@@ -7,7 +7,7 @@ import { fetchAccounts } from '../../api/accounts'
 import { recordCreditTransaction, openCreditAccount } from '../../api/credit'
 import type { Account } from '../../api/accounts'
 import {
-  ShoppingCart, Plus, X, Loader2, Package, Minus, Trash2, ChevronLeft, Check,
+  ShoppingCart, Plus, X, Loader2, Package, Minus, Trash2, ChevronLeft, Check, Search,
 } from 'lucide-react'
 
 interface Customer { id: string; name: string }
@@ -45,6 +45,7 @@ export function MobileSales() {
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [warehouseId, setWarehouseId] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
+  const [itemQuery, setItemQuery] = useState('')
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
   const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
   const [accountId, setAccountId] = useState('')
@@ -219,8 +220,13 @@ export function MobileSales() {
           <div>
             <label className="block text-xs text-gray-500 mb-1.5">Items</label>
             {!warehouseId && <p className="text-xs text-amber-600 mb-1.5">Choose a warehouse to see stock.</p>}
+            <div className="relative mb-1.5">
+              <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input value={itemQuery} onChange={e => setItemQuery(e.target.value)} placeholder="Search products…"
+                className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            </div>
             <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 border border-gray-100 rounded-xl mb-2">
-              {products.map(p => {
+              {products.filter(p => p.name.toLowerCase().includes(itemQuery.toLowerCase()) || p.sku?.toLowerCase().includes(itemQuery.toLowerCase())).map(p => {
                 const stock = stockByProduct[p.id] ?? 0
                 const outOfStock = !!warehouseId && stock <= 0
                 return (

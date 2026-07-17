@@ -18,6 +18,7 @@ import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
+import { SearchableSelect } from '../components/SearchableSelect'
 import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
 
 const ITEM_IMPORT_COLUMNS: BulkImportColumn[] = [
@@ -1782,17 +1783,12 @@ export function ShipmentDetail() {
                     </Link>
                   </div>
                 ) : (
-                  <select
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
-                               focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  <SearchableSelect
+                    options={products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))}
                     value={itemForm.product_id}
-                    onChange={e => setIF('product_id', e.target.value)}
-                  >
-                    <option value="">- select product -</option>
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                    ))}
-                  </select>
+                    onChange={id => setIF('product_id', id)}
+                    placeholder="- select product -"
+                  />
                 )}
               </div>
 

@@ -4,6 +4,7 @@ import type { AssemblableProduct, ComponentAvailability } from '../api/productio
 import { fetchWarehousesList } from '../api/income'
 import { fetchEmployeesList } from '../api/companyExpenses'
 import { Hammer, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { SearchableSelect } from '../components/SearchableSelect'
 
 import { usePageState } from '../lib/pageState'
 interface Option { id: string; name: string }
@@ -91,13 +92,14 @@ export function Assembly() {
             <option value="">Which warehouse?</option>
             {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <select value={bomHeaderId} onChange={e => setBomHeaderId(e.target.value)}
-            className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-            <option value="">
-              {products.length === 0 ? 'No BOMs set up yet' : 'Which product to assemble?'}
-            </option>
-            {products.map(p => <option key={p.bomHeaderId} value={p.bomHeaderId}>{p.productName}</option>)}
-          </select>
+          <SearchableSelect
+            className="flex-1"
+            options={products.map(p => ({ id: p.bomHeaderId, label: p.productName }))}
+            value={bomHeaderId}
+            onChange={setBomHeaderId}
+            placeholder={products.length === 0 ? 'No BOMs set up yet' : 'Which product to assemble?'}
+            disabled={products.length === 0}
+          />
         </div>
 
         {products.length === 0 && (

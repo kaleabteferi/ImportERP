@@ -9,11 +9,12 @@ import {
   fetchDjiboutiReconciliation,
 } from '../api/warehouseTransfers'
 import type { WarehouseTransfer, AliStockRow, DjiboutiReconciliationLine } from '../api/warehouseTransfers'
+import { SearchableSelect } from '../components/SearchableSelect'
 import {
   Truck, Loader2, Plus, X, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight,
 } from 'lucide-react'
 
-interface Option { id: string; name: string }
+interface Option { id: string; name: string; sku?: string }
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
 
@@ -74,7 +75,7 @@ export function DjiboutiForwarder() {
       setStock(stockRows)
       setTransfers(transferRows)
       setWarehouses((w ?? []).map((x: any) => ({ id: x.id, name: x.name })))
-      setProducts((p ?? []).map((x: any) => ({ id: x.id, name: x.name })))
+      setProducts((p ?? []).map((x: any) => ({ id: x.id, name: x.name, sku: x.sku })))
       setEmployees((e ?? []).map((x: any) => ({ id: x.id, name: x.full_name })))
       setShipments((shRes.data ?? []).map((s: any) => ({ id: s.id, name: s.shipment_number })))
       setReconciliation(reconRows)
@@ -388,11 +389,12 @@ export function DjiboutiForwarder() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Item</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    value={reqForm.productId} onChange={e => setReqForm(p => ({ ...p, productId: e.target.value }))}>
-                    <option value="">Select…</option>
-                    {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))}
+                    value={reqForm.productId}
+                    onChange={id => setReqForm(p => ({ ...p, productId: id }))}
+                    placeholder="Select…"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Quantity</label>

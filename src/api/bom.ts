@@ -61,6 +61,18 @@ export async function fetchAllProducts() {
   return data
 }
 
+// Same component listed twice (e.g. pasted from a JSON/CSV import that
+// happens to overlap manually-added rows) silently summed rather than
+// kept as two competing lines, since two rows for one component is never
+// meaningful for a single-level BOM.
+function dedupeLines(lines: BomLineInput[]): BomLineInput[] {
+  const byComponent = new Map<string, number>()
+  for (const l of lines) {
+    byComponent.set(l.componentProductId, (byComponent.get(l.componentProductId) ?? 0) + l.quantityRequired)
+  }
+  return [...byComponent.entries()].map(([componentProductId, quantityRequired]) => ({ componentProductId, quantityRequired }))
+}
+
 export async function createBom(input: {
   name: string
   productId: string
@@ -68,6 +80,11 @@ export async function createBom(input: {
   notes?: string
   stage?: BomStage
 }) {
+  const lines = dedupeLines(input.lines)
+  if (lines.some(l => l.componentProductId === input.productId)) {
+    throw new Error("A BOM's finished product can't also be listed as one of its own components.")
+  }
+
   const { data: header, error: headerError } = await supabase
     .from('bom_headers')
     .insert({
@@ -82,9 +99,9 @@ export async function createBom(input: {
     .single()
   if (headerError) throw new Error(headerError.message)
 
-  if (input.lines.length > 0) {
+  if (lines.length > 0) {
     const { error: linesError } = await supabase.from('bom_lines').insert(
-      input.lines.map(l => ({
+      lines.map(l => ({
         bom_header_id: header.id,
         component_product_id: l.componentProductId,
         quantity_required: l.quantityRequired,
@@ -93,6 +110,50 @@ export async function createBom(input: {
     if (linesError) throw new Error(linesError.message)
   }
   return header.id as string
+}
+
+// Editing in place (rather than delete+recreate) matters because
+// production_orders/production logs and warehouse-transfer/assembly flows
+// all reference bom_header_id directly — recreating the BOM under a new id
+// would silently orphan any open production order or historical log tied
+// to the old one.
+export async function updateBom(bomHeaderId: string, input: {
+  name: string
+  productId: string
+  lines: BomLineInput[]
+  notes?: string
+  stage?: BomStage
+}) {
+  const lines = dedupeLines(input.lines)
+  if (lines.some(l => l.componentProductId === input.productId)) {
+    throw new Error("A BOM's finished product can't also be listed as one of its own components.")
+  }
+
+  const { error: headerError } = await supabase
+    .from('bom_headers')
+    .update({
+      name: input.name,
+      product_id: input.productId,
+      finished_product_id: input.productId,
+      notes: input.notes ?? null,
+      stage: input.stage ?? 'ASSEMBLY',
+    })
+    .eq('id', bomHeaderId)
+  if (headerError) throw new Error(headerError.message)
+
+  const { error: deleteError } = await supabase.from('bom_lines').delete().eq('bom_header_id', bomHeaderId)
+  if (deleteError) throw new Error(deleteError.message)
+
+  if (lines.length > 0) {
+    const { error: linesError } = await supabase.from('bom_lines').insert(
+      lines.map(l => ({
+        bom_header_id: bomHeaderId,
+        component_product_id: l.componentProductId,
+        quantity_required: l.quantityRequired,
+      }))
+    )
+    if (linesError) throw new Error(linesError.message)
+  }
 }
 
 export async function setBomActive(bomHeaderId: string, isActive: boolean) {

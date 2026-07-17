@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchBoms, fetchAllProducts, createBom, setBomActive, deleteBom } from '../api/bom'
+import { fetchBoms, fetchAllProducts, createBom, updateBom, setBomActive, deleteBom } from '../api/bom'
 import type { BomStage } from '../api/bom'
-import { ListTree, Loader2, Plus, X, Trash2, Power, Sticker, Wrench, Boxes } from 'lucide-react'
+import { SearchableSelect } from '../components/SearchableSelect'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
+import { ListTree, Loader2, Plus, X, Trash2, Power, Sticker, Wrench, Boxes, Pencil, ClipboardPaste } from 'lucide-react'
 
 interface ProductOption { id: string; name: string; sku: string }
 interface BomLine { componentProductId: string; quantityRequired: number }
@@ -17,15 +20,28 @@ const STAGE_INFO: Record<BomStage, { label: string; icon: typeof Wrench; hint: s
   OTHER: { label: 'Other', icon: Boxes, hint: 'Any other post-assembly production step' },
 }
 
-function NewBomForm({ products, onDone, onCancel }: {
-  products: ProductOption[]; onDone: () => void; onCancel: () => void
+const COMPONENT_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'component', label: 'Component (SKU or name)', required: true, width: '220px' },
+  { key: 'quantity', label: 'Qty per unit', required: true, width: '100px' },
+]
+const COMPONENT_IMPORT_EXAMPLE = `component,quantity
+SKD-PANEL-42,1
+SKD-STAND-42,2
+SCR-M4X10,8`
+
+function BomForm({ products, initial, onDone, onCancel }: {
+  products: ProductOption[]; initial?: Bom; onDone: () => void; onCancel: () => void
 }) {
-  const [name, setName] = useState('')
-  const [productId, setProductId] = useState('')
-  const [stage, setStage] = useState<BomStage>('ASSEMBLY')
-  const [lines, setLines] = useState<BomLine[]>([{ componentProductId: '', quantityRequired: 1 }])
+  const [name, setName] = useState(initial?.name ?? '')
+  const [productId, setProductId] = useState(initial?.productId ?? '')
+  const [stage, setStage] = useState<BomStage>(initial?.stage ?? 'ASSEMBLY')
+  const [lines, setLines] = useState<BomLine[]>(
+    initial ? initial.lines.map(l => ({ componentProductId: l.componentProductId, quantityRequired: l.quantityRequired }))
+      : [{ componentProductId: '', quantityRequired: 1 }]
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showComponentImport, setShowComponentImport] = useState(false)
 
   function addLine() { setLines([...lines, { componentProductId: '', quantityRequired: 1 }]) }
   function removeLine(i: number) { setLines(lines.filter((_, idx) => idx !== i)) }
@@ -33,17 +49,44 @@ function NewBomForm({ products, onDone, onCancel }: {
     setLines(lines.map((l, idx) => idx === i ? { ...l, ...patch } : l))
   }
 
+  const productOptions = products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))
+
+  async function handleComponentImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    const newLines: BomLine[] = []
+    for (const row of rows) {
+      const key = row.component?.trim().toLowerCase()
+      const qty = Number(row.quantity)
+      if (!key) { errors.push('Skipped a row missing a component.'); continue }
+      if (!qty || qty <= 0) { errors.push(`${row.component}: quantity must be greater than 0.`); continue }
+      const match = products.find(p => p.sku?.toLowerCase() === key) ?? products.find(p => p.name.toLowerCase() === key) ?? products.find(p => p.name.toLowerCase().includes(key))
+      if (!match) { errors.push(`${row.component}: no matching product (checked SKU and name).`); continue }
+      newLines.push({ componentProductId: match.id, quantityRequired: qty })
+      succeeded++
+    }
+    if (newLines.length > 0) {
+      setLines(ls => [...ls.filter(l => l.componentProductId), ...newLines])
+    }
+    return { succeeded, errors }
+  }
+
   async function submit() {
     if (!name.trim()) { setError('Name this BOM (e.g. "TV Model X — CKD assembly").'); return }
     if (!productId) { setError('Choose the finished product this BOM builds.'); return }
     const validLines = lines.filter(l => l.componentProductId && l.quantityRequired > 0)
     if (validLines.length === 0) { setError('Add at least one component.'); return }
+    if (validLines.some(l => l.componentProductId === productId)) {
+      setError("The finished product can't also be listed as one of its own components.")
+      return
+    }
     setSaving(true); setError(null)
     try {
-      await createBom({ name, productId, lines: validLines, stage })
+      if (initial) await updateBom(initial.id, { name, productId, lines: validLines, stage })
+      else await createBom({ name, productId, lines: validLines, stage })
       onDone()
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to create BOM.')
+      setError(e?.message ?? 'Failed to save BOM.')
     } finally {
       setSaving(false)
     }
@@ -77,23 +120,31 @@ function NewBomForm({ products, onDone, onCancel }: {
         <p className="text-xs text-gray-400 mt-1">{STAGE_INFO[stage].hint}</p>
       </div>
 
-      <select value={productId} onChange={e => setProductId(e.target.value)}
-        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-        <option value="">{stage === 'ASSEMBLY' ? 'Finished product this BOM assembles' : 'Product this stage applies to'}</option>
-        {products.map(p => <option key={p.id} value={p.id}>{p.name} {p.sku && `(${p.sku})`}</option>)}
-      </select>
+      <SearchableSelect
+        options={productOptions}
+        value={productId}
+        onChange={setProductId}
+        placeholder={stage === 'ASSEMBLY' ? 'Finished product this BOM assembles' : 'Product this stage applies to'}
+      />
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-gray-500">
-          {stage === 'ASSEMBLY' ? 'Components required' : 'Materials consumed per unit (e.g. the sticker itself)'}
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-gray-500">
+            {stage === 'ASSEMBLY' ? 'Components required' : 'Materials consumed per unit (e.g. the sticker itself)'}
+          </p>
+          <button type="button" onClick={() => setShowComponentImport(true)} className="text-xs text-blue-600 flex items-center gap-1 hover:underline">
+            <ClipboardPaste size={11} /> Paste components
+          </button>
+        </div>
         {lines.map((line, i) => (
           <div key={i} className="flex gap-2 items-center">
-            <select value={line.componentProductId} onChange={e => updateLine(i, { componentProductId: e.target.value })}
-              className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-              <option value="">Component product</option>
-              {products.map(p => <option key={p.id} value={p.id}>{p.name} {p.sku && `(${p.sku})`}</option>)}
-            </select>
+            <SearchableSelect
+              className="flex-1"
+              options={productOptions}
+              value={line.componentProductId}
+              onChange={id => updateLine(i, { componentProductId: id })}
+              placeholder="Component product"
+            />
             <input type="number" value={line.quantityRequired}
               onChange={e => updateLine(i, { quantityRequired: Number(e.target.value) })}
               placeholder="Qty per unit" className="w-28 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
@@ -111,14 +162,26 @@ function NewBomForm({ products, onDone, onCancel }: {
         <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
         <button onClick={submit} disabled={saving}
           className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : 'Create BOM'}
+          {saving ? 'Saving…' : initial ? 'Save changes' : 'Create BOM'}
         </button>
       </div>
+
+      {showComponentImport && (
+        <BulkImportModal
+          title="Paste components"
+          columns={COMPONENT_IMPORT_COLUMNS}
+          exampleCsv={COMPONENT_IMPORT_EXAMPLE}
+          helpText="Paste a components list — SKU or exact product name, and quantity required per unit. Matched components are added to the list above; anything unmatched is reported so you can fix and retry."
+          onImport={handleComponentImport}
+          onClose={() => setShowComponentImport(false)}
+          onImported={() => setShowComponentImport(false)}
+        />
+      )}
     </div>
   )
 }
 
-function BomCard({ bom, onToggle, onRemove }: { bom: Bom; onToggle: () => void; onRemove: () => void }) {
+function BomCard({ bom, onEdit, onToggle, onRemove }: { bom: Bom; onEdit: () => void; onToggle: () => void; onRemove: () => void }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100">
@@ -129,6 +192,9 @@ function BomCard({ bom, onToggle, onRemove }: { bom: Bom; onToggle: () => void; 
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${bom.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
           {bom.isActive ? 'Active' : 'Inactive'}
         </span>
+        <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-blue-600" title="Edit">
+          <Pencil size={14} />
+        </button>
         <button onClick={onToggle} className="p-1.5 text-gray-400 hover:text-blue-600" title={bom.isActive ? 'Deactivate' : 'Activate'}>
           <Power size={14} />
         </button>
@@ -153,6 +219,7 @@ export function Boms() {
   const [products, setProducts] = useState<ProductOption[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingBom, setEditingBom] = useState<Bom | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -189,13 +256,17 @@ export function Boms() {
           <h1 className="text-lg font-medium flex items-center gap-2"><ListTree size={18} /> Bills of Materials</h1>
           <p className="text-xs text-gray-400 mt-0.5">Define each production stage's components — assembly, sticker application, etc.</p>
         </div>
-        <button onClick={() => setShowForm(v => !v)}
+        <button onClick={() => { setEditingBom(null); setShowForm(v => !v) }}
           className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white flex items-center gap-1">
           {showForm ? <X size={12} /> : <Plus size={12} />} New BOM
         </button>
       </div>
 
-      {showForm && <NewBomForm products={products} onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); load() }} />}
+      {showForm && (
+        <BomForm products={products} initial={editingBom ?? undefined}
+          onCancel={() => { setShowForm(false); setEditingBom(null) }}
+          onDone={() => { setShowForm(false); setEditingBom(null); load() }} />
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -216,7 +287,9 @@ export function Boms() {
                 </p>
                 <div className="space-y-3">
                   {stageBoms.map(bom => (
-                    <BomCard key={bom.id} bom={bom} onToggle={() => toggleActive(bom)} onRemove={() => remove(bom)} />
+                    <BomCard key={bom.id} bom={bom}
+                      onEdit={() => { setEditingBom(bom); setShowForm(true) }}
+                      onToggle={() => toggleActive(bom)} onRemove={() => remove(bom)} />
                   ))}
                 </div>
               </div>

@@ -9,8 +9,9 @@ import {
 } from '../api/warehouseTransfers'
 import type { WarehouseTransfer, TransferPurpose } from '../api/warehouseTransfers'
 import { usePageState } from '../lib/pageState'
+import { SearchableSelect } from '../components/SearchableSelect'
 
-interface Option { id: string; name: string }
+interface Option { id: string; name: string; sku?: string }
 
 const PURPOSE_LABEL: Record<TransferPurpose, string> = {
   WAREHOUSE_TO_WAREHOUSE: 'Warehouse → warehouse',
@@ -55,7 +56,7 @@ export function WarehouseTransfers() {
       ])
       setTransfers(t)
       setWarehouses((w ?? []).map((x: any) => ({ id: x.id, name: x.name })))
-      setProducts((p ?? []).map((x: any) => ({ id: x.id, name: x.name })))
+      setProducts((p ?? []).map((x: any) => ({ id: x.id, name: x.name, sku: x.sku })))
       setEmployees((e ?? []).map((x: any) => ({ id: x.id, name: x.full_name })))
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load transfers.')
@@ -283,14 +284,12 @@ export function WarehouseTransfers() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Item</label>
-                  <select
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <SearchableSelect
+                    options={products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))}
                     value={form.productId}
-                    onChange={e => setForm(p => ({ ...p, productId: e.target.value }))}
-                  >
-                    <option value="">Select…</option>
-                    {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                    onChange={id => setForm(p => ({ ...p, productId: id }))}
+                    placeholder="Select…"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Quantity</label>

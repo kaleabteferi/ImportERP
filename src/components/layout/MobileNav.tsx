@@ -27,7 +27,7 @@ export function MobileNav() {
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
             padding: '8px 4px', gap: '2px', textDecoration: 'none',
-            color: isActive ? '#185FA5' : 'var(--color-text-tertiary)',
+            color: isActive ? 'var(--color-text-info)' : 'var(--color-text-tertiary)',
             fontSize: '10px',
           })}
         >

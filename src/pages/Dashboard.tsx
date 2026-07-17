@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
 import { useAuth } from '../lib/auth'
 import { QuickActions } from '../components/dashboard/QuickActions'
+import { GlobalSearchBar } from '../components/GlobalSearchBar'
 import {
   Sparkles, TrendingUp, TrendingDown, ChevronDown, ChevronRight,
   Loader2, ArrowRight, CheckCircle2, Wallet, Landmark, CreditCard,
@@ -171,6 +172,8 @@ export function Dashboard() {
           ))}
         </div>
       </div>
+
+      <GlobalSearchBar />
 
       {d.error && (
         <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{d.error}</div>

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useMemo, isValidElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { BookOpen, ChevronRight } from 'lucide-react'
+import { BookOpen, ChevronRight, Search, ListChecks } from 'lucide-react'
 
 interface DocGroup { title: string; sections: DocSectionDef[] }
 interface DocSectionDef { id: string; title: string; roles?: string; body: React.ReactNode }
@@ -9,6 +9,57 @@ function RoleBadge({ roles }: { roles?: string }) {
   if (!roles) return null
   return <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 mb-2">{roles}</span>
 }
+
+// Flattens a section's JSX body down to plain text so the search box can
+// match against actual sentence content, not just section titles — the
+// docs live as JSX (for links/formatting), so there's no separate plain-text
+// copy to search without either duplicating every sentence or walking the
+// rendered tree like this.
+function extractText(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(extractText).join(' ')
+  if (isValidElement(node)) return extractText((node.props as { children?: ReactNode }).children)
+  return ''
+}
+
+const QUICK_START: { step: number; title: string; detail: React.ReactNode }[] = [
+  {
+    step: 1,
+    title: 'Add your products',
+    detail: <>Go to <Link to="/products" className="text-blue-600 hover:underline">Products</Link> and add what you sell/stock — SKU, name, and assembly type (Imported / Full / SKD / CKD) are the essentials. Got a spreadsheet already? Use <strong>Bulk import</strong> to paste the whole list instead of typing each one.</>,
+  },
+  {
+    step: 2,
+    title: 'Add suppliers and customers',
+    detail: <>Add sourcing contacts on <Link to="/suppliers" className="text-blue-600 hover:underline">Suppliers</Link> and buyers on <Link to="/customers" className="text-blue-600 hover:underline">Customers</Link> — or skip this and add them inline the first time you create a shipment or record a sale.</>,
+  },
+  {
+    step: 3,
+    title: 'If you assemble products, set up a BOM',
+    detail: <>On <Link to="/boms" className="text-blue-600 hover:underline">BOMs</Link>, define what components (and how many of each) go into one unit of a finished product. This unlocks <Link to="/production" className="text-blue-600 hover:underline">Production</Link> and <Link to="/assembly" className="text-blue-600 hover:underline">Assembly</Link> logging. Skip this if you only resell imported goods as-is.</>,
+  },
+  {
+    step: 4,
+    title: 'Bring in a shipment',
+    detail: <>On <Link to="/shipments" className="text-blue-600 hover:underline">Shipments</Link>, create one for a supplier order, add its Proforma Invoice line items, and move its status forward as it progresses. When it lands and its status reaches "Warehouse Received," stock posts automatically — nothing to enter manually.</>,
+  },
+  {
+    step: 5,
+    title: 'Record a sale',
+    detail: <>On <Link to="/sales" className="text-blue-600 hover:underline">Sales</Link>, pick a customer and warehouse, tap products to build the order, and choose how it's paid. The Dashboard's quick-actions panel does the same thing in a shorter form if you just need to log one fast.</>,
+  },
+  {
+    step: 6,
+    title: 'Check the Dashboard daily',
+    detail: <>The <Link to="/" className="text-blue-600 hover:underline">Dashboard</Link> is where you should land every day — today's numbers, what needs attention, and one-tap shortcuts for the actions above. Use the search bar there to jump straight to any product, customer, order, or shipment by name.</>,
+  },
+  {
+    step: 7,
+    title: 'Set up payroll (HR & System role)',
+    detail: <>Add staff on <Link to="/employees" className="text-blue-600 hover:underline">Employees</Link>, then create a monthly run on <Link to="/payroll" className="text-blue-600 hover:underline">Payroll</Link> — it pre-fills every active employee and you only need to touch the ones with overtime, absences, or other adjustments that month.</>,
+  },
+]
 
 const GROUPS: DocGroup[] = [
   {
@@ -284,24 +335,72 @@ const GROUPS: DocGroup[] = [
   },
 ]
 
+// Precomputed once at module load — GROUPS is static, so there's no need
+// to re-walk the JSX tree on every keystroke.
+const SEARCH_INDEX = new Map(
+  GROUPS.flatMap(g => g.sections.map(s => [s.id, `${s.title} ${g.title} ${s.roles ?? ''} ${extractText(s.body)}`.toLowerCase()] as const))
+)
+
 export function Documentation() {
   const [activeId, setActiveId] = useState(GROUPS[0].sections[0].id)
+  const [query, setQuery] = useState('')
 
   function scrollTo(id: string) {
     setActiveId(id)
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const q = query.trim().toLowerCase()
+  const matchedGroups = useMemo(() => {
+    if (!q) return GROUPS
+    return GROUPS
+      .map(group => ({ ...group, sections: group.sections.filter(s => SEARCH_INDEX.get(s.id)?.includes(q)) }))
+      .filter(group => group.sections.length > 0)
+  }, [q])
+  const matchCount = useMemo(() => matchedGroups.reduce((n, g) => n + g.sections.length, 0), [matchedGroups])
+
   return (
     <div className="p-5 max-w-6xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2"><BookOpen size={18} /> Documentation</h1>
-        <p className="text-xs text-gray-400 mt-0.5">How every part of the ERP actually works — one page, organized by module</p>
+      <div className="mb-5 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-lg font-medium flex items-center gap-2"><BookOpen size={18} /> Documentation</h1>
+          <p className="text-xs text-gray-400 mt-0.5">How every part of the ERP actually works — one page, organized by module</p>
+        </div>
+        <div className="relative w-full max-w-xs">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search the docs…"
+            className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
       </div>
+
+      {q && (
+        <p className="text-xs text-gray-400 mb-3">{matchCount === 0 ? `No sections match "${query}".` : `${matchCount} section${matchCount === 1 ? '' : 's'} match "${query}".`}</p>
+      )}
+
+      {!q && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 mb-5">
+          <p className="text-sm font-medium flex items-center gap-2 mb-3"><ListChecks size={15} className="text-blue-600" /> New here? Do these in order</p>
+          <div className="space-y-3">
+            {QUICK_START.map(item => (
+              <div key={item.step} className="flex gap-3">
+                <span className="shrink-0 w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-medium flex items-center justify-center mt-0.5">{item.step}</span>
+                <div>
+                  <p className="text-sm font-medium">{item.title}</p>
+                  <p className="text-xs text-gray-600 leading-relaxed mt-0.5">{item.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-5 items-start">
         <nav className="lg:sticky lg:top-5 space-y-4 max-h-[calc(100vh-100px)] overflow-y-auto">
-          {GROUPS.map(group => (
+          {matchedGroups.map(group => (
             <div key={group.title}>
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-1.5">{group.title}</p>
               <div className="space-y-0.5">
@@ -321,7 +420,7 @@ export function Documentation() {
         </nav>
 
         <div className="space-y-4 min-w-0">
-          {GROUPS.map(group => (
+          {matchedGroups.map(group => (
             <div key={group.title} className="space-y-4">
               {group.sections.map(s => (
                 <div key={s.id} id={s.id} className="bg-white border border-gray-200 rounded-xl p-5 scroll-mt-5">

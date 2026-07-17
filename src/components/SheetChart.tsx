@@ -39,7 +39,7 @@ export function SheetChart({ type, data }: { type: 'bar' | 'line' | 'pie'; data:
       <div className="flex items-center gap-6 flex-wrap justify-center">
         <svg width={220} height={220} role="img" aria-label="Pie chart">
           {slices.map((s, i) => (
-            <path key={i} d={s.d} fill={s.color} stroke="white" strokeWidth={2}>
+            <path key={i} d={s.d} fill={s.color} stroke="var(--color-background-primary)" strokeWidth={2}>
               <title>{`${s.label}: ${s.value} (${s.pct.toFixed(1)}%)`}</title>
             </path>
           ))}
@@ -67,12 +67,12 @@ export function SheetChart({ type, data }: { type: 'bar' | 'line' | 'pie'; data:
         const y = yOf(v)
         return (
           <g key={i}>
-            <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} stroke="#f1f5f9" strokeWidth={1} />
-            <text x={padding.left - 8} y={y + 3} textAnchor="end" fontSize={10} fill="#9ca3af">{Math.round(v)}</text>
+            <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="stroke-gray-100" strokeWidth={1} />
+            <text x={padding.left - 8} y={y + 3} textAnchor="end" fontSize={10} className="fill-gray-400">{Math.round(v)}</text>
           </g>
         )
       })}
-      <line x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} stroke="#e5e7eb" strokeWidth={1} />
+      <line x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} className="stroke-gray-200" strokeWidth={1} />
 
       {type === 'bar' && data.map((d, i) => {
         const x = padding.left + i * barW + barW * 0.15
@@ -84,8 +84,8 @@ export function SheetChart({ type, data }: { type: 'bar' | 'line' | 'pie'; data:
             <rect x={x} y={y} width={w} height={Math.max(h, 1)} rx={3} fill={SEQUENTIAL_HUE}>
               <title>{`${d.label}: ${d.value}`}</title>
             </rect>
-            <text x={x + w / 2} y={y - 4} textAnchor="middle" fontSize={10} fill="#374151">{d.value}</text>
-            <text x={x + w / 2} y={height - padding.bottom + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">{d.label}</text>
+            <text x={x + w / 2} y={y - 4} textAnchor="middle" fontSize={10} className="fill-gray-700">{d.value}</text>
+            <text x={x + w / 2} y={height - padding.bottom + 14} textAnchor="middle" fontSize={10} className="fill-gray-400">{d.label}</text>
           </g>
         )
       })}
@@ -101,11 +101,11 @@ export function SheetChart({ type, data }: { type: 'bar' | 'line' | 'pie'; data:
             const y = yOf(d.value)
             return (
               <g key={i}>
-                <circle cx={x} cy={y} r={4} fill="white" stroke={SEQUENTIAL_HUE} strokeWidth={2}>
+                <circle cx={x} cy={y} r={4} fill="var(--color-background-primary)" stroke={SEQUENTIAL_HUE} strokeWidth={2}>
                   <title>{`${d.label}: ${d.value}`}</title>
                 </circle>
-                <text x={x} y={y - 8} textAnchor="middle" fontSize={10} fill="#374151">{d.value}</text>
-                <text x={x} y={height - padding.bottom + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">{d.label}</text>
+                <text x={x} y={y - 8} textAnchor="middle" fontSize={10} className="fill-gray-700">{d.value}</text>
+                <text x={x} y={height - padding.bottom + 14} textAnchor="middle" fontSize={10} className="fill-gray-400">{d.label}</text>
               </g>
             )
           })}

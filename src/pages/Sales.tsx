@@ -60,6 +60,7 @@ export function Sales() {
   const [warehouseId, setWarehouseId] = usePageState('sales.warehouseId', '')
   const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0])
   const [cart, setCart] = useState<CartLine[]>([])
+  const [itemQuery, setItemQuery] = useState('')
   const [payNow, setPayNow] = useState(true)
   const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
   const [accountId, setAccountId] = useState('')
@@ -432,8 +433,13 @@ export function Sales() {
                 {!warehouseId && (
                   <p className="text-xs text-amber-600 mb-1.5">Choose a warehouse to see available stock.</p>
                 )}
+                <div className="relative mb-1.5">
+                  <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input value={itemQuery} onChange={e => setItemQuery(e.target.value)} placeholder="Search products…"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+                </div>
                 <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-1 mb-2 border border-gray-100 rounded-lg">
-                  {products.map(p => {
+                  {products.filter(p => p.name.toLowerCase().includes(itemQuery.toLowerCase()) || p.sku?.toLowerCase().includes(itemQuery.toLowerCase())).map(p => {
                     const stock = stockByProduct[p.id] ?? 0
                     const outOfStock = !!warehouseId && stock <= 0
                     return (

@@ -8,8 +8,9 @@ import { recordCompanyExpense } from '../../api/companyExpenses'
 import { fetchAccounts } from '../../api/accounts'
 import { recordCreditTransaction, openCreditAccount } from '../../api/credit'
 import { logProductionQuick } from '../../lib/productionLogging'
+import { SearchableSelect } from '../SearchableSelect'
 import {
-  ShoppingCart, Banknote, Receipt, Wrench, X, Loader2, Check, Plus, Minus, Package, Trash2,
+  ShoppingCart, Banknote, Receipt, Wrench, X, Loader2, Check, Plus, Minus, Package, Trash2, Search,
 } from 'lucide-react'
 
 interface Option { id: string; name: string }
@@ -51,6 +52,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [creditAccountId, setCreditAccountId] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [itemQuery, setItemQuery] = useState('')
 
   useEffect(() => {
     Promise.all([
@@ -149,8 +151,15 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
           {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
       </div>
+      {products.length > 8 && (
+        <div className="relative">
+          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={itemQuery} onChange={e => setItemQuery(e.target.value)} placeholder="Search products…"
+            className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+        </div>
+      )}
       <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto p-1 border border-gray-100 rounded-lg">
-        {products.map(p => {
+        {products.filter(p => p.name.toLowerCase().includes(itemQuery.toLowerCase())).map(p => {
           const stock = stockByProduct[p.id] ?? 0
           const out = !!warehouseId && stock <= 0
           return (
@@ -379,10 +388,12 @@ function QuickProductionModal({ onClose, onDone }: { onClose: () => void; onDone
         <option value="">Which warehouse?</option>
         {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
-      <select value={bomId} onChange={e => setBomId(e.target.value)} className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white">
-        <option value="">Which product?</option>
-        {boms.map(b => <option key={b.id} value={b.id}>{b.productName}</option>)}
-      </select>
+      <SearchableSelect
+        options={boms.map(b => ({ id: b.id, label: b.productName }))}
+        value={bomId}
+        onChange={setBomId}
+        placeholder="Which product?"
+      />
       <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="Quantity produced today" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
     </ModalShell>
   )

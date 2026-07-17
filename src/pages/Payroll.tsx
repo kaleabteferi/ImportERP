@@ -13,7 +13,7 @@ import { OT_LABELS, OT_MULTIPLIERS } from '../lib/payrollEngine'
 import type { OvertimeType } from '../lib/payrollEngine'
 import {
   Wallet, Loader2, Plus, X, Check, Lock, ChevronLeft, Pencil, Trash2,
-  Printer, Info,
+  Printer, Info, Users, AlertTriangle,
 } from 'lucide-react'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
@@ -158,6 +158,120 @@ function EntryEditForm({ entry, employee, onCancel, onSaved }: {
   )
 }
 
+const OT_TYPES = Object.keys(OT_LABELS) as OvertimeType[]
+const OT_SHORT_LABELS: Record<OvertimeType, string> = { weekday: 'Weekday', night: 'Night', rest_day: 'Rest day', public_holiday: 'Holiday' }
+
+// A factory floor of 50-100 daily-wage/casual workers can't reasonably be
+// entered one row-edit-panel at a time — this is a spreadsheet-style table
+// covering just days worked + overtime hours (the two fields that actually
+// vary week to week for that cohort) across every non-permanent employee at
+// once. Allowances/deductions stay rare enough to edit individually via the
+// regular per-row form; this tool only ever touches days + OT, so it leaves
+// whatever allowances/deductions/notes already exist on each entry
+// untouched (recalculateAndSaveEntry always does a full recompute, so those
+// values are read from the entry and passed straight through unchanged).
+function BulkFactoryForm({ entries, employeeById, onCancel, onSaved }: {
+  entries: PayrollEntry[]; employeeById: Map<string, Employee>; onCancel: () => void; onSaved: () => void
+}) {
+  const factoryEntries = useMemo(() => entries.filter(e => e.employment_type !== 'permanent'), [entries])
+  const [rows, setRows] = useState<Record<string, { days: string; ot: Record<OvertimeType, string> }>>(() =>
+    Object.fromEntries(factoryEntries.map(e => [e.id, {
+      days: e.days_worked != null ? String(e.days_worked) : '',
+      ot: Object.fromEntries(OT_TYPES.map(t => [t, String(e.overtime_lines.find(l => l.ot_type === t)?.hours ?? '')])) as Record<OvertimeType, string>,
+    }]))
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function setDays(id: string, v: string) { setRows(r => ({ ...r, [id]: { ...r[id], days: v } })) }
+  function setOt(id: string, type: OvertimeType, v: string) { setRows(r => ({ ...r, [id]: { ...r[id], ot: { ...r[id].ot, [type]: v } } })) }
+  function applyDaysToAll(v: string) { setRows(r => Object.fromEntries(Object.keys(r).map(id => [id, { ...r[id], days: v }]))) }
+
+  async function submit() {
+    setSaving(true); setError(null)
+    try {
+      const results = await Promise.allSettled(factoryEntries.map(entry => {
+        const employee = employeeById.get(entry.employee_id)
+        const row = rows[entry.id]
+        if (!employee || !row) return Promise.resolve()
+        const overtimeLines = OT_TYPES.map(t => ({ ot_type: t, hours: Number(row.ot[t]) || 0 })).filter(l => l.hours > 0)
+        return recalculateAndSaveEntry(entry, employee, {
+          daysWorked: Number(row.days) || 0,
+          overtimeLines,
+          allowancesEtb: entry.allowances_etb,
+          deductions: entry.deductions,
+          notes: entry.notes ?? '',
+        })
+      }))
+      const failed = results.filter(r => r.status === 'rejected').length
+      if (failed > 0) setError(`${failed} of ${factoryEntries.length} rows failed to save. Fix and try again, or edit that employee individually below.`)
+      else onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (factoryEntries.length === 0) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 text-xs text-gray-400">
+        No daily-wage or casual employees in this pay run — permanent staff don't have days-worked or hourly overtime, so there's nothing to bulk-enter here. Use the per-row edit below instead.
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <p className="text-sm font-medium flex items-center gap-1.5"><Users size={14} className="text-blue-600" /> Bulk factory entry — {factoryEntries.length} daily-wage/casual employees</p>
+          <p className="text-xs text-gray-400 mt-0.5">Enter days worked and overtime hours for everyone at once, then save in one action.</p>
+        </div>
+        <button type="button" onClick={() => { const v = prompt('Set days worked for every row below (e.g. 26):'); if (v && !isNaN(Number(v))) applyDaysToAll(v) }}
+          className="text-xs text-blue-600 hover:underline shrink-0">Set same days for everyone</button>
+      </div>
+      {error && <p className="text-xs text-red-600 flex items-center gap-1.5"><AlertTriangle size={12} /> {error}</p>}
+      <div className="overflow-x-auto border border-gray-100 rounded-lg max-h-96 overflow-y-auto">
+        <table className="text-xs w-full">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <th className="text-left px-2 py-1.5 font-medium text-gray-400 whitespace-nowrap">Employee</th>
+              <th className="text-center px-2 py-1.5 font-medium text-gray-400 whitespace-nowrap">Days worked</th>
+              {OT_TYPES.map(t => (
+                <th key={t} className="text-center px-2 py-1.5 font-medium text-gray-400 whitespace-nowrap" title={`${OT_LABELS[t]} (${OT_MULTIPLIERS[t]}x)`}>
+                  {OT_SHORT_LABELS[t]} hrs
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {factoryEntries.map((entry, i) => (
+              <tr key={entry.id} className={i % 2 === 1 ? 'bg-gray-50/50' : ''}>
+                <td className="px-2 py-1 whitespace-nowrap font-medium">{entry.employee_name}</td>
+                <td className="px-1 py-1">
+                  <input type="number" value={rows[entry.id]?.days ?? ''} onChange={e => setDays(entry.id, e.target.value)}
+                    className="w-16 px-1.5 py-1 text-xs border border-gray-200 rounded text-center" />
+                </td>
+                {OT_TYPES.map(t => (
+                  <td key={t} className="px-1 py-1">
+                    <input type="number" value={rows[entry.id]?.ot[t] ?? ''} onChange={e => setOt(entry.id, t, e.target.value)}
+                      className="w-16 px-1.5 py-1 text-xs border border-gray-200 rounded text-center" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex gap-2 justify-end pt-1">
+        <button onClick={onCancel} disabled={saving} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
+        <button onClick={submit} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
+          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {saving ? 'Saving…' : `Save all ${factoryEntries.length} rows`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Payslip({ entry, period, employee, onClose }: { entry: PayrollEntry; period: PayrollPeriod; employee: Employee | undefined; onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -207,6 +321,7 @@ export function Payroll() {
   const [finalizing, setFinalizing] = useState(false)
   const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([])
   const [recordExpenseAccountId, setRecordExpenseAccountId] = useState('')
+  const [showBulkFactory, setShowBulkFactory] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -291,6 +406,10 @@ export function Payroll() {
           </div>
           {activePeriod.status === 'draft' ? (
             <div className="flex items-center gap-2">
+              <button onClick={() => setShowBulkFactory(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+                {showBulkFactory ? <X size={12} /> : <Users size={12} />} Bulk factory entry
+              </button>
               <select value={recordExpenseAccountId} onChange={e => setRecordExpenseAccountId(e.target.value)}
                 className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
                 <option value="">Don't record as an expense</option>
@@ -307,6 +426,12 @@ export function Payroll() {
         </div>
 
         {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+
+        {showBulkFactory && activePeriod.status === 'draft' && (
+          <BulkFactoryForm entries={entries} employeeById={employeeById}
+            onCancel={() => setShowBulkFactory(false)}
+            onSaved={() => { setShowBulkFactory(false); loadEntries(activePeriod.id) }} />
+        )}
 
         <div className="grid grid-cols-4 gap-3 mb-5">
           <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Gross pay</p><p className="text-lg font-medium font-mono">{N(totals.gross)}</p></div>
