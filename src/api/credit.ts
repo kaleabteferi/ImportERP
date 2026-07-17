@@ -65,3 +65,35 @@ export async function fetchCustomersForCredit() {
   if (error) throw new Error(error.message);
   return data;
 }
+
+export interface OutstandingCreditOrder { id: string; orderNumber: string; totalEtb: number; paidAmount: number }
+
+// Orders that were funded by a draw on this credit account and still have
+// a balance owed — so a repayment can be linked to one via sales_order_id,
+// which keeps the order's own paid_amount/status in sync (see the
+// credit_repayment_syncs_order migration). A repayment left unlinked still
+// behaves exactly as before: it only reduces the account's revolving
+// balance, not any specific order.
+export async function fetchOutstandingCreditOrders(creditAccountId: string): Promise<OutstandingCreditOrder[]> {
+  const { data: draws, error: drawsError } = await supabase
+    .from('credit_transactions')
+    .select('sales_order_id')
+    .eq('credit_account_id', creditAccountId)
+    .eq('type', 'draw')
+    .not('sales_order_id', 'is', null);
+  if (drawsError) throw new Error(drawsError.message);
+
+  const orderIds = [...new Set((draws ?? []).map((d: any) => d.sales_order_id))];
+  if (orderIds.length === 0) return [];
+
+  const { data: orders, error: ordersError } = await supabase
+    .from('sales_orders')
+    .select('id, order_number, total_etb, paid_amount, status')
+    .in('id', orderIds)
+    .in('status', ['INVOICED', 'PARTIAL']);
+  if (ordersError) throw new Error(ordersError.message);
+
+  return (orders ?? []).map((o: any) => ({
+    id: o.id, orderNumber: o.order_number, totalEtb: Number(o.total_etb ?? 0), paidAmount: Number(o.paid_amount ?? 0),
+  }));
+}

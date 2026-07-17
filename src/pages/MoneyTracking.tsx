@@ -21,6 +21,7 @@ interface Txn {
   accountName: string | null
 }
 interface CreditAccount { id: string; customer_id: string; customer_name: string; credit_limit: number; balance: number; due_date: string; status: string }
+interface CreditTxnHistory { id: string; type: 'draw' | 'repayment'; amount: number; date: string | null; orderNumber: string | null; notes: string | null }
 interface Option { id: string; name: string }
 
 const METHOD_LABEL: Record<string, string> = { cash: 'Cash', bank_transfer: 'Transfer', credit: 'Credit', mobile_money: 'Mobile money' }
@@ -306,9 +307,15 @@ export function MoneyTracking() {
   const [error, setError] = useState<string | null>(null)
   const [direction, setDirection] = usePageState<'all' | Direction>('moneyTracking.direction', 'all')
   const [query, setQuery] = usePageState('moneyTracking.query', '')
+  const [dateFrom, setDateFrom] = usePageState('moneyTracking.dateFrom', '')
+  const [dateTo, setDateTo] = usePageState('moneyTracking.dateTo', '')
+  const [methodFilter, setMethodFilter] = usePageState('moneyTracking.methodFilter', '')
   const [activeForm, setActiveForm] = useState<'income' | 'expense' | null>(null)
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null)
   const [insightsOpen, setInsightsOpen] = usePageState('moneyTracking.insightsOpen', false)
+  const [expandedCreditId, setExpandedCreditId] = useState<string | null>(null)
+  const [creditHistory, setCreditHistory] = useState<Record<string, CreditTxnHistory[]>>({})
+  const [creditHistoryLoading, setCreditHistoryLoading] = useState(false)
 
   const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
@@ -382,8 +389,49 @@ export function MoneyTracking() {
 
   const filtered = useMemo(() => txns
     .filter(t => direction === 'all' || t.direction === direction)
+    .filter(t => !methodFilter || t.method === methodFilter)
+    .filter(t => !dateFrom || (t.date ?? '').slice(0, 10) >= dateFrom)
+    .filter(t => !dateTo || (t.date ?? '').slice(0, 10) <= dateTo)
     .filter(t => t.party.toLowerCase().includes(query.toLowerCase())),
-    [txns, direction, query])
+    [txns, direction, query, methodFilter, dateFrom, dateTo])
+  const hasListFilters = !!(query || methodFilter || dateFrom || dateTo || direction !== 'all')
+
+  // Last 14 days, net cash per day — a quick "is the trend healthy" glance
+  // without leaving the page.
+  const dailyTrend = useMemo(() => {
+    const days: { date: string; net: number }[] = []
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i)
+      const iso = d.toISOString().slice(0, 10)
+      const dayTxns = txns.filter(t => t.currency === 'ETB' && (t.date ?? '').slice(0, 10) === iso)
+      const net = dayTxns.reduce((s, t) => s + (t.direction === 'in' ? t.amount : -t.amount), 0)
+      days.push({ date: iso, net })
+    }
+    return days
+  }, [txns])
+
+  async function toggleCreditHistory(accountId: string) {
+    if (expandedCreditId === accountId) { setExpandedCreditId(null); return }
+    setExpandedCreditId(accountId)
+    if (creditHistory[accountId]) return
+    setCreditHistoryLoading(true)
+    try {
+      const { data } = await supabase
+        .from('credit_transactions')
+        .select('id, type, amount, transaction_date, notes, sales_orders(order_number)')
+        .eq('credit_account_id', accountId)
+        .order('transaction_date', { ascending: false })
+      const rows: CreditTxnHistory[] = (data ?? []).map((r: any) => ({
+        id: r.id, type: r.type, amount: Number(r.amount ?? 0), date: r.transaction_date,
+        orderNumber: one(r.sales_orders)?.order_number ?? null, notes: r.notes,
+      }))
+      setCreditHistory(prev => ({ ...prev, [accountId]: rows }))
+    } catch {
+      setCreditHistory(prev => ({ ...prev, [accountId]: [] }))
+    } finally {
+      setCreditHistoryLoading(false)
+    }
+  }
 
   const totals = useMemo(() => {
     const inEtb = txns.filter(t => t.direction === 'in' && t.currency === 'ETB').reduce((s, t) => s + t.amount, 0)
@@ -500,9 +548,42 @@ export function MoneyTracking() {
             </div>
           )}
 
-          <div className="flex items-center justify-between mb-2 gap-2">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+            <p className="text-xs font-medium text-gray-500 mb-3">Net cash, last 14 days</p>
+            <div className="flex items-end gap-1.5" style={{ height: 64 }}>
+              {(() => {
+                const maxAbs = Math.max(...dailyTrend.map(d => Math.abs(d.net)), 1)
+                return dailyTrend.map(d => {
+                  const h = Math.max(3, (Math.abs(d.net) / maxAbs) * 56)
+                  return (
+                    <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.date}: ${d.net >= 0 ? '+' : ''}${N(d.net)} ETB`}>
+                      <div className={`w-full rounded-sm ${d.net >= 0 ? 'bg-green-500' : 'bg-red-400'}`} style={{ height: h }} />
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
             <div className="text-xs font-medium text-gray-500">Transactions</div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                <option value="">All methods</option>
+                {Object.entries(METHOD_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+                <span>–</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
+              </div>
+              {hasListFilters && (
+                <button onClick={() => { setQuery(''); setMethodFilter(''); setDateFrom(''); setDateTo(''); setDirection('all') }}
+                  className="text-xs text-blue-600 hover:underline">Clear filters</button>
+              )}
               <div className="flex gap-1">
                 {(['all', 'in', 'out'] as const).map(d => (
                   <button key={d} onClick={() => setDirection(d)}
@@ -561,15 +642,47 @@ export function MoneyTracking() {
             {credit.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No open credit accounts.</p>
             ) : credit.map((c, i, arr) => (
-              <div key={c.id} className={`flex items-center gap-3 px-4 py-2.5 text-xs ${i < arr.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">{c.customer_name}</p>
-                  <p className="text-gray-400">Due {c.due_date} · limit {N(c.credit_limit)} ETB</p>
+              <div key={c.id} className={i < arr.length - 1 ? 'border-b border-gray-50' : ''}>
+                <div className="flex items-center gap-3 px-4 py-2.5 text-xs cursor-pointer hover:bg-gray-50/70" onClick={() => toggleCreditHistory(c.id)}>
+                  {expandedCreditId === c.id ? <ChevronDown size={12} className="text-gray-300 shrink-0" /> : <ChevronRight size={12} className="text-gray-300 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{c.customer_name}</p>
+                    <p className="text-gray-400">Due {c.due_date} · limit {N(c.credit_limit)} ETB</p>
+                  </div>
+                  {(() => {
+                    const overpaid = c.status === 'settled' && c.balance < 0
+                    const label = overpaid ? 'overpaid' : c.status
+                    const cls = overpaid ? 'bg-violet-50 text-violet-700' : c.status === 'overdue' ? 'bg-red-50 text-red-700' : c.status === 'settled' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                    return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{label}</span>
+                  })()}
+                  <div className={`font-mono font-medium w-24 text-right ${c.balance < 0 ? 'text-violet-700' : ''}`}>
+                    {c.balance < 0 ? `+${N(-c.balance)}` : N(c.balance)} ETB
+                  </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.status === 'overdue' ? 'bg-red-50 text-red-700' : c.status === 'settled' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                  {c.status}
-                </span>
-                <div className="font-mono font-medium w-24 text-right">{N(c.balance)} ETB</div>
+                {expandedCreditId === c.id && (
+                  <div className="px-4 pb-3 bg-gray-50/50 border-t border-gray-100">
+                    {creditHistoryLoading && !creditHistory[c.id] ? (
+                      <div className="flex items-center gap-1.5 text-xs text-gray-400 py-3"><Loader2 size={12} className="animate-spin" /> Loading history…</div>
+                    ) : (creditHistory[c.id] ?? []).length === 0 ? (
+                      <p className="text-xs text-gray-400 py-3">No transactions on this account yet.</p>
+                    ) : (
+                      <div className="divide-y divide-gray-100">
+                        {(creditHistory[c.id] ?? []).map(h => (
+                          <div key={h.id} className="flex items-center gap-3 py-2 text-xs">
+                            {h.type === 'draw' ? <ArrowUpRight size={12} className="text-amber-500 shrink-0" /> : <ArrowDownLeft size={12} className="text-green-600 shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-gray-600 capitalize">{h.type}{h.orderNumber && ` · ${h.orderNumber}`}</p>
+                              <p className="text-gray-400">{h.date ?? '—'}{h.notes && ` · ${h.notes}`}</p>
+                            </div>
+                            <span className={`font-mono font-medium ${h.type === 'draw' ? 'text-amber-700' : 'text-green-700'}`}>
+                              {h.type === 'draw' ? '+' : '−'}{N(h.amount)} ETB
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
