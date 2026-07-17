@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
 import { useAuth } from '../lib/auth'
+import { QuickActions } from '../components/dashboard/QuickActions'
 import {
   Sparkles, TrendingUp, TrendingDown, ChevronDown, ChevronRight,
   Loader2, ArrowRight, CheckCircle2, Wallet, Landmark, CreditCard,
@@ -144,7 +145,8 @@ export function Dashboard() {
   }
 
   return (
-    <div className="p-5 max-w-5xl mx-auto space-y-5">
+    <div className="p-5 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5 items-start">
+    <div className="space-y-5 min-w-0">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -312,6 +314,11 @@ export function Dashboard() {
       <p className="text-center text-xs text-gray-300 pt-2">
         Need the full picture? <Link to="/reports" className="text-indigo-500 hover:underline">See detailed reports</Link>
       </p>
+    </div>
+
+    <div className="lg:sticky lg:top-5">
+      <QuickActions onChanged={d.refresh} />
+    </div>
     </div>
   )
 }

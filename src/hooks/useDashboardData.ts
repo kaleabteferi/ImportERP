@@ -60,10 +60,11 @@ export interface DashboardData {
   lastUpdated: Date | null
   loading: boolean
   error: string | null
+  refresh: () => void
 }
 
 export function useDashboardData(period: Period): DashboardData {
-  const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated'>>({
+  const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated' | 'refresh'>>({
     revenueEtb: 0, revenuePrevEtb: 0, producedUnits: 0, producedPrevUnits: 0,
     cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, unusualTransactionCount: 0, stockoutRiskCount: 0,
     inventoryValueEtb: 0, daysOfStock: null, activeCustomers: 0, frequentCustomers: 0,
@@ -295,5 +296,5 @@ export function useDashboardData(period: Period): DashboardData {
 
   useEffect(() => { load() }, [load])
 
-  return { ...data, lastUpdated, loading, error }
+  return { ...data, lastUpdated, loading, error, refresh: load }
 }
