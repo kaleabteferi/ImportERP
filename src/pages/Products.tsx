@@ -1,7 +1,22 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { uploadProductImage } from '../api/products'
-import { Plus, Tag, X, Check, Loader2, ImagePlus } from 'lucide-react'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
+import { Plus, Tag, X, Check, Loader2, ImagePlus, ClipboardPaste } from 'lucide-react'
+
+const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'sku', label: 'SKU', required: true, width: '110px' },
+  { key: 'name', label: 'Name', required: true, width: '200px' },
+  { key: 'unit_of_measure', label: 'Unit', width: '70px' },
+  { key: 'weight_kg', label: 'Weight (kg)', width: '90px' },
+  { key: 'volume_m3', label: 'Volume (m³)', width: '90px' },
+  { key: 'assembly_type', label: 'Assembly type', width: '110px' },
+  { key: 'description', label: 'Description', width: '200px' },
+]
+const PRODUCT_IMPORT_EXAMPLE = `sku,name,unit_of_measure,weight_kg,volume_m3,assembly_type,description
+TV-55-DMD,Dimond TV 55',PCS,18.5,0.21,SKD,55 inch smart LED
+STV-2B-SCH,Saachi 2-Burner Stove,PCS,4.2,0.03,IMPORTED,`
 
 interface Product {
   id: string
@@ -35,6 +50,7 @@ export function Products() {
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [showImport, setShowImport] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -97,6 +113,30 @@ export function Products() {
     load()
   }
 
+  async function handleBulkImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    for (const row of rows) {
+      const sku = row.sku?.trim().toUpperCase()
+      const name = row.name?.trim()
+      if (!sku || !name) { errors.push(`Skipped a row missing SKU or name.`); continue }
+      const assemblyType = ['IMPORTED', 'FULL', 'SKD', 'CKD'].includes((row.assembly_type ?? '').toUpperCase())
+        ? row.assembly_type.toUpperCase() : 'IMPORTED'
+      const { error } = await supabase.from('products').insert({
+        sku, name,
+        description: row.description?.trim() || null,
+        unit_of_measure: row.unit_of_measure?.trim().toUpperCase() || 'PCS',
+        weight_kg: row.weight_kg ? parseFloat(row.weight_kg) : null,
+        volume_m3: row.volume_m3 ? parseFloat(row.volume_m3) : null,
+        is_assembled: assemblyType === 'FULL' || assemblyType === 'SKD',
+        assembly_type: assemblyType,
+      })
+      if (error) errors.push(`${sku}: ${error.message}`)
+      else succeeded++
+    }
+    return { succeeded, errors }
+  }
+
   async function handleImagePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !editId) return
@@ -123,14 +163,35 @@ export function Products() {
             {products.length} product{products.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                     text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> Add product
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 bg-white
+                       text-gray-600 text-xs rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <ClipboardPaste size={13} /> Bulk import
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
+                       text-xs rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus size={13} /> Add product
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <BulkImportModal
+          title="Bulk import products"
+          columns={PRODUCT_IMPORT_COLUMNS}
+          exampleCsv={PRODUCT_IMPORT_EXAMPLE}
+          helpText="Paste a product list — from a supplier's price list, a spreadsheet export, or typed by hand. SKU and name are the only required fields; assembly type defaults to IMPORTED if left blank or unrecognized."
+          onImport={handleBulkImport}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">

@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Loader2, X, Check,
   RefreshCw, Package, Receipt, Calculator,
-  FileText, Truck, Lock, Info, Paperclip, Trash2,
+  FileText, Truck, Lock, Info, Paperclip, Trash2, ClipboardPaste,
 } from 'lucide-react'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -16,7 +16,20 @@ import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
 import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments'
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
 import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
+
+const ITEM_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'sku', label: 'SKU', required: true, width: '110px' },
+  { key: 'quantity', label: 'Quantity', required: true, width: '80px' },
+  { key: 'unit_price_usd', label: 'Unit price (USD)', required: true, width: '100px' },
+  { key: 'unit_of_measure', label: 'Unit', width: '70px' },
+  { key: 'pieces_per_carton', label: 'Pieces/carton', width: '90px' },
+]
+const ITEM_IMPORT_EXAMPLE = `sku,quantity,unit_price_usd,unit_of_measure,pieces_per_carton
+TV-55-DMD,50,220.00,PCS,
+STV-2B-SCH,20,35.50,CTN,4`
 
 
 
@@ -200,6 +213,7 @@ export function ShipmentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showItemImport, setShowItemImport] = useState(false)
 
   const [shipment, setShipment]   = useState<Shipment | null>(null)
   const [items, setItems]         = useState<ShipmentItem[]>([])
@@ -313,6 +327,37 @@ export function ShipmentDetail() {
   setItemForm({ ...EMPTY_ITEM })
   load()
 }
+
+  async function handleItemBulkImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    for (const row of rows) {
+      const sku = row.sku?.trim().toUpperCase()
+      const prod = products.find(p => p.sku.toUpperCase() === sku)
+      if (!prod) { errors.push(`"${row.sku}" doesn't match any product SKU — add the product first.`); continue }
+      const qty = parseFloat(row.quantity)
+      const unitPrice = parseFloat(row.unit_price_usd)
+      if (!qty || !unitPrice) { errors.push(`${sku}: quantity and unit price are required.`); continue }
+
+      const uom = (row.unit_of_measure || 'PCS').trim().toUpperCase()
+      const isCarton = uom === 'CTN'
+      const pcsPerCtn = isCarton ? (parseFloat(row.pieces_per_carton) || 1) : 1
+      const totalPieces = isCarton ? qty * pcsPerCtn : qty
+
+      const { error } = await supabase.from('shipment_items').insert({
+        shipment_id: id, product_id: prod.id, quantity: qty, unit_of_measure: uom,
+        units_per_carton: isCarton ? pcsPerCtn : null,
+        carton_qty: isCarton ? qty : Math.ceil(totalPieces / (parseFloat(row.pieces_per_carton) || 2)),
+        unit_price_usd: unitPrice,
+        weight_kg_total: prod.weight_kg ? prod.weight_kg * totalPieces : null,
+        volume_m3_total: prod.volume_m3 ? prod.volume_m3 * totalPieces : null,
+        cost_status: 'PROVISIONAL',
+      })
+      if (error) errors.push(`${sku}: ${error.message}`)
+      else succeeded++
+    }
+    return { succeeded, errors }
+  }
 
   // -- Edit expense ------------------------------------------
 
@@ -673,14 +718,35 @@ export function ShipmentDetail() {
                 Enter items exactly as on your PI document
               </p>
             </div>
-            <button
-              onClick={() => { setItemForm({ ...EMPTY_ITEM }); setError(null); setItemOpen(true) }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
-                         text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus size={13} /> Add item
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setError(null); setShowItemImport(true) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 bg-white
+                           text-gray-600 text-xs rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <ClipboardPaste size={13} /> Paste PI items
+              </button>
+              <button
+                onClick={() => { setItemForm({ ...EMPTY_ITEM }); setError(null); setItemOpen(true) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
+                           text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus size={13} /> Add item
+              </button>
+            </div>
           </div>
+
+          {showItemImport && (
+            <BulkImportModal
+              title="Paste PI items"
+              columns={ITEM_IMPORT_COLUMNS}
+              exampleCsv={ITEM_IMPORT_EXAMPLE}
+              helpText="Paste rows straight from your supplier's Proforma Invoice. Match SKUs to products already in the system (add any missing products first) — quantity and unit price (USD) are required."
+              onImport={handleItemBulkImport}
+              onClose={() => setShowItemImport(false)}
+              onImported={load}
+            />
+          )}
 
           {items.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
