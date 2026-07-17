@@ -3,13 +3,37 @@ import { supabase } from '../lib/supabase'
 import { fetchCustomers, fetchCustomerHistory, createCustomer } from '../api/customers'
 import { openCreditAccount } from '../api/credit'
 import { usePageState } from '../lib/pageState'
-import { Users, Loader2, Plus, X, Search, ChevronDown, ChevronRight, Flame, CreditCard } from 'lucide-react'
+import { Users, Loader2, Plus, X, Search, ChevronDown, ChevronRight, Flame, CreditCard, ClipboardPaste, ArrowUpDown } from 'lucide-react'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
+import { useSort } from '../lib/useSort'
 
 interface Customer {
   id: string; name: string; type: string | null; phone: string | null
   address: string | null; is_active: boolean; outstanding_etb: number
   orderCount: number; totalSpentEtb: number; lastOrderDate: string | null; ordersLast30d: number
+  created_at: string | null
 }
+
+type SortKey = 'ordersLast30d' | 'name' | 'outstanding_etb' | 'lastOrderDate' | 'created_at'
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'ordersLast30d', label: 'Most active (30d)' },
+  { key: 'name', label: 'Name' },
+  { key: 'outstanding_etb', label: 'Outstanding balance' },
+  { key: 'lastOrderDate', label: 'Last order date' },
+  { key: 'created_at', label: 'Date added' },
+]
+
+const CUSTOMER_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'name', label: 'Customer name', required: true, width: '150px' },
+  { key: 'type', label: 'Type', width: '100px' },
+  { key: 'phone', label: 'Phone', width: '110px' },
+  { key: 'address', label: 'Address', width: '160px' },
+]
+const CUSTOMER_IMPORT_EXAMPLE = `name,type,phone,address
+Selam General Trading,DISTRIBUTOR,0911223344,Bole, Addis Ababa
+Merkato Retail Shop,RETAIL,0922334455,`
 interface Order { id: string; order_number: string; sale_date: string; total_etb: number; paid_amount: number; status: string }
 interface CreditAcct { id: string; credit_limit: number; balance: number; due_date: string; status: string }
 
@@ -189,6 +213,7 @@ export function Customers() {
   const [showForm, setShowForm] = useState(false)
   const [query, setQuery] = usePageState('customers.query', '')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [showImport, setShowImport] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -230,12 +255,34 @@ export function Customers() {
   useEffect(() => { load() }, [load])
 
   const filtered = useMemo(() =>
-    rows
-      .filter(r => r.name.toLowerCase().includes(query.toLowerCase()))
-      .sort((a, b) => b.ordersLast30d - a.ordersLast30d || a.name.localeCompare(b.name)),
+    rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase())),
     [rows, query])
 
+  const { sorted, sortKey, sortDir, toggleSort } = useSort<Customer, SortKey>(
+    filtered, (c, key) => c[key], 'ordersLast30d', 'desc')
+
   const totalOutstanding = rows.reduce((s, r) => s + r.outstanding_etb, 0)
+
+  async function handleBulkImport(rowsIn: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    for (const row of rowsIn) {
+      const name = row.name?.trim()
+      if (!name) { errors.push('Skipped a row missing a name.'); continue }
+      try {
+        await createCustomer({
+          name,
+          type: row.type?.trim() || undefined,
+          phone: row.phone?.trim() || undefined,
+          address: row.address?.trim() || undefined,
+        })
+        succeeded++
+      } catch (e: any) {
+        errors.push(`${name}: ${e?.message ?? 'failed to save'}`)
+      }
+    }
+    return { succeeded, errors }
+  }
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -244,30 +291,62 @@ export function Customers() {
           <h1 className="text-lg font-medium flex items-center gap-2"><Users size={18} /> Customers</h1>
           <p className="text-xs text-gray-400 mt-0.5">{rows.length} customers · {N(totalOutstanding)} ETB outstanding</p>
         </div>
-        <button onClick={() => setShowForm(v => !v)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white flex items-center gap-1">
-          {showForm ? <X size={12} /> : <Plus size={12} />} New customer
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowImport(true)}
+            className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1">
+            <ClipboardPaste size={12} /> Bulk import
+          </button>
+          <button onClick={() => setShowForm(v => !v)}
+            className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white flex items-center gap-1">
+            {showForm ? <X size={12} /> : <Plus size={12} />} New customer
+          </button>
+        </div>
       </div>
 
       {showForm && <NewCustomerForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); load() }} />}
 
-      <div className="relative max-w-xs mb-3">
-        <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search customers"
-          className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-full" />
+      {showImport && (
+        <BulkImportModal
+          title="Bulk import customers"
+          columns={CUSTOMER_IMPORT_COLUMNS}
+          exampleCsv={CUSTOMER_IMPORT_EXAMPLE}
+          helpText="Paste a customer list. Only name is required."
+          onImport={handleBulkImport}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
+
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <div className="relative max-w-xs">
+          <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search customers"
+            className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-full" />
+        </div>
+        <div className="flex items-center gap-1.5 ml-auto">
+          <span className="text-xs text-gray-400">Sort by</span>
+          <select value={sortKey} onChange={e => toggleSort(e.target.value as SortKey)}
+            className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+            {SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <button onClick={() => toggleSort(sortKey)}
+            className="p-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50"
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}>
+            <ArrowUpDown size={12} />
+          </button>
+        </div>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
           <Loader2 size={18} className="animate-spin" /> Loading…
         </div>
-      ) : filtered.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <div className="text-center py-16 text-sm text-gray-400">No customers yet.</div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {filtered.map((c, i) => (
-            <div key={c.id} className={i < filtered.length - 1 ? 'border-b border-gray-50' : ''}>
+          {sorted.map((c, i) => (
+            <div key={c.id} className={i < sorted.length - 1 ? 'border-b border-gray-50' : ''}>
               <button
                 onClick={() => setOpenId(openId === c.id ? null : c.id)}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left"

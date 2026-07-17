@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabase'
 import { uploadProductImage } from '../api/products'
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
+import { BulkActionBar } from '../components/BulkActionBar'
+import { SortHeader } from '../components/SortHeader'
+import { useSort } from '../lib/useSort'
+import { useBulkSelect } from '../lib/useBulkSelect'
 import { Plus, Tag, X, Check, Loader2, ImagePlus, ClipboardPaste } from 'lucide-react'
 
 const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
@@ -30,7 +34,10 @@ interface Product {
   assembly_type: string | null
   is_active: boolean
   image_url: string | null
+  created_at: string | null
 }
+
+type SortKey = 'sku' | 'name' | 'unit_of_measure' | 'weight_kg' | 'volume_m3' | 'assembly_type' | 'created_at'
 
 const EMPTY = {
   sku: '', name: '', description: '',
@@ -51,6 +58,17 @@ export function Products() {
   const [uploadingImage, setUploadingImage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [showImport, setShowImport] = useState(false)
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSort<Product, SortKey>(products, (p, key) => p[key], 'name')
+  const { selected, toggle, toggleAll, clear, allSelected, count } = useBulkSelect(sorted)
+
+  async function bulkDelete() {
+    const ids = [...selected]
+    const { error: err } = await supabase.from('products').delete().in('id', ids)
+    if (err) { setError(err.message); return }
+    clear()
+    load()
+  }
 
   async function load() {
     setLoading(true)
@@ -218,27 +236,32 @@ export function Products() {
       )}
 
       {!loading && products.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[40px_1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
+        <>
+          <BulkActionBar count={count} itemLabel="product" onClear={clear} onDelete={bulkDelete} />
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_auto] gap-3
                           px-4 py-2.5 bg-gray-50 border-b border-gray-100
-                          text-xs font-medium text-gray-400 uppercase tracking-wide">
+                          text-xs font-medium text-gray-400 uppercase tracking-wide items-center">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
             <div></div>
-            <div>SKU</div>
-            <div>Name</div>
-            <div>Unit</div>
-            <div className="text-right">Weight (kg)</div>
-            <div className="text-right">Volume (m³)</div>
-            <div>Type</div>
+            <div><SortHeader label="SKU" active={sortKey === 'sku'} dir={sortDir} onClick={() => toggleSort('sku')} /></div>
+            <div><SortHeader label="Name" active={sortKey === 'name'} dir={sortDir} onClick={() => toggleSort('name')} /></div>
+            <div><SortHeader label="Unit" active={sortKey === 'unit_of_measure'} dir={sortDir} onClick={() => toggleSort('unit_of_measure')} /></div>
+            <div className="text-right"><SortHeader label="Weight" align="right" active={sortKey === 'weight_kg'} dir={sortDir} onClick={() => toggleSort('weight_kg')} /></div>
+            <div className="text-right"><SortHeader label="Volume" align="right" active={sortKey === 'volume_m3'} dir={sortDir} onClick={() => toggleSort('volume_m3')} /></div>
+            <div><SortHeader label="Type" active={sortKey === 'assembly_type'} dir={sortDir} onClick={() => toggleSort('assembly_type')} /></div>
+            <div><SortHeader label="Added" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} /></div>
             <div></div>
           </div>
 
-          {products.map((p, i) => (
+          {sorted.map((p, i) => (
             <div
               key={p.id}
-              className={`grid grid-cols-[40px_1fr_2fr_1fr_1fr_1fr_1fr_auto] gap-3
+              className={`grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_auto] gap-3
                           px-4 py-3 items-center text-sm
-                          ${i < products.length - 1 ? 'border-b border-gray-50' : ''}`}
+                          ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''} ${selected.has(p.id) ? 'bg-blue-50/40' : ''}`}
             >
+              <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="cursor-pointer" />
               <div className="w-8 h-8 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
                 {p.image_url ? (
                   <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
@@ -270,6 +293,9 @@ export function Products() {
                   {p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED')}
                 </span>
               </div>
+              <div className="text-xs text-gray-400">
+                {p.created_at ? new Date(p.created_at).toLocaleDateString('en-ET', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => openEdit(p)}
@@ -281,7 +307,8 @@ export function Products() {
               </div>
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
 
       {/* Modal */}

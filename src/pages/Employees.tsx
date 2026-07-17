@@ -1,12 +1,34 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchEmployees, createEmployee, updateEmployee } from '../api/employees'
+import { fetchEmployees, createEmployee, updateEmployee, deleteEmployees } from '../api/employees'
 import type { Employee, EmployeeInput } from '../api/employees'
 import { fetchWarehousesList } from '../api/income'
-import { Users, Loader2, Plus, X, Check, Search, Pencil, ShieldCheck } from 'lucide-react'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
+import { BulkActionBar } from '../components/BulkActionBar'
+import { SortHeader } from '../components/SortHeader'
+import { useSort } from '../lib/useSort'
+import { useBulkSelect } from '../lib/useBulkSelect'
+import { Users, Loader2, Plus, X, Check, Search, Pencil, ShieldCheck, ClipboardPaste } from 'lucide-react'
 
 interface Option { id: string; name: string }
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+
+type SortKey = 'full_name' | 'department' | 'employment_type' | 'created_at'
+
+const EMPLOYEE_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'full_name', label: 'Full name', required: true, width: '150px' },
+  { key: 'title', label: 'Title', width: '120px' },
+  { key: 'department', label: 'Department', width: '110px' },
+  { key: 'employment_type', label: 'Employment type', width: '110px' },
+  { key: 'base_salary_etb', label: 'Base salary (ETB)', width: '100px' },
+  { key: 'daily_rate_etb', label: 'Daily rate (ETB)', width: '100px' },
+  { key: 'hire_date', label: 'Hire date', width: '100px' },
+  { key: 'phone', label: 'Phone', width: '110px' },
+]
+const EMPLOYEE_IMPORT_EXAMPLE = `full_name,title,department,employment_type,base_salary_etb,daily_rate_etb,hire_date,phone
+Abebe Kebede,Line Supervisor,Factory,permanent,8500,,2025-03-01,0911223344
+Selam Tesfaye,Assembly Worker,Factory,daily_wage,,350,2026-01-10,0922334455`
 
 const EMPTY_FORM: EmployeeInput = {
   full_name: '', department: '', title: '', warehouse_id: null,
@@ -21,7 +43,11 @@ function EmployeeForm({ initial, warehouses, onCancel, onSaved }: {
   onCancel: () => void
   onSaved: () => void
 }) {
-  const [form, setForm] = useState<EmployeeInput>(initial ? { ...initial } : { ...EMPTY_FORM })
+  const [form, setForm] = useState<EmployeeInput>(() => {
+    if (!initial) return { ...EMPTY_FORM }
+    const { id: _id, created_at: _createdAt, ...rest } = initial
+    return rest
+  })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -142,6 +168,7 @@ export function Employees() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Employee | null>(null)
   const [search, setSearch] = useState('')
+  const [showImport, setShowImport] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -158,8 +185,47 @@ export function Employees() {
 
   useEffect(() => { load() }, [load])
 
-  const visible = employees.filter(e =>
+  const filtered = employees.filter(e =>
     !search.trim() || e.full_name.toLowerCase().includes(search.toLowerCase()) || (e.department ?? '').toLowerCase().includes(search.toLowerCase()))
+
+  const { sorted: visible, sortKey, sortDir, toggleSort } = useSort<Employee, SortKey>(filtered, (e, key) => e[key], 'full_name')
+  const { selected, toggle, toggleAll, clear, allSelected, count } = useBulkSelect(visible)
+
+  async function bulkDelete() {
+    try {
+      await deleteEmployees([...selected])
+      clear()
+      load()
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to delete.')
+    }
+  }
+
+  async function handleBulkImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    for (const row of rows) {
+      const full_name = row.full_name?.trim()
+      if (!full_name) { errors.push('Skipped a row missing a name.'); continue }
+      const employmentType = ['permanent', 'daily_wage', 'casual'].includes(row.employment_type?.trim())
+        ? row.employment_type.trim() as EmployeeInput['employment_type'] : 'permanent'
+      try {
+        await createEmployee({
+          full_name, title: row.title?.trim() || null, department: row.department?.trim() || null,
+          warehouse_id: null, employment_type: employmentType, is_active: true,
+          hire_date: row.hire_date?.trim() || null, phone: row.phone?.trim() || null,
+          tin_number: null, bank_name: null, bank_account_number: null, emergency_contact: null,
+          base_salary_etb: row.base_salary_etb ? Number(row.base_salary_etb) : null,
+          daily_rate_etb: row.daily_rate_etb ? Number(row.daily_rate_etb) : null,
+          pension_eligible: true, notes: null,
+        })
+        succeeded++
+      } catch (e: any) {
+        errors.push(`${full_name}: ${e?.message ?? 'failed to save'}`)
+      }
+    }
+    return { succeeded, errors }
+  }
 
   return (
     <div className="p-5 max-w-4xl mx-auto">
@@ -171,13 +237,31 @@ export function Employees() {
             <span className="inline-flex items-center gap-1"><ShieldCheck size={11} className="text-gray-400" /> HR only — includes salary, bank, and TIN</span>
           </p>
         </div>
-        <button onClick={() => { setShowForm(v => !v); setEditing(null) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
-          {showForm && !editing ? <X size={12} /> : <Plus size={12} />} New employee
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowImport(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 bg-white text-gray-600 text-xs rounded-lg hover:bg-gray-50">
+            <ClipboardPaste size={13} /> Bulk import
+          </button>
+          <button onClick={() => { setShowForm(v => !v); setEditing(null) }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
+            {showForm && !editing ? <X size={12} /> : <Plus size={12} />} New employee
+          </button>
+        </div>
       </div>
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+
+      {showImport && (
+        <BulkImportModal
+          title="Bulk import employees"
+          columns={EMPLOYEE_IMPORT_COLUMNS}
+          exampleCsv={EMPLOYEE_IMPORT_EXAMPLE}
+          helpText="Paste a staff list. Only name is required — employment type defaults to permanent if left blank or unrecognized. Bank/TIN/emergency contact details can be added afterward by editing each employee."
+          onImport={handleBulkImport}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
 
       {showForm && (
         <EmployeeForm
@@ -205,9 +289,19 @@ export function Employees() {
           <p className="text-xs text-gray-400">Add your team — payroll, production logs, and expense records all link back to these.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <>
+          <BulkActionBar count={count} itemLabel="employee" onClear={clear} onDelete={bulkDelete} />
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
+            <div className="flex-1"><SortHeader label="Name" active={sortKey === 'full_name'} dir={sortDir} onClick={() => toggleSort('full_name')} /></div>
+            <div className="w-32"><SortHeader label="Type" active={sortKey === 'employment_type'} dir={sortDir} onClick={() => toggleSort('employment_type')} /></div>
+            <div className="w-28 text-right"><SortHeader label="Added" align="right" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} /></div>
+            <div className="w-6"></div>
+          </div>
           {visible.map((e, i) => (
-            <div key={e.id} className={`flex items-center gap-3 px-4 py-3 ${i < visible.length - 1 ? 'border-b border-gray-50' : ''} ${!e.is_active ? 'opacity-50' : ''}`}>
+            <div key={e.id} className={`flex items-center gap-3 px-4 py-3 ${i < visible.length - 1 ? 'border-b border-gray-50' : ''} ${!e.is_active ? 'opacity-50' : ''} ${selected.has(e.id) ? 'bg-blue-50/40' : ''}`}>
+              <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggle(e.id)} className="cursor-pointer" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">{e.full_name}</p>
                 <p className="text-xs text-gray-400">
@@ -215,7 +309,7 @@ export function Employees() {
                   {!e.is_active && ' · inactive'}
                 </p>
               </div>
-              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize">
+              <span className="w-32 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize text-center">
                 {e.employment_type.replace('_', ' ')}
               </span>
               <div className="text-right w-28">
@@ -224,12 +318,13 @@ export function Employees() {
                 </p>
                 {!e.pension_eligible && <p className="text-xs text-amber-600">No pension</p>}
               </div>
-              <button onClick={() => { setEditing(e); setShowForm(true) }} className="p-1.5 text-gray-300 hover:text-blue-600">
+              <button onClick={() => { setEditing(e); setShowForm(true) }} className="p-1.5 text-gray-300 hover:text-blue-600 shrink-0">
                 <Pencil size={13} />
               </button>
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

@@ -19,9 +19,10 @@ export interface Employee {
   daily_rate_etb: number | null
   pension_eligible: boolean
   notes: string | null
+  created_at: string | null
 }
 
-const COLUMNS = 'id, full_name, department, title, warehouse_id, employment_type, is_active, hire_date, phone, tin_number, bank_name, bank_account_number, emergency_contact, base_salary_etb, daily_rate_etb, pension_eligible, notes'
+const COLUMNS = 'id, full_name, department, title, warehouse_id, employment_type, is_active, hire_date, phone, tin_number, bank_name, bank_account_number, emergency_contact, base_salary_etb, daily_rate_etb, pension_eligible, notes, created_at'
 
 export async function fetchEmployees(): Promise<Employee[]> {
   const { data, error } = await supabase.from('employees').select(COLUMNS).order('full_name')
@@ -29,7 +30,7 @@ export async function fetchEmployees(): Promise<Employee[]> {
   return (data ?? []) as unknown as Employee[]
 }
 
-export type EmployeeInput = Omit<Employee, 'id'>
+export type EmployeeInput = Omit<Employee, 'id' | 'created_at'>
 
 export async function createEmployee(input: EmployeeInput): Promise<string> {
   const { data, error } = await supabase.from('employees').insert(input).select('id').single()
@@ -39,5 +40,10 @@ export async function createEmployee(input: EmployeeInput): Promise<string> {
 
 export async function updateEmployee(id: string, patch: Partial<EmployeeInput>): Promise<void> {
   const { error } = await supabase.from('employees').update(patch).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteEmployees(ids: string[]): Promise<void> {
+  const { error } = await supabase.from('employees').delete().in('id', ids)
   if (error) throw new Error(error.message)
 }

@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Building2, Phone, Mail, X, Check, Loader2 } from 'lucide-react'
+import { Plus, Building2, Phone, Mail, X, Check, Loader2, ClipboardPaste } from 'lucide-react'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
+import { BulkActionBar } from '../components/BulkActionBar'
+import { SortHeader } from '../components/SortHeader'
+import { useSort } from '../lib/useSort'
+import { useBulkSelect } from '../lib/useBulkSelect'
 
 interface Supplier {
   id: string
@@ -12,12 +18,28 @@ interface Supplier {
   currency: string
   payment_terms: string | null
   is_active: boolean
+  created_at: string | null
 }
 
 const EMPTY = {
   name: '', country: 'China', contact_person: '',
   email: '', phone: '', currency: 'USD', payment_terms: '',
 }
+
+type SortKey = 'name' | 'currency' | 'is_active' | 'created_at'
+
+const SUPPLIER_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'name', label: 'Supplier name', required: true, width: '150px' },
+  { key: 'country', label: 'Country', width: '100px' },
+  { key: 'currency', label: 'Currency', width: '80px' },
+  { key: 'contact_person', label: 'Contact person', width: '120px' },
+  { key: 'phone', label: 'Phone', width: '110px' },
+  { key: 'email', label: 'Email', width: '150px' },
+  { key: 'payment_terms', label: 'Payment terms', width: '160px' },
+]
+const SUPPLIER_IMPORT_EXAMPLE = `name,country,currency,contact_person,phone,email,payment_terms
+Guangzhou Electronics Co.,China,USD,Li Wei,+86 138 0000 0000,li@example.com,30% TT + 70% LC before shipment
+Dubai Auto Parts LLC,UAE,USD,Ahmed Hassan,+971 50 000 0000,,100% TT before shipment`
 
 export function Suppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -27,6 +49,39 @@ export function Suppliers() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState<string | null>(null)
   const [editId, setEditId]       = useState<string | null>(null)
+  const [showImport, setShowImport] = useState(false)
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSort<Supplier, SortKey>(suppliers, (s, key) => key === 'is_active' ? (s.is_active ? 1 : 0) : s[key], 'name')
+  const { selected, toggle, toggleAll, clear, allSelected, count } = useBulkSelect(sorted)
+
+  async function bulkDelete() {
+    const ids = [...selected]
+    const { error: err } = await supabase.from('suppliers').delete().in('id', ids)
+    if (err) { setError(err.message); return }
+    clear()
+    load()
+  }
+
+  async function handleBulkImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    let succeeded = 0
+    for (const row of rows) {
+      const name = row.name?.trim()
+      if (!name) { errors.push('Skipped a row missing a name.'); continue }
+      const { error: err } = await supabase.from('suppliers').insert({
+        name,
+        country: row.country?.trim() || 'China',
+        currency: row.currency?.trim() || 'USD',
+        contact_person: row.contact_person?.trim() || null,
+        phone: row.phone?.trim() || null,
+        email: row.email?.trim() || null,
+        payment_terms: row.payment_terms?.trim() || null,
+      })
+      if (err) errors.push(`${name}: ${err.message}`)
+      else succeeded++
+    }
+    return { succeeded, errors }
+  }
 
   async function load() {
     setLoading(true)
@@ -102,14 +157,41 @@ export function Suppliers() {
             {suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                     text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> Add supplier
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600
+                       text-xs rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <ClipboardPaste size={13} /> Bulk import
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
+                       text-xs rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus size={13} /> Add supplier
+          </button>
+        </div>
       </div>
+
+      {error && (
+        <div className="px-3 py-2 mb-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          {error}
+        </div>
+      )}
+
+      {showImport && (
+        <BulkImportModal
+          title="Bulk import suppliers"
+          columns={SUPPLIER_IMPORT_COLUMNS}
+          exampleCsv={SUPPLIER_IMPORT_EXAMPLE}
+          helpText="Paste a supplier list. Only name is required — country defaults to China and currency to USD if left blank."
+          onImport={handleBulkImport}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
 
       {/* Loading */}
       {loading && (
@@ -136,25 +218,31 @@ export function Suppliers() {
 
       {/* Table */}
       {!loading && suppliers.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <>
+          <BulkActionBar count={count} itemLabel="supplier" onClear={clear} onDelete={bulkDelete} />
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[2fr_1fr_1.5fr_auto_auto] gap-3 px-4 py-2.5
+          <div className="grid grid-cols-[24px_2fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100
-                          text-xs font-medium text-gray-400 uppercase tracking-wide">
-            <div>Supplier</div>
-            <div>Currency</div>
+                          text-xs font-medium text-gray-400 uppercase tracking-wide items-center">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
+            <SortHeader label="Supplier" active={sortKey === 'name'} dir={sortDir} onClick={() => toggleSort('name')} />
+            <SortHeader label="Currency" active={sortKey === 'currency'} dir={sortDir} onClick={() => toggleSort('currency')} />
             <div>Payment terms</div>
-            <div>Status</div>
+            <SortHeader label="Status" active={sortKey === 'is_active'} dir={sortDir} onClick={() => toggleSort('is_active')} />
+            <SortHeader label="Added" align="right" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} />
             <div></div>
           </div>
 
-          {suppliers.map((sup, i) => (
+          {sorted.map((sup, i) => (
             <div
               key={sup.id}
-              className={`grid grid-cols-[2fr_1fr_1.5fr_auto_auto] gap-3 px-4 py-3
+              className={`grid grid-cols-[24px_2fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-3
                           items-center text-sm
-                          ${i < suppliers.length - 1 ? 'border-b border-gray-50' : ''}`}
+                          ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''}
+                          ${selected.has(sup.id) ? 'bg-blue-50/40' : ''}`}
             >
+              <input type="checkbox" checked={selected.has(sup.id)} onChange={() => toggle(sup.id)} className="cursor-pointer" />
               {/* Name */}
               <div>
                 <p className="font-medium text-gray-900">{sup.name}</p>
@@ -201,6 +289,11 @@ export function Suppliers() {
                 </span>
               </div>
 
+              {/* Added */}
+              <div className="text-xs text-gray-400 text-right w-20">
+                {sup.created_at ? new Date(sup.created_at).toLocaleDateString('en-ET', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+              </div>
+
               {/* Actions */}
               <div className="flex items-center gap-2">
                 <button
@@ -220,7 +313,8 @@ export function Suppliers() {
               </div>
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
 
       {/* Modal */}
