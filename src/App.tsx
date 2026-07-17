@@ -2,11 +2,16 @@ import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './lib/auth'
 import { ThemeProvider } from './lib/theme'
+import { ViewModeProvider, useViewMode } from './lib/viewMode'
 import { PageStateProvider } from './lib/pageState'
 import { PinLockProvider, usePinLock } from './lib/pinLock'
 import { PinLockScreen } from './components/PinLockScreen'
 import { RequireAuth } from './components/auth/RequireAuth'
 import { RequireRole } from './components/auth/RequireRole'
+import { MobileHome } from './pages/mobile/MobileHome'
+import { MobileSales } from './pages/mobile/MobileSales'
+import { MobileProduction } from './pages/mobile/MobileProduction'
+import { MobileMoneyTracking } from './pages/mobile/MobileMoneyTracking'
 import { Layout }         from './components/layout/Layout'
 import { Dashboard }      from './pages/Dashboard'
 import { Shipments }      from './pages/Shipments'
@@ -44,9 +49,19 @@ function PinGate({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+// Curated pages get a purpose-built simplified mobile UI; everything else
+// keeps its desktop layout regardless of mode (Layout.tsx wraps it in a
+// horizontal-scroll-safe container so it stays usable, just not redesigned).
+function ModeRoute({ desktop, mobile }: { desktop: ReactNode; mobile?: ReactNode }) {
+  const { mode } = useViewMode()
+  if (mode === 'mobile' && mobile) return <>{mobile}</>
+  return <>{desktop}</>
+}
+
 export default function App() {
   return (
     <ThemeProvider>
+    <ViewModeProvider>
     <AuthProvider>
       <RequireAuth>
         <PinLockProvider>
@@ -55,7 +70,7 @@ export default function App() {
           <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
-              <Route index                  element={<Dashboard />}      />
+              <Route index                  element={<ModeRoute desktop={<Dashboard />} mobile={<MobileHome />} />}      />
               <Route path="daily-activity"  element={<DailyActivity />}  />
               <Route path="reports"         element={<Reports />}        />
               <Route path="calculator"      element={<Calculator />}     />
@@ -79,14 +94,14 @@ export default function App() {
                 <RequireRole allow={['operations_marketing', 'manufacturing_sales']}><Customers /></RequireRole>
               } />
               <Route path="sales" element={
-                <RequireRole allow={['manufacturing_sales', 'accounting_finance']}><Sales /></RequireRole>
+                <RequireRole allow={['manufacturing_sales', 'accounting_finance']}><ModeRoute desktop={<Sales />} mobile={<MobileSales />} /></RequireRole>
               } />
               <Route path="products" element={
                 <RequireRole allow={['operations_marketing', 'manufacturing_sales']}><Products /></RequireRole>
               } />
 
               <Route path="production" element={
-                <RequireRole allow={['manufacturing_sales']}><Production /></RequireRole>
+                <RequireRole allow={['manufacturing_sales']}><ModeRoute desktop={<Production />} mobile={<MobileProduction />} /></RequireRole>
               } />
               <Route path="assembly" element={
                 <RequireRole allow={['manufacturing_sales']}><Assembly /></RequireRole>
@@ -117,7 +132,7 @@ export default function App() {
                 <RequireRole allow={['accounting_finance']}><Receivables /></RequireRole>
               } />
               <Route path="money-tracking" element={
-                <RequireRole allow={['accounting_finance']}><MoneyTracking /></RequireRole>
+                <RequireRole allow={['accounting_finance']}><ModeRoute desktop={<MoneyTracking />} mobile={<MobileMoneyTracking />} /></RequireRole>
               } />
               <Route path="credit-accounts" element={
                 <RequireRole allow={['accounting_finance']}><CreditAccounts /></RequireRole>
@@ -140,6 +155,7 @@ export default function App() {
         </PinLockProvider>
       </RequireAuth>
     </AuthProvider>
+    </ViewModeProvider>
     </ThemeProvider>
   )
 }
