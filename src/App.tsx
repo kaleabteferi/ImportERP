@@ -1,7 +1,10 @@
+import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './lib/auth'
 import { ThemeProvider } from './lib/theme'
 import { PageStateProvider } from './lib/pageState'
+import { PinLockProvider, usePinLock } from './lib/pinLock'
+import { PinLockScreen } from './components/PinLockScreen'
 import { RequireAuth } from './components/auth/RequireAuth'
 import { RequireRole } from './components/auth/RequireRole'
 import { Layout }         from './components/layout/Layout'
@@ -33,11 +36,20 @@ import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 
 
+function PinGate({ children }: { children: ReactNode }) {
+  const { status } = usePinLock()
+  if (status === 'locked' || status === 'needs-setup') return <PinLockScreen />
+  if (status === 'checking') return null
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <ThemeProvider>
     <AuthProvider>
       <RequireAuth>
+        <PinLockProvider>
+        <PinGate>
         <PageStateProvider>
           <BrowserRouter>
           <Routes>
@@ -122,6 +134,8 @@ export default function App() {
           </Routes>
         </BrowserRouter>
         </PageStateProvider>
+        </PinGate>
+        </PinLockProvider>
       </RequireAuth>
     </AuthProvider>
     </ThemeProvider>

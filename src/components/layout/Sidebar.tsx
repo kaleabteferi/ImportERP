@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Ship, Building2,
@@ -5,10 +6,11 @@ import {
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
   ShoppingCart,
 } from 'lucide-react'
-import { Settings as SettingsIcon, UserCog, LogOut } from 'lucide-react'
+import { Settings as SettingsIcon, UserCog, LogOut, KeyRound } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
 import type { Role } from '../../lib/roles'
+import { ChangePinModal } from '../ChangePinModal'
 
 // allow: [] means visible to every authenticated role (pure reporting/overview pages).
 const links = [
@@ -52,6 +54,7 @@ const links = [
 export function Sidebar() {
   const { profile, signOut } = useAuth()
   const role = profile?.role as Role | undefined
+  const [showChangePin, setShowChangePin] = useState(false)
   const visibleLinks = links
     .map(group => ({
       ...group,
@@ -106,6 +109,16 @@ export function Sidebar() {
           {role ? ROLE_LABELS[role] : profile?.role}
         </div>
         <button
+          onClick={() => setShowChangePin(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
+            color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            marginBottom: '8px',
+          }}
+        >
+          <KeyRound size={13} strokeWidth={1.5} /> Change PIN
+        </button>
+        <button
           onClick={signOut}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
@@ -115,6 +128,7 @@ export function Sidebar() {
           <LogOut size={13} strokeWidth={1.5} /> Sign out
         </button>
       </div>
+      {showChangePin && <ChangePinModal onClose={() => setShowChangePin(false)} />}
     </aside>
   )
 }
