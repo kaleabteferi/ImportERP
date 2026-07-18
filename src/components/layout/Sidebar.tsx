@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Ship, Building2,
   Wrench, Package, Calculator, BarChart3,
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
-  ShoppingCart, Sigma,
+  ShoppingCart, Sigma, FileSearch,
 } from 'lucide-react'
 import { Settings as SettingsIcon, UserCog, LogOut, KeyRound, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
@@ -22,6 +22,7 @@ const links = [
   ]},
  { section: 'Import', items: [
   { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] as Role[] },
+  { to: '/rfqs',       icon: FileSearch, label: 'Supplier RFQs', allow: ['operations_marketing', 'accounting_finance'] as Role[] },
   { to: '/djibouti',   icon: Anchor,     label: 'Djibouti Forwarder', allow: ['operations_marketing', 'accounting_finance'] as Role[] },
   { to: '/suppliers',  icon: Building2,  label: 'Suppliers',  allow: ['operations_marketing'] as Role[] },
   { to: '/customers',  icon: Users,      label: 'Customers',  allow: ['operations_marketing', 'manufacturing_sales'] as Role[] },

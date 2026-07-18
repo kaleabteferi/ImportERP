@@ -16,6 +16,7 @@ import { Layout }         from './components/layout/Layout'
 import { Dashboard }      from './pages/Dashboard'
 import { Shipments }      from './pages/Shipments'
 import { ShipmentDetail } from './pages/ShipmentDetail'
+import { Rfqs }           from './pages/Rfqs'
 import { Suppliers }      from './pages/Suppliers'
 import { Products }       from './pages/Products'
 import { Production }     from './pages/Production'
@@ -94,6 +95,9 @@ export default function App() {
               } />
               <Route path="suppliers" element={
                 <RequireRole allow={['operations_marketing']}><Suppliers /></RequireRole>
+              } />
+              <Route path="rfqs" element={
+                <RequireRole allow={['operations_marketing', 'accounting_finance']}><Rfqs /></RequireRole>
               } />
               <Route path="customers" element={
                 <RequireRole allow={['operations_marketing', 'manufacturing_sales']}><Customers /></RequireRole>

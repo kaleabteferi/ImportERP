@@ -73,7 +73,7 @@ const GROUPS: DocGroup[] = [
             <p>Every account has one role, set by an admin on the <Link to="/users" className="text-blue-600 hover:underline">Users &amp; Roles</Link> page. A role controls both what shows up in the sidebar and, since the RLS hardening pass, what the account can actually read or write at the database level — not just what the UI shows.</p>
             <ul className="list-disc pl-4 space-y-1 mt-2">
               <li><strong>Full access</strong> — passes every check everywhere. CEO/GM/Assistant Manager tier.</li>
-              <li><strong>Operations &amp; Marketing</strong> — Shipments, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator.</li>
+              <li><strong>Operations &amp; Marketing</strong> — Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator.</li>
               <li><strong>Manufacturing &amp; Sales</strong> — Production, Assembly, BOMs, Inventory, Warehouse Transfers, Sales, Customers, Products.</li>
               <li><strong>Accounting &amp; Finance</strong> — Sales, Cost Engine, Customs Estimator, Payables, Receivables, Money Tracking, Credit Accounts, Expenses, Djibouti Forwarder, shipment cost finalization.</li>
               <li><strong>HR &amp; System</strong> — Users &amp; Roles, Settings, Employees, Payroll, HR Notes.</li>
@@ -119,6 +119,18 @@ const GROUPS: DocGroup[] = [
   {
     title: 'Import & shipments',
     sections: [
+      {
+        id: 'rfqs',
+        title: 'Supplier RFQs',
+        roles: 'Operations & Marketing, Accounting & Finance',
+        body: (
+          <>
+            <p>Use this before creating a shipment when you want to compare pricing across suppliers rather than just going with whoever you usually order from. Pick the products and quantities you're sourcing, invite one or more suppliers, and log each one's response as it comes back — unit price, currency, lead time, MOQ-adjacent terms, and how long the quote is valid.</p>
+            <p className="mt-2">Quotes are compared side by side as entered — this is a v1 raw-price comparison, not landed cost (freight/duty aren't factored in here; use Cost Engine/Customs Estimator on the resulting shipment for that).</p>
+            <p className="mt-2"><strong>Awarding</strong> a quote creates a real Shipment for that supplier with its Proforma Invoice items pre-filled from the quote — review it on the shipment before finalizing costs. Non-USD quotes don't auto-convert; their unit prices are left blank on the shipment for you to fill in rather than guessing an exchange rate. Awarding also marks every other invited supplier on that RFQ as declined.</p>
+          </>
+        ),
+      },
       {
         id: 'shipments',
         title: 'Shipments — the whole import lifecycle',
