@@ -1,9 +1,21 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { Sun, Moon, Smartphone, Monitor } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { MobileNav } from './MobileNav'
 import { useTheme } from '../../lib/theme'
 import { useViewMode } from '../../lib/viewMode'
+
+// Keying by pathname forces a fresh mount on every navigation, which
+// restarts the CSS animation — a plain wrapper without the key would only
+// animate once, on first load.
+function RouteFade() {
+  const location = useLocation()
+  return (
+    <div key={location.pathname} style={{ animation: 'fadeInUp 0.2s ease-out' }}>
+      <Outlet />
+    </div>
+  )
+}
 
 export function Layout() {
   const { theme, toggleTheme } = useTheme()
@@ -58,7 +70,7 @@ export function Layout() {
             content in the top-right (e.g. a sort/filter button row) renders
             underneath those buttons and becomes unclickable. */}
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', paddingTop: '44px', paddingBottom: isMobile ? '64px' : 0 }}>
-          <Outlet />
+          <RouteFade />
         </div>
 
         {/* Mobile bottom nav */}

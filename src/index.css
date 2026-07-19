@@ -98,3 +98,37 @@ body {
   background-color: var(--color-background-tertiary);
   color: var(--color-text-primary);
 }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* App-wide interaction polish: smooth color/border/shadow changes on every
+   button and link, even on pages that didn't opt in with their own
+   `transition-*` utility class. Deliberately excludes `transform` so this
+   doesn't fight with components that already animate transform themselves
+   (icon rotations, active-state scaling, etc). */
+button, a {
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+/* Every modal in this app follows the same shape: a `fixed inset-0`
+   backdrop wrapping a `bg-white` panel (ConfirmDialog, BulkImportModal,
+   ChangePinModal, ...). Animating that structural pattern once here gives
+   every existing and future modal a subtle entrance without touching each
+   modal's own file individually. */
+.fixed.inset-0 {
+  animation: fadeIn 0.15s ease-out;
+}
+.fixed.inset-0 > .bg-white {
+  animation: scaleIn 0.2s ease-out;
+}

@@ -45,6 +45,7 @@ import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 import { Calculator }         from './pages/Calculator'
 import { Documentation }      from './pages/Documentation'
+import { NotFound }           from './pages/NotFound'
 
 
 function PinGate({ children }: { children: ReactNode }) {
@@ -165,6 +166,8 @@ export default function App() {
               <Route path="settings" element={
                 <RequireRole allow={['hr_system']}><Settings /></RequireRole>
               } />
+
+              <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -1,0 +1,11 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Also covered by public/_redirects (copied into dist/ at build time) —
+# both are harmless to keep, and this is the config Netlify's own docs
+# point to first.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
