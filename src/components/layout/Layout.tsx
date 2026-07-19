@@ -53,7 +53,11 @@ export function Layout() {
       {/* Main */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column',
                      overflow: 'hidden', minWidth: 0 }}>
-        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', paddingBottom: isMobile ? '64px' : 0 }}>
+        {/* paddingTop clears the fixed theme/mode toggle buttons above (top:
+            12px, 32px tall) — without it, any page whose own header puts
+            content in the top-right (e.g. a sort/filter button row) renders
+            underneath those buttons and becomes unclickable. */}
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', paddingTop: '44px', paddingBottom: isMobile ? '64px' : 0 }}>
           <Outlet />
         </div>
 
