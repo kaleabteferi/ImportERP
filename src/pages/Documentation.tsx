@@ -104,6 +104,7 @@ const GROUPS: DocGroup[] = [
           <>
             <p>The "Mobile version" / "Full version" toggle near the top-right is a real, saved choice — not just a screen-size thing. "Full version" always shows the sidebar and full desktop layout, even on a phone (you'll scroll). "Mobile version" always shows the simplified bottom-nav layout, even on a wide screen.</p>
             <p className="mt-2">Four pages have a purpose-built mobile version for quick entry on the move: <strong>Home</strong> (KPI tiles + quick actions), <strong>Sales</strong> (order list + a streamlined new-sale flow), <strong>Production</strong> (tap a product, type today's quantity, log it), and <strong>Money Tracking</strong> (add income/expense + recent transactions). Every other page keeps its normal desktop layout in mobile mode, with horizontal scrolling available.</p>
+            <p className="mt-2">The bottom nav only shows those + Shipments + Reports as direct tabs — tap <strong>More</strong> (the last tab) for every other page in the app, grouped the same way as the full-version sidebar and filtered to what your role can see. It's also where Change PIN and Sign out live in mobile mode.</p>
           </>
         ),
       },

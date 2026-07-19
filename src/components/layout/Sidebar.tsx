@@ -1,63 +1,13 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import {
-  LayoutDashboard, Ship, Building2,
-  Wrench, Package, Calculator, BarChart3,
-  Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
-  ShoppingCart, Sigma, FileSearch,
-} from 'lucide-react'
-import { Settings as SettingsIcon, UserCog, LogOut, KeyRound, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion } from 'lucide-react'
+import { LogOut, KeyRound } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
 import type { Role } from '../../lib/roles'
+import { NAV_LINKS } from '../../lib/navLinks'
 import { ChangePinModal } from '../ChangePinModal'
 
-// allow: [] means visible to every authenticated role (pure reporting/overview pages).
-const links = [
-  { section: 'Overview', items: [
-    { to: '/',              icon: LayoutDashboard, label: 'Dashboard',      allow: [] as Role[] },
-    { to: '/daily-activity',icon: CalendarDays,    label: 'Daily Activity', allow: [] as Role[] },
-    { to: '/calculator',    icon: Sigma,            label: 'Calculator',     allow: [] as Role[] },
-    { to: '/documentation', icon: FileQuestion,     label: 'Documentation',  allow: [] as Role[] },
-  ]},
- { section: 'Import', items: [
-  { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] as Role[] },
-  { to: '/rfqs',       icon: FileSearch, label: 'Supplier RFQs', allow: ['operations_marketing', 'accounting_finance'] as Role[] },
-  { to: '/djibouti',   icon: Anchor,     label: 'Djibouti Forwarder', allow: ['operations_marketing', 'accounting_finance'] as Role[] },
-  { to: '/suppliers',  icon: Building2,  label: 'Suppliers',  allow: ['operations_marketing'] as Role[] },
-  { to: '/customers',  icon: Users,      label: 'Customers',  allow: ['operations_marketing', 'manufacturing_sales'] as Role[] },
-  { to: '/products',   icon: Tag,        label: 'Products',   allow: ['operations_marketing', 'manufacturing_sales'] as Role[] },
-]},
-  { section: 'Operations', items: [
-    { to: '/production',  icon: Wrench,      label: 'Production', allow: ['manufacturing_sales'] as Role[] },
-    { to: '/assembly',    icon: Hammer,      label: 'Assembly',   allow: ['manufacturing_sales'] as Role[] },
-    { to: '/boms',        icon: ListTree,    label: 'BOMs',       allow: ['manufacturing_sales'] as Role[] },
-    { to: '/inventory',   icon: Package,     label: 'Inventory',  allow: ['manufacturing_sales', 'operations_marketing'] as Role[] },
-    { to: '/warehouse-transfers', icon: Truck, label: 'Warehouse Transfers', allow: ['manufacturing_sales', 'operations_marketing'] as Role[] },
-  ]},
-  { section: 'Sales', items: [
-    { to: '/sales', icon: ShoppingCart, label: 'Sales', allow: ['manufacturing_sales', 'accounting_finance'] as Role[] },
-  ]},
-  { section: 'Finance', items: [
-    { to: '/costs',          icon: Calculator,  label: 'Cost Engine',     allow: ['accounting_finance'] as Role[] },
-    { to: '/customs-estimator', icon: Calculator, label: 'Customs Estimator', allow: ['accounting_finance', 'operations_marketing'] as Role[] },
-    { to: '/payables',       icon: Wallet,      label: 'Payables',        allow: ['accounting_finance'] as Role[] },
-    { to: '/receivables',    icon: CreditCard,  label: 'Receivables',     allow: ['accounting_finance'] as Role[] },
-    { to: '/money-tracking', icon: Banknote,    label: 'Money Tracking',  allow: ['accounting_finance'] as Role[] },
-    { to: '/credit-accounts',icon: Landmark,    label: 'Credit Accounts', allow: ['accounting_finance'] as Role[] },
-    { to: '/expenses',       icon: Receipt,     label: 'Expenses',        allow: ['accounting_finance'] as Role[] },
-    { to: '/reports',        icon: BarChart3,   label: 'Reports',         allow: [] as Role[] },
-  ]},
-  { section: 'HR', items: [
-  { to: '/employees', icon: IdCard,      label: 'Employees',  allow: ['hr_system'] as Role[] },
-  { to: '/payroll',   icon: WalletIcon,  label: 'Payroll',    allow: ['hr_system'] as Role[] },
-  { to: '/hr-notes',  icon: BookOpen,    label: 'HR Notes',   allow: ['hr_system'] as Role[] },
-]},
-  { section: 'System', items: [
-  { to: '/users',    icon: UserCog,    label: 'Users & Roles', allow: ['hr_system'] as Role[] },
-  { to: '/settings', icon: SettingsIcon, label: 'Settings',    allow: ['hr_system'] as Role[] },
-]},
-]
+const links = NAV_LINKS
 
 export function Sidebar() {
   const { profile, signOut } = useAuth()
