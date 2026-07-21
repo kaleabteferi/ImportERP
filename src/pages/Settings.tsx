@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { fetchAccounts, createAccount, updateAccount } from '../api/accounts'
+import { fetchAccounts, fetchAccountBalances, createAccount, updateAccount } from '../api/accounts'
 import type { Account } from '../api/accounts'
 import {
   Building2, DollarSign, Users, Check,
@@ -131,6 +131,7 @@ export function Settings() {
   const [companiesList, setCompaniesList] = useState<Company[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountBalances, setAccountBalances] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [saved, setSaved]     = useState(false)
@@ -196,6 +197,7 @@ export function Settings() {
     setCompaniesList(ownRes.data ?? [])
     setEmployees(empRes.data ?? [])
     setAccounts(acctRows)
+    fetchAccountBalances(acctRows).then(setAccountBalances).catch(() => {})
     setLoading(false)
   }
 
@@ -791,7 +793,13 @@ export function Settings() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <p className={`text-sm font-mono font-medium ${(accountBalances[a.id] ?? 0) < 0 ? 'text-red-600' : 'text-gray-700'}`}>
+                        {Math.round(accountBalances[a.id] ?? 0).toLocaleString()} {a.currency}
+                      </p>
+                      <p className="text-[10px] text-gray-400">from app activity</p>
+                    </div>
                     <button
                       onClick={() => openEditAccount(a)}
                       className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-500"
