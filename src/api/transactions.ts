@@ -68,9 +68,12 @@ export async function deleteTransaction(compositeId: string) {
 export async function fetchTransactionsForAnomalies(sinceDate: string): Promise<AnomalyTxn[]> {
   const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
-  const [salesRes, poRes, creditRes, expenseRes, shipExpRes] = await Promise.all([
+  const [salesRes, supplierPayRes, creditRes, expenseRes, shipExpRes] = await Promise.all([
     supabase.from('sales_payments').select('id, amount_etb, payment_date, sales_orders(customers(name))').gte('payment_date', sinceDate),
-    supabase.from('purchase_order_payments').select('id, amount, currency, payment_date, purchase_orders(suppliers(name))').gte('payment_date', sinceDate),
+    // Replaces purchase_order_payments — that table has never had a row
+    // (nothing in the app creates a purchase_orders record); supplier_payments
+    // is the real "money paid to a supplier" ledger, including hawala.
+    supabase.from('supplier_payments').select('id, amount, payment_date, supplier_payables(currency, suppliers(name))').gte('payment_date', sinceDate),
     supabase.from('credit_transactions').select('id, amount, transaction_date, credit_accounts(customers(name))').eq('type', 'repayment').gte('transaction_date', sinceDate),
     supabase.from('company_expenses').select('id, amount, currency, expense_date, vendor_name, description').gte('expense_date', sinceDate),
     supabase.from('shipment_expenses').select('id, amount_etb, currency, paid_at, vendor_name, description').eq('is_paid', true).gte('paid_at', sinceDate),
@@ -81,9 +84,9 @@ export async function fetchTransactionsForAnomalies(sinceDate: string): Promise<
     const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
     txns.push({ id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', date: r.payment_date, source: 'sale' })
   }
-  for (const r of (poRes.data ?? []) as any[]) {
-    const po = one(r.purchase_orders); const supplier = po ? one(po.suppliers) : null
-    txns.push({ id: `po-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: r.currency ?? 'USD', date: r.payment_date, source: 'purchase' })
+  for (const r of (supplierPayRes.data ?? []) as any[]) {
+    const payable = one(r.supplier_payables); const supplier = payable ? one((payable as any).suppliers) : null
+    txns.push({ id: `supplierpay-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: (payable as any)?.currency ?? 'USD', date: r.payment_date, source: 'purchase' })
   }
   for (const r of (creditRes.data ?? []) as any[]) {
     const acct = one(r.credit_accounts); const customer = acct ? one(acct.customers) : null

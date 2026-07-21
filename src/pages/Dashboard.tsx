@@ -211,10 +211,10 @@ export function Dashboard() {
         <KpiCard label="Customers owe you" icon={CreditCard} to="/receivables"
           value={`${N(d.receivablesEtb)} ETB`}
           tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
-        <KpiCard label="You owe suppliers" icon={Landmark} to="/payables"
+        <KpiCard label="You owe suppliers" icon={Landmark} to="/supplier-payments"
           value={`${N(d.payablesEtb)} ETB`}
-          sub={d.payablesUsd > 0 ? `+ $${N(d.payablesUsd)} USD` : undefined}
-          tone={d.payablesEtb > 0 || d.payablesUsd > 0 ? 'warn' : undefined} />
+          sub={[d.payablesUsd > 0 ? `$${N(d.payablesUsd)} USD` : null, d.payablesCny > 0 ? `¥${N(d.payablesCny)} CNY` : null].filter(Boolean).join(' · ') || undefined}
+          tone={d.payablesEtb > 0 || d.payablesUsd > 0 || d.payablesCny > 0 ? 'warn' : undefined} />
         <KpiCard label="Active customers" icon={Users} to="/customers"
           value={String(d.activeCustomers)}
           sub={`${PERIOD_LABEL[period].toLowerCase()}`} />

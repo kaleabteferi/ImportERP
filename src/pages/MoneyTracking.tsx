@@ -12,19 +12,21 @@ import {
   Banknote, Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
   Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight,
 } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
 
 type Direction = 'in' | 'out'
 interface Txn {
   id: string; direction: Direction; party: string; amount: number; currency: string
   method: string; date: string | null; sensitive: boolean; notes: string | null
-  source: 'sale' | 'purchase' | 'credit_repayment' | 'expense' | 'shipment_expense'
+  source: 'sale' | 'purchase' | 'credit_repayment' | 'expense' | 'shipment_expense' | 'supplier_payment'
   accountName: string | null
+  detail?: string | null
 }
 interface CreditAccount { id: string; customer_id: string; customer_name: string; credit_limit: number; balance: number; due_date: string; status: string }
 interface CreditTxnHistory { id: string; type: 'draw' | 'repayment'; amount: number; date: string | null; orderNumber: string | null; notes: string | null }
 interface Option { id: string; name: string }
 
-const METHOD_LABEL: Record<string, string> = { cash: 'Cash', bank_transfer: 'Transfer', credit: 'Credit', mobile_money: 'Mobile money' }
+const METHOD_LABEL: Record<string, string> = { cash: 'Cash', bank_transfer: 'Transfer', credit: 'Credit', mobile_money: 'Mobile money', hawala: 'Hawala' }
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const CATEGORIES = ['rent', 'salary', 'fuel', 'supplies', 'utilities', 'maintenance', 'other']
 
@@ -41,6 +43,7 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -60,6 +63,7 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
         creditAccountId: method === 'credit' ? creditAccountId : undefined,
         accountId: method !== 'credit' ? accountId : undefined,
         sensitive, notes, date,
+        hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -111,6 +115,7 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
       <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -142,8 +147,19 @@ function AddExpenseForm({ companies, employees, accounts, onDone, onCancel }: {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isHawala = method === 'hawala'
+
+  // Keep amount in sync with the hawala conversion — same fix as
+  // Expenses.tsx, otherwise a stale manually-typed amount could disagree
+  // with what the ETB/rate breakdown actually computes.
+  useEffect(() => {
+    if (!isHawala || currency === 'ETB') return
+    const computed = computeHawalaAmount(hawala)
+    if (computed != null) setAmount(String(computed))
+  }, [isHawala, currency, hawala])
 
   async function submit() {
     const amt = Number(amount)
@@ -154,9 +170,12 @@ function AddExpenseForm({ companies, employees, accounts, onDone, onCancel }: {
     try {
       await recordCompanyExpense({
         companyId: companyId || undefined, category, description, amount: amt, currency,
-        method: method as "cash" | "bank_transfer" | "credit" | "mobile_money",
+        method: method as "cash" | "bank_transfer" | "credit" | "mobile_money" | "hawala",
         paidBy: paidBy || undefined, expenseDate: date, sensitive, notes,
         accountId: method !== 'credit' ? accountId : undefined,
+        hawalaRoute: isHawala ? hawala.route.trim() || undefined : undefined,
+        hawalaEtbAmount: isHawala && hawala.etbAmount ? Number(hawala.etbAmount) : undefined,
+        hawalaExchangeRate: isHawala && hawala.exchangeRate ? Number(hawala.exchangeRate) : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -211,6 +230,7 @@ function AddExpenseForm({ companies, employees, accounts, onDone, onCancel }: {
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
+      {isHawala && <HawalaFields value={hawala} onChange={setHawala} targetCurrency={currency} />}
       <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -322,10 +342,14 @@ export function MoneyTracking() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [salesRes, poRes, creditTxRes, expenseRes, shipExpRes, creditAcctRows, customerRows, warehouseRows, companyRows, employeeRows, accountRows] =
+      const [salesRes, supplierPayRes, creditTxRes, expenseRes, shipExpRes, creditAcctRows, customerRows, warehouseRows, companyRows, employeeRows, accountRows] =
         await Promise.all([
           supabase.from('sales_payments').select('id, amount_etb, method, sensitive_flag, notes, created_at, account_id, sales_orders(order_number, customers(name))').order('created_at', { ascending: false }).limit(200),
-          supabase.from('purchase_order_payments').select('id, amount, currency, method, sensitive_flag, notes, payment_date, account_id, purchase_orders(po_number, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
+          // Replaces purchase_order_payments — nothing in the app has ever
+          // created a purchase_orders row, so that table was always empty.
+          // supplier_payments is the real "money paid to a supplier" ledger,
+          // including hawala (route/rate carried in hawala_route).
+          supabase.from('supplier_payments').select('id, amount, method, sensitive_flag, notes, payment_date, account_id, hawala_route, supplier_payables(reference, currency, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
           supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
           supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name, account_id').order('expense_date', { ascending: false }).limit(200),
           // Shipment expenses paid via Payables -> "Mark as paid" — otherwise
@@ -340,7 +364,7 @@ export function MoneyTracking() {
         ])
 
       if (salesRes.error) throw salesRes.error
-      if (poRes.error) throw poRes.error
+      if (supplierPayRes.error) throw supplierPayRes.error
       if (creditTxRes.error) throw creditTxRes.error
       if (expenseRes.error) throw expenseRes.error
       if (shipExpRes.error) throw shipExpRes.error
@@ -351,9 +375,15 @@ export function MoneyTracking() {
         const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
         return { id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null } as Txn
       })
-      const poTxns: Txn[] = (poRes.data ?? []).map((r: any) => {
-        const po = one(r.purchase_orders); const supplier = po ? one(po.suppliers) : null
-        return { id: `po-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier', amount: Number(r.amount ?? 0), currency: r.currency ?? 'USD', method: r.method ?? 'cash', date: r.payment_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'purchase', accountName: accountNameById.get(r.account_id) ?? null } as Txn
+      const supplierPayTxns: Txn[] = (supplierPayRes.data ?? []).map((r: any) => {
+        const payable = one(r.supplier_payables); const supplier = payable ? one(payable.suppliers) : null
+        return {
+          id: `supplierpay-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier',
+          amount: Number(r.amount ?? 0), currency: payable?.currency ?? 'USD', method: r.method ?? 'cash',
+          date: r.payment_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'supplier_payment',
+          accountName: accountNameById.get(r.account_id) ?? null,
+          detail: r.hawala_route ?? payable?.reference ?? null,
+        } as Txn
       })
       const creditTxns: Txn[] = (creditTxRes.data ?? []).map((r: any) => {
         const account = one(r.credit_accounts); const customer = account ? one(account.customers) : null
@@ -366,7 +396,7 @@ export function MoneyTracking() {
         id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
       } as Txn))
 
-      setTxns([...salesTxns, ...poTxns, ...creditTxns, ...expenseTxns, ...shipExpTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
+      setTxns([...salesTxns, ...supplierPayTxns, ...creditTxns, ...expenseTxns, ...shipExpTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
       setCredit((creditAcctRows ?? []).map((r: any) => ({
         id: r.id, customer_id: one(r.customers)?.id ?? '', customer_name: one(r.customers)?.name ?? 'Unknown',
         credit_limit: Number(r.credit_limit ?? 0), balance: Number(r.balance ?? 0), due_date: r.due_date, status: r.status,
@@ -617,13 +647,18 @@ export function MoneyTracking() {
                       )}
                     </p>
                     <p className="text-gray-400">
-                      {METHOD_LABEL[t.method] ?? t.method}{t.accountName && ` · ${t.accountName}`} · {t.date ?? '—'}{t.notes && ` · ${t.notes}`}
+                      {METHOD_LABEL[t.method] ?? t.method}{t.detail && ` · ${t.detail}`}{t.accountName && ` · ${t.accountName}`} · {t.date ?? '—'}{t.notes && ` · ${t.notes}`}
                     </p>
                   </div>
                   <div className={`font-mono font-medium shrink-0 ${t.direction === 'in' ? 'text-green-700' : 'text-red-600'}`}>
                     {t.direction === 'in' ? '+' : '−'}{N(t.amount)} {t.currency}
                   </div>
-                  {t.source !== 'shipment_expense' && (
+                  {/* shipment_expense and supplier_payment are managed on
+                      their own pages (Payables / Supplier Payments) — editing
+                      amount here wouldn't touch their hawala breakdown or
+                      the payable's balance sync correctly, so they're
+                      read-only in this feed. */}
+                  {t.source !== 'shipment_expense' && t.source !== 'supplier_payment' && (
                     <button onClick={() => setEditingTxnId(editingTxnId === t.id ? null : t.id)}
                       className="p-1 text-gray-300 hover:text-blue-600 shrink-0">
                       <Pencil size={12} />

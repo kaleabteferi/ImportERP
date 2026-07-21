@@ -39,6 +39,7 @@ export interface DashboardData {
   // there's no reliable ETB-converted total to sum them into without risking
   // the same currency-drift bug fixed elsewhere in this app.
   payablesUsd: number
+  payablesCny: number
   unusualTransactionCount: number
   stockoutRiskCount: number
   inventoryValueEtb: number
@@ -66,7 +67,7 @@ export interface DashboardData {
 export function useDashboardData(period: Period): DashboardData {
   const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated' | 'refresh'>>({
     revenueEtb: 0, revenuePrevEtb: 0, producedUnits: 0, producedPrevUnits: 0,
-    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, unusualTransactionCount: 0, stockoutRiskCount: 0,
+    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, payablesCny: 0, unusualTransactionCount: 0, stockoutRiskCount: 0,
     inventoryValueEtb: 0, daysOfStock: null, activeCustomers: 0, frequentCustomers: 0,
     revenueTrend: [], productionTrend: [],
     topProducts: [], lowMarginProducts: [], topAdvice: null, secondaryAdvice: null, todoToday: [],
@@ -88,9 +89,9 @@ export function useDashboardData(period: Period): DashboardData {
 
       const [
         salesRes, prevSalesRes, prodLogsRes, prevProdLogsRes,
-        salesPaymentsRes, purchasePaymentsRes, expensesRes,
+        salesPaymentsRes, supplierPaymentsRes, expensesRes,
         creditRepaymentsRes, shipmentExpensesPaidRes, shipmentExpensesUnpaidRes,
-        customersRes, purchaseOrdersRes, inventoryRes,
+        customersRes, supplierPayablesRes, inventoryRes,
         productionOrdersRes, bomHeadersRes, monthOrdersRes, anomalyTxns, forecast,
       ] = await Promise.all([
         supabase.from('sales_orders').select('id, sale_date, total_etb, gross_profit_etb, customer_id, status').gte('sale_date', periodStart).in('status', ['INVOICED', 'PAID']),
@@ -98,7 +99,11 @@ export function useDashboardData(period: Period): DashboardData {
         supabase.from('production_daily_logs').select('log_date, quantity_produced').gte('log_date', periodStart),
         supabase.from('production_daily_logs').select('quantity_produced').gte('log_date', prevPeriodStart).lte('log_date', prevPeriodEnd),
         supabase.from('sales_payments').select('amount_etb, payment_date').gte('payment_date', periodStart),
-        supabase.from('purchase_order_payments').select('amount, currency, payment_date').gte('payment_date', periodStart),
+        // Replaces purchase_order_payments — nothing in the app has ever
+        // created a purchase_orders row (see Payables.tsx/Supplier Payments),
+        // so that table was always empty. supplier_payments is the real
+        // "money paid to a supplier" ledger, including hawala.
+        supabase.from('supplier_payments').select('amount, payment_date, method, etb_amount, supplier_payables(currency)').gte('payment_date', periodStart),
         supabase.from('company_expenses').select('amount, currency, expense_date').gte('expense_date', periodStart),
         // Credit repayments are real cash in — a customer paying down a credit
         // account — but weren't being counted in cashInEtb before.
@@ -109,7 +114,7 @@ export function useDashboardData(period: Period): DashboardData {
         supabase.from('shipment_expenses').select('amount_etb, currency, paid_at').eq('is_paid', true).gte('paid_at', periodStart),
         supabase.from('shipment_expenses').select('amount_etb, currency').eq('is_paid', false),
         supabase.from('customers').select('id, outstanding_etb'),
-        supabase.from('purchase_orders').select('total_amount, paid_amount, currency'),
+        supabase.from('supplier_payables').select('total_amount, paid_amount, currency'),
         supabase.from('current_inventory').select('quantity_on_hand, avg_unit_cost_etb'),
         supabase.from('production_orders').select('id, target_quantity, planned_start_date').gte('planned_start_date', periodStart),
         supabase.from('bom_headers').select('id, product_id, finished_product_id, is_active').eq('is_active', true),
@@ -129,11 +134,11 @@ export function useDashboardData(period: Period): DashboardData {
 
       const critical = [
         ['sales', salesRes.error], ['production logs', prodLogsRes.error],
-        ['sales payments', salesPaymentsRes.error], ['purchase payments', purchasePaymentsRes.error],
+        ['sales payments', salesPaymentsRes.error], ['supplier payments', supplierPaymentsRes.error],
         ['expenses', expensesRes.error], ['credit repayments', creditRepaymentsRes.error],
         ['shipment expenses (paid)', shipmentExpensesPaidRes.error], ['shipment expenses (unpaid)', shipmentExpensesUnpaidRes.error],
         ['customers', customersRes.error],
-        ['purchase orders', purchaseOrdersRes.error], ['inventory', inventoryRes.error],
+        ['supplier payables', supplierPayablesRes.error], ['inventory', inventoryRes.error],
         ['30-day sales', monthOrdersRes.error],
       ] as const
       const failed = critical.filter(([, err]) => err)
@@ -154,22 +159,40 @@ export function useDashboardData(period: Period): DashboardData {
       const cashInEtb =
         (salesPaymentsRes.data ?? []).reduce((s, p) => s + Number(p.amount_etb ?? 0), 0) +
         (creditRepaymentsRes.data ?? []).reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0)
+      // A supplier_payment's `amount` is in the payable's own currency
+      // (usually USD/CNY — that's the point of hawala). The real ETB cash
+      // outlay is `etb_amount` for a hawala payment, or `amount` itself
+      // when the payable happens to be ETB-denominated; anything else left
+      // an account in a foreign currency, not ETB, so it doesn't belong in
+      // an ETB cash figure.
+      const supplierPaymentEtbOut = (supplierPaymentsRes.data ?? []).reduce((s: number, p: any) => {
+        const payable = Array.isArray(p.supplier_payables) ? p.supplier_payables[0] : p.supplier_payables
+        if (p.method === 'hawala' && p.etb_amount != null) return s + Number(p.etb_amount)
+        if (payable?.currency === 'ETB') return s + Number(p.amount ?? 0)
+        return s
+      }, 0)
       const cashOutEtb =
-        (purchasePaymentsRes.data ?? []).filter((p: any) => p.currency === 'ETB').reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0) +
+        supplierPaymentEtbOut +
         (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0) +
         (shipmentExpensesPaidRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
 
       const receivablesEtb = (customersRes.data ?? []).reduce((s, c: any) => s + Number(c.outstanding_etb ?? 0), 0)
       const payablesEtb =
-        (purchaseOrdersRes.data ?? [])
-          .filter((po: any) => po.currency === 'ETB')
-          .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0) +
+        (supplierPayablesRes.data ?? [])
+          .filter((p: any) => p.currency === 'ETB')
+          .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0) +
         (shipmentExpensesUnpaidRes.data ?? [])
           .filter((e: any) => e.currency === 'ETB')
           .reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
-      const payablesUsd = (purchaseOrdersRes.data ?? [])
-        .filter((po: any) => po.currency === 'USD')
-        .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0)
+      const payablesUsd = (supplierPayablesRes.data ?? [])
+        .filter((p: any) => p.currency === 'USD')
+        .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0)
+      // CNY is a real supplier-debt currency now (China suppliers via
+      // Supplier Payments) — given its own bucket rather than silently
+      // dropped, matching how Payables/Money Tracking already treat CNY.
+      const payablesCny = (supplierPayablesRes.data ?? [])
+        .filter((p: any) => p.currency === 'CNY')
+        .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0)
 
       const inventoryRows = inventoryRes.data ?? []
       const inventoryValueEtb = inventoryRows.reduce((s: number, r: any) => s + Number(r.quantity_on_hand ?? 0) * Number(r.avg_unit_cost_etb ?? 0), 0)
@@ -247,9 +270,9 @@ export function useDashboardData(period: Period): DashboardData {
         .length
 
       const todoToday: TodoItem[] = []
-      const overduePOs = (purchaseOrdersRes.data ?? []).filter((po: any) => Number(po.paid_amount ?? 0) < Number(po.total_amount ?? 0))
-      const outstandingCount = overduePOs.length + (shipmentExpensesUnpaidRes.data ?? []).length
-      if (outstandingCount > 0) todoToday.push({ text: `${outstandingCount} supplier payment${outstandingCount > 1 ? 's' : ''} still outstanding.`, link: '/payables' })
+      const openPayables = (supplierPayablesRes.data ?? []).filter((p: any) => Number(p.paid_amount ?? 0) < Number(p.total_amount ?? 0))
+      const outstandingCount = openPayables.length + (shipmentExpensesUnpaidRes.data ?? []).length
+      if (outstandingCount > 0) todoToday.push({ text: `${outstandingCount} supplier payment${outstandingCount > 1 ? 's' : ''} still outstanding.`, link: '/supplier-payments' })
       if (receivablesEtb > 0) todoToday.push({ text: `${Math.round(receivablesEtb).toLocaleString()} ETB owed by customers — follow up on overdue accounts.`, link: '/receivables' })
       const draftOrders = (productionOrdersRes.data ?? []).length
       const weeklyTargetTotal = (productionOrdersRes.data ?? []).reduce((s: number, o: any) => s + Number(o.target_quantity ?? 0), 0)
@@ -280,7 +303,7 @@ export function useDashboardData(period: Period): DashboardData {
 
       setData({
         revenueEtb, revenuePrevEtb, producedUnits, producedPrevUnits,
-        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd, unusualTransactionCount, stockoutRiskCount,
+        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd, payablesCny, unusualTransactionCount, stockoutRiskCount,
         inventoryValueEtb, daysOfStock, activeCustomers, frequentCustomers,
         revenueTrend, productionTrend,
         topProducts, lowMarginProducts, topAdvice, secondaryAdvice, todoToday,
