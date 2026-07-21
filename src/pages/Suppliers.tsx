@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Plus, Building2, Phone, Mail, X, Check, Loader2, ClipboardPaste } from 'lucide-react'
 import { BulkImportModal } from '../components/BulkImportModal'
@@ -7,6 +8,9 @@ import { BulkActionBar } from '../components/BulkActionBar'
 import { SortHeader } from '../components/SortHeader'
 import { useSort } from '../lib/useSort'
 import { useBulkSelect } from '../lib/useBulkSelect'
+
+const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', ETB: '' }
 
 interface Supplier {
   id: string
@@ -41,8 +45,11 @@ const SUPPLIER_IMPORT_EXAMPLE = `name,country,currency,contact_person,phone,emai
 Guangzhou Electronics Co.,China,USD,Li Wei,+86 138 0000 0000,li@example.com,30% TT + 70% LC before shipment
 Dubai Auto Parts LLC,UAE,USD,Ahmed Hassan,+971 50 000 0000,,100% TT before shipment`
 
+interface OwedAmount { currency: string; amount: number }
+
 export function Suppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [owedBySupplier, setOwedBySupplier] = useState<Record<string, OwedAmount[]>>({})
   const [loading, setLoading]     = useState(true)
   const [open, setOpen]           = useState(false)
   const [form, setForm]           = useState({ ...EMPTY })
@@ -53,6 +60,13 @@ export function Suppliers() {
 
   const { sorted, sortKey, sortDir, toggleSort } = useSort<Supplier, SortKey>(suppliers, (s, key) => key === 'is_active' ? (s.is_active ? 1 : 0) : s[key], 'name')
   const { selected, toggle, toggleAll, clear, allSelected, count } = useBulkSelect(sorted)
+
+  const totalOwed = Object.entries(
+    Object.values(owedBySupplier).flat().reduce((acc: Record<string, number>, o) => {
+      acc[o.currency] = (acc[o.currency] ?? 0) + o.amount
+      return acc
+    }, {})
+  ).map(([currency, amount]) => ({ currency, amount }))
 
   async function bulkDelete() {
     const ids = [...selected]
@@ -85,9 +99,28 @@ export function Suppliers() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('suppliers').select('*').order('name')
-    setSuppliers(data ?? [])
+    const [suppliersRes, payablesRes] = await Promise.all([
+      supabase.from('suppliers').select('*').order('name'),
+      supabase.from('supplier_payables').select('supplier_id, currency, total_amount, paid_amount'),
+    ])
+    setSuppliers(suppliersRes.data ?? [])
+
+    // What's still owed per supplier, per currency — a supplier can carry
+    // debt in more than one currency (e.g. a mostly-USD supplier paid in
+    // hawala once at ETB face value on a specific payable), so this is a
+    // small per-currency breakdown rather than one number.
+    const owed: Record<string, Record<string, number>> = {}
+    for (const p of (payablesRes.data ?? []) as any[]) {
+      const outstanding = Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0))
+      if (outstanding <= 0 || !p.supplier_id) continue
+      owed[p.supplier_id] ??= {}
+      owed[p.supplier_id][p.currency] = (owed[p.supplier_id][p.currency] ?? 0) + outstanding
+    }
+    const owedList: Record<string, OwedAmount[]> = {}
+    for (const [supplierId, byCurrency] of Object.entries(owed)) {
+      owedList[supplierId] = Object.entries(byCurrency).map(([currency, amount]) => ({ currency, amount }))
+    }
+    setOwedBySupplier(owedList)
     setLoading(false)
   }
 
@@ -155,6 +188,7 @@ export function Suppliers() {
           <h1 className="text-lg font-medium">Suppliers</h1>
           <p className="text-xs text-gray-400 mt-0.5">
             {suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}
+            {totalOwed.length > 0 && ` · ${totalOwed.map(o => `${CURRENCY_SYMBOL[o.currency] ?? ''}${N(o.amount)}${CURRENCY_SYMBOL[o.currency] ? '' : ` ${o.currency}`}`).join(' · ')} owed`}
           </p>
         </div>
         <div className="flex gap-2">
@@ -222,12 +256,13 @@ export function Suppliers() {
           <BulkActionBar count={count} itemLabel="supplier" onClear={clear} onDelete={bulkDelete} />
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[24px_2fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-2.5
+          <div className="grid grid-cols-[24px_2fr_1fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100
                           text-xs font-medium text-gray-400 uppercase tracking-wide items-center">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
             <SortHeader label="Supplier" active={sortKey === 'name'} dir={sortDir} onClick={() => toggleSort('name')} />
             <SortHeader label="Currency" active={sortKey === 'currency'} dir={sortDir} onClick={() => toggleSort('currency')} />
+            <div>Owed</div>
             <div>Payment terms</div>
             <SortHeader label="Status" active={sortKey === 'is_active'} dir={sortDir} onClick={() => toggleSort('is_active')} />
             <SortHeader label="Added" align="right" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} />
@@ -237,7 +272,7 @@ export function Suppliers() {
           {sorted.map((sup, i) => (
             <div
               key={sup.id}
-              className={`grid grid-cols-[24px_2fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-3
+              className={`grid grid-cols-[24px_2fr_1fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-3
                           items-center text-sm
                           ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''}
                           ${selected.has(sup.id) ? 'bg-blue-50/40' : ''}`}
@@ -274,6 +309,17 @@ export function Suppliers() {
                     : 'bg-green-50 text-green-700'}`}>
                   {sup.currency}
                 </span>
+              </div>
+
+              {/* Owed */}
+              <div>
+                {owedBySupplier[sup.id]?.length ? (
+                  <Link to="/supplier-payments" className="text-xs font-mono text-amber-700 hover:underline">
+                    {owedBySupplier[sup.id].map(o => `${CURRENCY_SYMBOL[o.currency] ?? ''}${N(o.amount)}${CURRENCY_SYMBOL[o.currency] ? '' : ` ${o.currency}`}`).join(' · ')}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-gray-300">—</span>
+                )}
               </div>
 
               {/* Payment terms */}
