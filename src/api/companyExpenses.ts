@@ -8,13 +8,16 @@ export interface CompanyExpenseInput {
   description: string
   amount: number
   currency: 'USD' | 'ETB'
-  method: 'cash' | 'bank_transfer' | 'credit' | 'mobile_money'
+  method: 'cash' | 'bank_transfer' | 'credit' | 'mobile_money' | 'hawala'
   paidBy?: string
   vendorName?: string
   expenseDate: string
   sensitive?: boolean
   notes?: string
   accountId?: string
+  hawalaRoute?: string
+  hawalaEtbAmount?: number
+  hawalaExchangeRate?: number
 }
 
 export async function recordCompanyExpense(input: CompanyExpenseInput) {
@@ -31,6 +34,9 @@ export async function recordCompanyExpense(input: CompanyExpenseInput) {
     sensitive_flag: input.sensitive ?? false,
     notes: input.notes ?? null,
     account_id: input.accountId ?? null,
+    hawala_route: input.method === 'hawala' ? (input.hawalaRoute ?? null) : null,
+    hawala_etb_amount: input.method === 'hawala' ? (input.hawalaEtbAmount ?? null) : null,
+    hawala_exchange_rate: input.method === 'hawala' ? (input.hawalaExchangeRate ?? null) : null,
   })
   if (error) throw new Error(error.message)
 }

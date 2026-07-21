@@ -6,13 +6,14 @@ export async function recordQuickIncome(input: {
   customerId: string
   warehouseId: string
   amount: number
-  method: 'cash' | 'bank_transfer' | 'credit' | 'mobile_money'
+  method: 'cash' | 'bank_transfer' | 'credit' | 'mobile_money' | 'hawala'
   creditAccountId?: string   // required when method === 'credit'
   accountId?: string         // which cash/bank account received it (not used for credit)
   reference?: string
   sensitive?: boolean
   notes?: string
   date: string
+  hawalaRoute?: string
 }) {
   const isCredit = input.method === 'credit'
   const orderNumber = `MISC-${Date.now()}`
@@ -54,6 +55,7 @@ export async function recordQuickIncome(input: {
       sensitive_flag: input.sensitive ?? false,
       notes: input.notes ?? null,
       account_id: input.accountId ?? null,
+      hawala_route: input.method === 'hawala' ? (input.hawalaRoute ?? null) : null,
     })
     if (error) throw new Error(error.message)
     await supabase.rpc('update_customer_outstanding', { p_order_id: order.id })

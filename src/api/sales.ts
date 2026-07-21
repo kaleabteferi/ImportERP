@@ -67,7 +67,7 @@ export async function recordPayment(
   orderId: string,
   amountEtb: number,
   method: string,
-  options?: { reference?: string; sensitive?: boolean; notes?: string; accountId?: string },
+  options?: { reference?: string; sensitive?: boolean; notes?: string; accountId?: string; hawalaRoute?: string },
 ) {
   const { error } = await supabase
     .from('sales_payments')
@@ -79,6 +79,7 @@ export async function recordPayment(
       sensitive_flag: options?.sensitive ?? false,
       notes:          options?.notes ?? null,
       account_id:     options?.accountId ?? null,
+      hawala_route:   method === 'hawala' ? (options?.hawalaRoute ?? null) : null,
     });
 
   if (error) throw new Error(error.message);

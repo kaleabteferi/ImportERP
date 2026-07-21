@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { recordCompanyExpense, fetchCompanyExpenses, fetchCompaniesList, fetchEmployeesList } from '../api/companyExpenses'
 import { usePageState } from '../lib/pageState'
 import { Receipt, Loader2, Plus, X, ShieldAlert, Search } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
 
 interface ExpenseRow {
   id: string
@@ -26,6 +27,7 @@ const METHODS = [
   { value: 'bank_transfer', label: 'Transfer' },
   { value: 'credit', label: 'Credit' },
   { value: 'mobile_money', label: 'Mobile money' },
+  { value: 'hawala', label: 'Hawala' },
 ]
 const CATEGORIES = ['rent', 'salary', 'fuel', 'supplies', 'utilities', 'maintenance', 'other']
 
@@ -43,21 +45,39 @@ function NewExpenseForm({ companies, employees, onDone, onCancel }: {
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().slice(0, 10))
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isHawala = method === 'hawala'
+
+  // Keep the amount in sync with the hawala conversion rather than making
+  // the user enter the same figure twice (once as ETB/rate, once as the
+  // resulting amount) — computeHawalaAmount is the single source of truth
+  // for what a hawala payment is actually worth.
+  useEffect(() => {
+    if (!isHawala || currency === 'ETB') return
+    const computed = computeHawalaAmount(hawala)
+    if (computed != null) setAmount(String(computed))
+  }, [isHawala, currency, hawala])
 
   async function submit() {
     const amt = Number(amount)
     if (!description.trim()) { setError('Add a short description.'); return }
     if (!amt || amt <= 0) { setError('Enter an amount greater than 0.'); return }
+    if (isHawala && currency !== 'ETB' && computeHawalaAmount(hawala) == null) {
+      setError('Enter the ETB paid and the exchange rate used.'); return
+    }
     setSaving(true)
     setError(null)
     try {
       await recordCompanyExpense({
         companyId: companyId || undefined,
-        category, description, amount: amt, currency, method: method as "cash" | "bank_transfer" | "credit" | "mobile_money",
+        category, description, amount: amt, currency, method: method as "cash" | "bank_transfer" | "credit" | "mobile_money" | "hawala",
         paidBy: paidBy || undefined, vendorName: vendorName || undefined,
         expenseDate, sensitive, notes,
+        hawalaRoute: isHawala ? hawala.route.trim() || undefined : undefined,
+        hawalaEtbAmount: isHawala && hawala.etbAmount ? Number(hawala.etbAmount) : undefined,
+        hawalaExchangeRate: isHawala && hawala.exchangeRate ? Number(hawala.exchangeRate) : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -96,6 +116,7 @@ function NewExpenseForm({ companies, employees, onDone, onCancel }: {
         <input type="date" value={expenseDate} onChange={e => setExpenseDate(e.target.value)}
           className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       </div>
+      {isHawala && <HawalaFields value={hawala} onChange={setHawala} targetCurrency={currency} />}
       <div className="flex gap-2">
         <select value={companyId} onChange={e => setCompanyId(e.target.value)}
           className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">

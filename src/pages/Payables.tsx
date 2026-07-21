@@ -5,6 +5,7 @@ import { fetchAccounts } from '../api/accounts'
 import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import { Wallet, Loader2, AlertTriangle, ShieldAlert, X, Search, ArrowRightLeft } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
 
 interface Payable {
   id: string
@@ -28,6 +29,7 @@ const METHODS = [
   { value: 'bank_transfer', label: 'Transfer' },
   { value: 'credit', label: 'Credit' },
   { value: 'mobile_money', label: 'Mobile money' },
+  { value: 'hawala', label: 'Hawala' },
 ]
 
 function MarkExpensePaidForm({ payable, accounts, onDone, onCancel }: {
@@ -39,18 +41,29 @@ function MarkExpensePaidForm({ payable, accounts, onDone, onCancel }: {
   const [method, setMethod] = useState('cash')
   const [accountId, setAccountId] = useState('')
   const [sensitive, setSensitive] = useState(false)
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const rawId = payable.id.replace(/^expense-/, '')
+  const isHawala = method === 'hawala'
 
   async function submit() {
     if (method !== 'credit' && !accountId) { setError('Choose which account paid it.'); return }
+    if (isHawala && payable.currency !== 'ETB' && computeHawalaAmount(hawala) == null) {
+      setError('Enter the ETB paid and the exchange rate used.'); return
+    }
     setSaving(true)
     setError(null)
     try {
       const { error } = await supabase
         .from('shipment_expenses')
-        .update({ is_paid: true, paid_at: new Date().toISOString(), payment_method: method, sensitive_flag: sensitive, account_id: method !== 'credit' ? accountId : null })
+        .update({
+          is_paid: true, paid_at: new Date().toISOString(), payment_method: method,
+          sensitive_flag: sensitive, account_id: method !== 'credit' ? accountId : null,
+          hawala_route: isHawala ? (hawala.route.trim() || null) : null,
+          hawala_etb_amount: isHawala && hawala.etbAmount ? Number(hawala.etbAmount) : null,
+          hawala_exchange_rate: isHawala && hawala.exchangeRate ? Number(hawala.exchangeRate) : null,
+        })
         .eq('id', rawId)
       if (error) throw error
       onDone()
@@ -76,6 +89,7 @@ function MarkExpensePaidForm({ payable, accounts, onDone, onCancel }: {
           <ShieldAlert size={12} className="text-amber-500" /> Sensitive
         </label>
       </div>
+      {isHawala && <HawalaFields value={hawala} onChange={setHawala} targetCurrency={payable.currency} />}
       {method !== 'credit' && (
         <select
           value={accountId} onChange={e => setAccountId(e.target.value)}

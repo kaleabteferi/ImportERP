@@ -11,6 +11,7 @@ import {
   ShoppingCart, Loader2, Plus, X, Check, AlertTriangle, CheckCircle2,
   Package, Minus, Trash2, TrendingUp, Search,
 } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
 interface Customer { id: string; name: string; type: string | null; outstanding_etb: number }
 interface Product { id: string; name: string; sku: string; image_url: string | null }
@@ -30,6 +31,7 @@ const METHODS = [
   { value: 'bank_transfer', label: 'Transfer' },
   { value: 'mobile_money', label: 'Mobile money' },
   { value: 'credit', label: 'Credit' },
+  { value: 'hawala', label: 'Hawala' },
 ]
 
 const STATUS_CLS: Record<string, string> = {
@@ -62,7 +64,8 @@ export function Sales() {
   const [cart, setCart] = useState<CartLine[]>([])
   const [itemQuery, setItemQuery] = useState('')
   const [payNow, setPayNow] = useState(true)
-  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [accountId, setAccountId] = useState('')
   const [creditAccountId, setCreditAccountId] = useState('')
   const [showNewCustomer, setShowNewCustomer] = useState(false)
@@ -218,7 +221,7 @@ export function Sales() {
               method, salesOrderId: result.order_id,
             })
           } else {
-            await recordPayment(result.order_id, result.total_etb, method, { accountId })
+            await recordPayment(result.order_id, result.total_etb, method, { accountId, hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined })
           }
         } catch (payErr: any) {
           setError(`${result.order_number} was recorded, but the payment failed: ${payErr?.message ?? 'unknown error'}. Go to Receivables to record it — don't resubmit this sale.`)
@@ -545,6 +548,9 @@ export function Sales() {
                   </div>
                 ) : (
                   <p className="text-xs text-gray-400">Sale will be invoiced and left unpaid — record payment later from Receivables.</p>
+                )}
+                {payNow && method === 'hawala' && (
+                  <div className="mt-2"><HawalaFields value={hawala} onChange={setHawala} /></div>
                 )}
               </div>
             </div>

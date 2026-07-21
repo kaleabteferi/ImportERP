@@ -8,6 +8,7 @@ import { fetchAccounts } from '../../api/accounts'
 import {
   Banknote, Loader2, ArrowDownLeft, ArrowUpRight, Plus, ChevronLeft, Check,
 } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue } from '../../components/HawalaFields'
 
 type Direction = 'in' | 'out'
 interface Txn { id: string; direction: Direction; party: string; amount: number; currency: string; date: string | null; source: string }
@@ -18,6 +19,11 @@ const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits:
 const METHODS = [
   { value: 'cash', label: 'Cash' }, { value: 'bank_transfer', label: 'Transfer' },
   { value: 'mobile_money', label: 'Mobile money' }, { value: 'credit', label: 'Credit' },
+  { value: 'hawala', label: 'Hawala' },
+]
+const EXPENSE_METHODS = [
+  { value: 'cash', label: 'Cash' }, { value: 'bank_transfer', label: 'Transfer' },
+  { value: 'mobile_money', label: 'Mobile money' }, { value: 'hawala', label: 'Hawala' },
 ]
 
 export function MobileMoneyTracking() {
@@ -35,14 +41,17 @@ export function MobileMoneyTracking() {
   const [customerId, setCustomerId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [incomeAmount, setIncomeAmount] = useState('')
-  const [incomeMethod, setIncomeMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
+  const [incomeMethod, setIncomeMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
   const [incomeAccountId, setIncomeAccountId] = useState('')
   const [creditAccountId, setCreditAccountId] = useState('')
+  const [incomeHawala, setIncomeHawala] = useState(emptyHawalaValue())
 
   // expense form
   const [expenseDesc, setExpenseDesc] = useState('')
   const [expenseAmount, setExpenseAmount] = useState('')
   const [expenseAccountId, setExpenseAccountId] = useState('')
+  const [expenseMethod, setExpenseMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'hawala'>('cash')
+  const [expenseHawala, setExpenseHawala] = useState(emptyHawalaValue())
 
   const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
@@ -78,6 +87,7 @@ export function MobileMoneyTracking() {
   function resetForms() {
     setCustomerId(''); setWarehouseId(warehouses[0]?.id ?? ''); setIncomeAmount(''); setIncomeMethod('cash')
     setIncomeAccountId(''); setCreditAccountId(''); setExpenseDesc(''); setExpenseAmount(''); setExpenseAccountId('')
+    setIncomeHawala(emptyHawalaValue()); setExpenseMethod('cash'); setExpenseHawala(emptyHawalaValue())
   }
 
   const customerCredit = credit.filter(c => c.customer_id === customerId)
@@ -96,6 +106,7 @@ export function MobileMoneyTracking() {
         creditAccountId: incomeMethod === 'credit' ? creditAccountId : undefined,
         accountId: incomeMethod !== 'credit' ? incomeAccountId : undefined,
         date: new Date().toISOString().split('T')[0],
+        hawalaRoute: incomeMethod === 'hawala' ? incomeHawala.route.trim() || undefined : undefined,
       })
       setForm(null); resetForms(); load()
     } catch (e: any) {
@@ -113,8 +124,9 @@ export function MobileMoneyTracking() {
     setSaving(true); setError(null)
     try {
       await recordCompanyExpense({
-        category: 'other', description: expenseDesc, amount: amt, currency: 'ETB', method: 'cash',
+        category: 'other', description: expenseDesc, amount: amt, currency: 'ETB', method: expenseMethod,
         expenseDate: new Date().toISOString().split('T')[0], accountId: expenseAccountId,
+        hawalaRoute: expenseMethod === 'hawala' ? expenseHawala.route.trim() || undefined : undefined,
       })
       setForm(null); resetForms(); load()
     } catch (e: any) {
@@ -164,6 +176,7 @@ export function MobileMoneyTracking() {
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               )}
+              {incomeMethod === 'hawala' && <HawalaFields value={incomeHawala} onChange={setIncomeHawala} />}
             </>
           ) : (
             <>
@@ -171,10 +184,19 @@ export function MobileMoneyTracking() {
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
               <input type="number" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} placeholder="Amount (ETB)"
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
+              <div className="grid grid-cols-4 gap-1.5">
+                {EXPENSE_METHODS.map(m => (
+                  <button key={m.value} onClick={() => setExpenseMethod(m.value as any)}
+                    className={`py-2 text-[10px] rounded-lg border ${expenseMethod === m.value ? 'bg-red-600 text-white border-red-600' : 'bg-white border-gray-200 text-gray-600'}`}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
               <select value={expenseAccountId} onChange={e => setExpenseAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
                 <option value="">Which account paid it?</option>
                 {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
+              {expenseMethod === 'hawala' && <HawalaFields value={expenseHawala} onChange={setExpenseHawala} />}
             </>
           )}
         </div>

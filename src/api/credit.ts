@@ -26,7 +26,7 @@ export async function recordCreditTransaction(
   creditAccountId: string,
   type: 'draw' | 'repayment',
   amount: number,
-  options?: { method?: string; salesOrderId?: string; sensitive?: boolean; notes?: string; accountId?: string },
+  options?: { method?: string; salesOrderId?: string; sensitive?: boolean; notes?: string; accountId?: string; hawalaRoute?: string },
 ) {
   const { error } = await supabase
     .from('credit_transactions')
@@ -39,6 +39,7 @@ export async function recordCreditTransaction(
       sensitive_flag:  options?.sensitive ?? false,
       notes:           options?.notes ?? null,
       account_id:      options?.accountId ?? null,
+      hawala_route:    options?.method === 'hawala' ? (options?.hawalaRoute ?? null) : null,
     });
 
   if (error) throw new Error(error.message);

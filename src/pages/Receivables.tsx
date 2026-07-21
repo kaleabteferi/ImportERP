@@ -4,6 +4,7 @@ import { recordPayment } from '../api/sales'
 import { fetchAccounts } from '../api/accounts'
 import type { Account } from '../api/accounts'
 import { CreditCard, Loader2, AlertTriangle, ShieldAlert, X } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
 interface Receivable {
   id: string
@@ -24,6 +25,7 @@ const METHODS = [
   { value: 'bank_transfer', label: 'Transfer' },
   { value: 'credit', label: 'Credit' },
   { value: 'mobile_money', label: 'Mobile money' },
+  { value: 'hawala', label: 'Hawala' },
 ]
 
 function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
@@ -39,6 +41,7 @@ function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
   const [reference, setReference] = useState('')
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,7 +52,10 @@ function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
     setSaving(true)
     setError(null)
     try {
-      await recordPayment(receivable.id, amt, method, { reference, sensitive, notes, accountId: method !== 'credit' ? accountId : undefined })
+      await recordPayment(receivable.id, amt, method, {
+        reference, sensitive, notes, accountId: method !== 'credit' ? accountId : undefined,
+        hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined,
+      })
       onDone()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to record payment.')
@@ -83,6 +89,7 @@ function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
       <input
         value={reference} onChange={e => setReference(e.target.value)}
         placeholder="Reference (optional)"

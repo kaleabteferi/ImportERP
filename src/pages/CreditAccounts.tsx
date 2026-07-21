@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { fetchCreditAccounts, fetchCustomersForCredit, openCreditAccount, recordCreditTransaction, fetchOutstandingCreditOrders } from '../api/credit'
 import type { OutstandingCreditOrder } from '../api/credit'
 import { CreditCard as CardIcon, Loader2, Plus, X, ShieldAlert } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
 interface CreditAccount {
   id: string
@@ -22,6 +23,7 @@ const METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'bank_transfer', label: 'Transfer' },
   { value: 'mobile_money', label: 'Mobile money' },
+  { value: 'hawala', label: 'Hawala' },
 ]
 
 const STATUS_STYLE: Record<string, string> = {
@@ -114,6 +116,7 @@ function RepaymentForm({ account, onDone, onCancel }: {
   const [method, setMethod] = useState('cash')
   const [sensitive, setSensitive] = useState(false)
   const [notes, setNotes] = useState('')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outstandingOrders, setOutstandingOrders] = useState<OutstandingCreditOrder[]>([])
@@ -131,7 +134,10 @@ function RepaymentForm({ account, onDone, onCancel }: {
     setSaving(true)
     setError(null)
     try {
-      await recordCreditTransaction(account.id, 'repayment', amt, { method, sensitive, notes, salesOrderId: orderId || undefined })
+      await recordCreditTransaction(account.id, 'repayment', amt, {
+        method, sensitive, notes, salesOrderId: orderId || undefined,
+        hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined,
+      })
       onDone()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to record repayment.')
@@ -179,6 +185,7 @@ function RepaymentForm({ account, onDone, onCancel }: {
           {METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
       <input
         value={notes} onChange={e => setNotes(e.target.value)}
         placeholder="Notes (optional)"

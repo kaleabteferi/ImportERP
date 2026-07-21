@@ -9,6 +9,7 @@ import { fetchAccounts } from '../../api/accounts'
 import { recordCreditTransaction, openCreditAccount } from '../../api/credit'
 import { logProductionQuick } from '../../lib/productionLogging'
 import { SearchableSelect } from '../SearchableSelect'
+import { HawalaFields, emptyHawalaValue } from '../HawalaFields'
 import {
   ShoppingCart, Banknote, Receipt, Wrench, X, Loader2, Check, Plus, Minus, Package, Trash2, Search,
 } from 'lucide-react'
@@ -46,7 +47,8 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [warehouseId, setWarehouseId] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
-  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [accountId, setAccountId] = useState('')
   const [creditAccounts, setCreditAccounts] = useState<{ id: string; balance: number; credit_limit: number }[]>([])
   const [creditAccountId, setCreditAccountId] = useState('')
@@ -120,7 +122,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
       })
       try {
         if (method === 'credit') await recordCreditTransaction(creditAcctId, 'draw', result.total_etb, { method, salesOrderId: result.order_id })
-        else await recordPayment(result.order_id, result.total_etb, method, { accountId })
+        else await recordPayment(result.order_id, result.total_etb, method, { accountId, hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined })
       } catch (payErr: any) {
         setError(`${result.order_number} was recorded, but payment failed: ${payErr?.message}. Don't resubmit.`)
         onDone()
@@ -184,7 +186,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
         </div>
       ))}
       <div className="flex gap-1.5">
-        {(['cash', 'bank_transfer', 'mobile_money', 'credit'] as const).map(m => (
+        {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
           <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
         ))}
       </div>
@@ -201,6 +203,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
     </ModalShell>
   )
 }
@@ -212,7 +215,8 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
   const [customerId, setCustomerId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [amount, setAmount] = useState('')
-  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [accountId, setAccountId] = useState('')
   const [creditAccounts, setCreditAccounts] = useState<{ id: string; balance: number; credit_limit: number }[]>([])
   const [creditAccountId, setCreditAccountId] = useState('')
@@ -247,6 +251,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
         creditAccountId: method === 'credit' ? creditAccountId : undefined,
         accountId: method !== 'credit' ? accountId : undefined,
         date: new Date().toISOString().split('T')[0],
+        hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -273,7 +278,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
       </select>
       <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (ETB)" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
       <div className="flex gap-1.5">
-        {(['cash', 'bank_transfer', 'mobile_money', 'credit'] as const).map(m => (
+        {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
           <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-green-600 text-white border-green-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
         ))}
       </div>
@@ -288,6 +293,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
     </ModalShell>
   )
 }
@@ -297,6 +303,8 @@ function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: (
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [accountId, setAccountId] = useState('')
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'hawala'>('cash')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -310,8 +318,9 @@ function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: (
     setSaving(true); setError(null)
     try {
       await recordCompanyExpense({
-        category: 'other', description, amount: amt, currency: 'ETB', method: 'cash',
+        category: 'other', description, amount: amt, currency: 'ETB', method,
         expenseDate: new Date().toISOString().split('T')[0], accountId,
+        hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined,
       })
       onDone()
     } catch (e: any) {
@@ -330,10 +339,16 @@ function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: (
       {error && <p className="text-xs text-red-600">{error}</p>}
       <input value={description} onChange={e => setDescription(e.target.value)} placeholder="What was this for?" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
       <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (ETB)" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
+      <div className="flex gap-1.5">
+        {(['cash', 'bank_transfer', 'mobile_money', 'hawala'] as const).map(m => (
+          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-red-600 text-white border-red-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
+        ))}
+      </div>
       <select value={accountId} onChange={e => setAccountId(e.target.value)} className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white">
         <option value="">Which account paid it?</option>
         {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
       </select>
+      {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
     </ModalShell>
   )
 }

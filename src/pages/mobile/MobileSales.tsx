@@ -9,6 +9,7 @@ import type { Account } from '../../api/accounts'
 import {
   ShoppingCart, Plus, X, Loader2, Package, Minus, Trash2, ChevronLeft, Check, Search,
 } from 'lucide-react'
+import { HawalaFields, emptyHawalaValue } from '../../components/HawalaFields'
 
 interface Customer { id: string; name: string }
 interface Product { id: string; name: string; sku: string; image_url: string | null }
@@ -47,7 +48,8 @@ export function MobileSales() {
   const [cart, setCart] = useState<CartLine[]>([])
   const [itemQuery, setItemQuery] = useState('')
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
-  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit'>('cash')
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
+  const [hawala, setHawala] = useState(emptyHawalaValue())
   const [accountId, setAccountId] = useState('')
   const [creditAccountId, setCreditAccountId] = useState('')
   const [customerCredit, setCustomerCredit] = useState<{ id: string; balance: number; credit_limit: number }[]>([])
@@ -160,7 +162,7 @@ export function MobileSales() {
         if (method === 'credit') {
           await recordCreditTransaction(creditAcctId, 'draw', result.total_etb, { method, salesOrderId: result.order_id })
         } else {
-          await recordPayment(result.order_id, result.total_etb, method, { accountId })
+          await recordPayment(result.order_id, result.total_etb, method, { accountId, hawalaRoute: method === 'hawala' ? hawala.route.trim() || undefined : undefined })
         }
       } catch (payErr: any) {
         setError(`${result.order_number} was recorded, but the payment failed: ${payErr?.message ?? 'unknown error'}.`)
@@ -273,7 +275,7 @@ export function MobileSales() {
           <div>
             <label className="block text-xs text-gray-500 mb-1">Payment method</label>
             <div className="grid grid-cols-4 gap-1.5 mb-2">
-              {(['cash', 'bank_transfer', 'mobile_money', 'credit'] as const).map(m => (
+              {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
                 <button key={m} onClick={() => setMethod(m)}
                   className={`py-2 text-xs rounded-lg border capitalize ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>
                   {m.replace('_', ' ')}
@@ -297,6 +299,7 @@ export function MobileSales() {
                 {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             )}
+            {method === 'hawala' && <div className="mt-2"><HawalaFields value={hawala} onChange={setHawala} /></div>}
           </div>
         </div>
         <div className="p-4 border-t border-gray-100 shrink-0">
