@@ -26,6 +26,7 @@ import { CostFinalization } from './pages/CostFinalization'
 import { CostEngine } from './pages/CostEngine'
 import { CustomsEstimator } from './pages/CustomsEstimator'
 import { Payables } from './pages/Payables'
+import { SupplierPayments } from './pages/SupplierPayments'
 import { Receivables } from './pages/Receivables'
 import { MoneyTracking } from './pages/MoneyTracking'
 import { CreditAccounts } from './pages/CreditAccounts'
@@ -137,6 +138,9 @@ export default function App() {
               } />
               <Route path="payables" element={
                 <RequireRole allow={['accounting_finance']}><Payables /></RequireRole>
+              } />
+              <Route path="supplier-payments" element={
+                <RequireRole allow={['operations_marketing', 'accounting_finance']}><SupplierPayments /></RequireRole>
               } />
               <Route path="receivables" element={
                 <RequireRole allow={['accounting_finance']}><Receivables /></RequireRole>

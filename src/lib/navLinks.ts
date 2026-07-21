@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Ship, Building2,
   Wrench, Package, Calculator, BarChart3,
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
-  ShoppingCart, Sigma, FileSearch,
+  ShoppingCart, Sigma, FileSearch, ArrowRightLeft,
   UserCog, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion,
   Settings as SettingsIcon,
 } from 'lucide-react'
@@ -48,6 +48,7 @@ export const NAV_LINKS: NavGroup[] = [
     { to: '/costs',          icon: Calculator,  label: 'Cost Engine',     allow: ['accounting_finance'] },
     { to: '/customs-estimator', icon: Calculator, label: 'Customs Estimator', allow: ['accounting_finance', 'operations_marketing'] },
     { to: '/payables',       icon: Wallet,      label: 'Payables',        allow: ['accounting_finance'] },
+    { to: '/supplier-payments', icon: ArrowRightLeft, label: 'Supplier Payments', allow: ['operations_marketing', 'accounting_finance'] },
     { to: '/receivables',    icon: CreditCard,  label: 'Receivables',     allow: ['accounting_finance'] },
     { to: '/money-tracking', icon: Banknote,    label: 'Money Tracking',  allow: ['accounting_finance'] },
     { to: '/credit-accounts',icon: Landmark,    label: 'Credit Accounts', allow: ['accounting_finance'] },

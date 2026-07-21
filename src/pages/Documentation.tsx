@@ -73,9 +73,9 @@ const GROUPS: DocGroup[] = [
             <p>Every account has one role, set by an admin on the <Link to="/users" className="text-blue-600 hover:underline">Users &amp; Roles</Link> page. A role controls both what shows up in the sidebar and, since the RLS hardening pass, what the account can actually read or write at the database level — not just what the UI shows.</p>
             <ul className="list-disc pl-4 space-y-1 mt-2">
               <li><strong>Full access</strong> — passes every check everywhere. CEO/GM/Assistant Manager tier.</li>
-              <li><strong>Operations &amp; Marketing</strong> — Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator.</li>
+              <li><strong>Operations &amp; Marketing</strong> — Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator, Supplier Payments.</li>
               <li><strong>Manufacturing &amp; Sales</strong> — Production, Assembly, BOMs, Inventory, Warehouse Transfers, Sales, Customers, Products.</li>
-              <li><strong>Accounting &amp; Finance</strong> — Sales, Cost Engine, Customs Estimator, Payables, Receivables, Money Tracking, Credit Accounts, Expenses, Djibouti Forwarder, shipment cost finalization.</li>
+              <li><strong>Accounting &amp; Finance</strong> — Sales, Cost Engine, Customs Estimator, Payables, Supplier Payments, Receivables, Money Tracking, Credit Accounts, Expenses, Djibouti Forwarder, shipment cost finalization.</li>
               <li><strong>HR &amp; System</strong> — Users &amp; Roles, Settings, Employees, Payroll, HR Notes.</li>
               <li><strong>Pending</strong> — a brand-new sign-up with no role yet. Sees a "waiting for approval" screen and nothing else until an HR &amp; System admin assigns a role.</li>
             </ul>
@@ -280,8 +280,20 @@ const GROUPS: DocGroup[] = [
         roles: 'Accounting & Finance',
         body: (
           <>
-            <p><strong>Payables</strong> — outstanding supplier POs and unpaid shipment expenses in one list, with per-currency totals (USD/ETB/CNY) and an overdue count. "Mark as paid" on a shipment expense stamps the actual paid date, which is what makes it show up correctly on Money Tracking and Reports afterward.</p>
+            <p><strong>Payables</strong> — unpaid shipment expenses (freight, customs, port handling) in one list, with per-currency totals (USD/ETB/CNY) and an overdue count. "Mark as paid" stamps the actual paid date, which is what makes it show up correctly on Money Tracking and Reports afterward. This does <em>not</em> cover what you owe a supplier for the goods themselves — see Supplier Payments below for that.</p>
             <p className="mt-2"><strong>Receivables</strong> — what customers owe on invoiced/partially-paid orders, with days-outstanding and an overdue (30+ days) flag.</p>
+          </>
+        ),
+      },
+      {
+        id: 'supplier-payments',
+        title: 'Supplier Payments',
+        roles: 'Operations & Marketing, Accounting & Finance',
+        body: (
+          <>
+            <p>Tracks what you owe a supplier for goods — separate from Payables, which only covers shipment costs like freight and customs. Open a payable whenever you strike a deal: pick the supplier, enter the total owed and its currency, and optionally link it to a shipment. Debt doesn't have to be 1:1 with a shipment — a combined order or an open credit line works too, just leave the shipment link off.</p>
+            <p className="mt-2">Record payments against it as they happen, partial or full. For <strong>hawala</strong> payments — the usual way ETB gets converted into the CNY/USD a China (or elsewhere) supplier is owed — enter the dealer/route, the ETB handed over, and the rate they quoted; the app works out how much actually reaches the supplier and reduces the balance by that. Bank transfer, cash, and other payments just take the amount directly in the payable's own currency.</p>
+            <p className="mt-2">Every payment also records which account/cash pool the money came out of, and optionally which specific sale funded it (or a free-text note like "collected cash") — so "where did the money come from" is answered per payment, not just per account.</p>
           </>
         ),
       },

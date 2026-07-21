@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { recordPurchasePayment } from '../api/purchases'
 import { fetchAccounts } from '../api/accounts'
 import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
-import { Wallet, Loader2, AlertTriangle, ShieldAlert, X, Search } from 'lucide-react'
+import { Wallet, Loader2, AlertTriangle, ShieldAlert, X, Search, ArrowRightLeft } from 'lucide-react'
 
 interface Payable {
   id: string
@@ -17,7 +17,7 @@ interface Payable {
   due_date: string | null
   status: string
   sensitive: boolean
-  kind: 'purchase_order' | 'shipment_expense'
+  kind: 'shipment_expense'
 }
 
 const N = (n: number) =>
@@ -29,86 +29,6 @@ const METHODS = [
   { value: 'credit', label: 'Credit' },
   { value: 'mobile_money', label: 'Mobile money' },
 ]
-
-function RecordPurchasePaymentForm({ payable, accounts, onDone, onCancel }: {
-  payable: Payable
-  accounts: Account[]
-  onDone: () => void
-  onCancel: () => void
-}) {
-  const outstanding = payable.total_amount - payable.paid_amount
-  const [amount, setAmount] = useState(String(outstanding))
-  const [method, setMethod] = useState('cash')
-  const [accountId, setAccountId] = useState('')
-  const [sensitive, setSensitive] = useState(false)
-  const [notes, setNotes] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function submit() {
-    const amt = Number(amount)
-    if (!amt || amt <= 0) { setError('Enter an amount greater than 0.'); return }
-    if (method !== 'credit' && !accountId) { setError('Choose which account paid it.'); return }
-    setSaving(true)
-    setError(null)
-    try {
-      await recordPurchasePayment(payable.id, amt, payable.currency as 'USD' | 'ETB' | 'CNY', method, { sensitive, notes, accountId: method !== 'credit' ? accountId : undefined })
-      onDone()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to record payment.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="px-4 py-3 bg-amber-50/50 border-t border-amber-100 space-y-2.5">
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      <div className="flex gap-2">
-        <input
-          type="number" value={amount} onChange={e => setAmount(e.target.value)}
-          placeholder={`Amount (${payable.currency})`}
-          className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg"
-        />
-        <select
-          value={method} onChange={e => setMethod(e.target.value)}
-          className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
-        >
-          {METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-      </div>
-      {method !== 'credit' && (
-        <select
-          value={accountId} onChange={e => setAccountId(e.target.value)}
-          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
-        >
-          <option value="">Which account paid it?</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-      )}
-      <input
-        value={notes} onChange={e => setNotes(e.target.value)}
-        placeholder="Notes (optional)"
-        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg"
-      />
-      <label className="flex items-center gap-1.5 text-xs text-gray-600">
-        <input type="checkbox" checked={sensitive} onChange={e => setSensitive(e.target.checked)} />
-        <ShieldAlert size={12} className="text-amber-500" /> Flag as sensitive
-      </label>
-      <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">
-          Cancel
-        </button>
-        <button
-          onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-amber-600 text-white disabled:opacity-50"
-        >
-          {saving ? 'Saving…' : 'Record payment'}
-        </button>
-      </div>
-    </div>
-  )
-}
 
 function MarkExpensePaidForm({ payable, accounts, onDone, onCancel }: {
   payable: Payable
@@ -194,20 +114,7 @@ export function Payables() {
   const load = useCallback(async () => {
       setLoading(true)
       try {
-        const [purchaseRes, expenseRes, accountRows] = await Promise.all([
-          (async () => {
-            try {
-              // purchase_orders has no status column at all — confirmed via
-              // information_schema. "Outstanding" is derived from the
-              // amounts, not a stored status.
-              return await supabase
-                .from('purchase_orders')
-                .select('id, po_number, total_amount, paid_amount, currency, payment_terms, due_date, suppliers(name)')
-                .order('due_date', { ascending: true, nullsFirst: false })
-            } catch {
-              return { data: [], error: null }
-            }
-          })(),
+        const [expenseRes, accountRows] = await Promise.all([
           (async () => {
             try {
               return await supabase
@@ -224,22 +131,6 @@ export function Payables() {
 
         setAccounts(accountRows)
 
-        const purchaseRows = (purchaseRes.data ?? [])
-          .filter((r: any) => Number(r.paid_amount ?? 0) < Number(r.total_amount ?? 0))
-          .map((r: any) => ({
-            id: r.id,
-            supplier_name: (Array.isArray(r.suppliers) ? r.suppliers[0]?.name : r.suppliers?.name) ?? '—',
-            po_number: r.po_number,
-            total_amount: Number(r.total_amount ?? 0),
-            paid_amount: Number(r.paid_amount ?? 0),
-            currency: r.currency ?? 'USD',
-            payment_terms: r.payment_terms,
-            due_date: r.due_date,
-            status: Number(r.paid_amount ?? 0) > 0 ? 'PARTIAL' : 'OPEN',
-            sensitive: false,
-            kind: 'purchase_order' as const,
-        }))
-
         const expenseRows = (expenseRes.data ?? []).map((r: any) => ({
           id: `expense-${r.id}`,
           supplier_name: r.vendor_name ?? 'Shipment expense',
@@ -254,7 +145,7 @@ export function Payables() {
           kind: 'shipment_expense' as const,
         }))
 
-        setRows([...purchaseRows, ...expenseRows].sort((a, b) => {
+        setRows([...expenseRows].sort((a, b) => {
           const aDate = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER
           const bDate = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER
           return aDate - bDate
@@ -312,7 +203,10 @@ export function Payables() {
           <Wallet size={18} /> Payables
         </h1>
         <p className="text-xs text-gray-400 mt-0.5">
-          Outstanding supplier invoices and shipment expenses
+          Unpaid shipment costs (freight, customs, port handling) — for what you owe suppliers for the goods themselves, see{' '}
+          <Link to="/supplier-payments" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
+            Supplier Payments <ArrowRightLeft size={11} />
+          </Link>
         </p>
       </div>
 
@@ -343,7 +237,7 @@ export function Payables() {
         </div>
       ) : rows.length === 0 ? (
         <div className="text-center py-16 text-sm text-gray-400">
-          No open payables. Supplier POs and unpaid shipment expenses appear here.
+          No open payables. Unpaid shipment expenses appear here.
         </div>
       ) : (
         <>
@@ -416,25 +310,16 @@ export function Payables() {
                     onClick={() => setOpenFormId(openFormId === r.id ? null : r.id)}
                     className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 shrink-0"
                   >
-                    {openFormId === r.id ? <X size={12} /> : r.kind === 'purchase_order' ? 'Record payment' : 'Mark as paid'}
+                    {openFormId === r.id ? <X size={12} /> : 'Mark as paid'}
                   </button>
                 </div>
                 {openFormId === r.id && (
-                  r.kind === 'purchase_order' ? (
-                    <RecordPurchasePaymentForm
-                      payable={r}
-                      accounts={accounts}
-                      onCancel={() => setOpenFormId(null)}
-                      onDone={() => { setOpenFormId(null); load() }}
-                    />
-                  ) : (
-                    <MarkExpensePaidForm
-                      payable={r}
-                      accounts={accounts}
-                      onCancel={() => setOpenFormId(null)}
-                      onDone={() => { setOpenFormId(null); load() }}
-                    />
-                  )
+                  <MarkExpensePaidForm
+                    payable={r}
+                    accounts={accounts}
+                    onCancel={() => setOpenFormId(null)}
+                    onDone={() => { setOpenFormId(null); load() }}
+                  />
                 )}
               </div>
             )
