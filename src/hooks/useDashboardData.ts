@@ -23,6 +23,7 @@ export interface TopProduct { name: string; quantity: number; revenue: number }
 export interface LowMarginProduct { name: string; marginPct: number }
 export interface AdviceItem { text: string; impact: 'high' | 'medium' | 'low' }
 export interface TodoItem { text: string; link?: string }
+export interface CashCategory { label: string; amountEtb: number; to: string }
 
 export interface DashboardData {
   // Tier 1 — headline, with period-over-period variance
@@ -32,6 +33,8 @@ export interface DashboardData {
   producedPrevUnits: number
   cashInEtb: number
   cashOutEtb: number
+  cashInBreakdown: CashCategory[]
+  cashOutBreakdown: CashCategory[]
   receivablesEtb: number
   payablesEtb: number
   // Payables run mostly USD-priced (purchase orders quoted to suppliers in
@@ -67,7 +70,7 @@ export interface DashboardData {
 export function useDashboardData(period: Period): DashboardData {
   const [data, setData] = useState<Omit<DashboardData, 'loading' | 'error' | 'lastUpdated' | 'refresh'>>({
     revenueEtb: 0, revenuePrevEtb: 0, producedUnits: 0, producedPrevUnits: 0,
-    cashInEtb: 0, cashOutEtb: 0, receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, payablesCny: 0, unusualTransactionCount: 0, stockoutRiskCount: 0,
+    cashInEtb: 0, cashOutEtb: 0, cashInBreakdown: [], cashOutBreakdown: [], receivablesEtb: 0, payablesEtb: 0, payablesUsd: 0, payablesCny: 0, unusualTransactionCount: 0, stockoutRiskCount: 0,
     inventoryValueEtb: 0, daysOfStock: null, activeCustomers: 0, frequentCustomers: 0,
     revenueTrend: [], productionTrend: [],
     topProducts: [], lowMarginProducts: [], topAdvice: null, secondaryAdvice: null, todoToday: [],
@@ -171,10 +174,24 @@ export function useDashboardData(period: Period): DashboardData {
         if (payable?.currency === 'ETB') return s + Number(p.amount ?? 0)
         return s
       }, 0)
-      const cashOutEtb =
-        supplierPaymentEtbOut +
-        (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0) +
-        (shipmentExpensesPaidRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
+      const salesIn = (salesPaymentsRes.data ?? []).reduce((s, p) => s + Number(p.amount_etb ?? 0), 0)
+      const creditRepaymentsIn = (creditRepaymentsRes.data ?? []).reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0)
+      const expensesOut = (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0)
+      const shipmentExpensesOut = (shipmentExpensesPaidRes.data ?? []).filter((e: any) => e.currency === 'ETB').reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
+      const cashOutEtb = supplierPaymentEtbOut + expensesOut + shipmentExpensesOut
+
+      // What actually makes up the Net cash figure — shown as a breakdown
+      // on the Dashboard instead of just the one net number, so "what came
+      // in/went out" doesn't require a trip to Money Tracking to answer.
+      const cashInBreakdown: CashCategory[] = [
+        { label: 'Sales payments', amountEtb: salesIn, to: '/sales' },
+        { label: 'Credit repayments', amountEtb: creditRepaymentsIn, to: '/credit-accounts' },
+      ].filter(c => c.amountEtb > 0)
+      const cashOutBreakdown: CashCategory[] = [
+        { label: 'Supplier payments', amountEtb: supplierPaymentEtbOut, to: '/supplier-payments' },
+        { label: 'Expenses', amountEtb: expensesOut, to: '/expenses' },
+        { label: 'Shipment costs', amountEtb: shipmentExpensesOut, to: '/payables' },
+      ].filter(c => c.amountEtb > 0)
 
       const receivablesEtb = (customersRes.data ?? []).reduce((s, c: any) => s + Number(c.outstanding_etb ?? 0), 0)
       const payablesEtb =
@@ -303,7 +320,7 @@ export function useDashboardData(period: Period): DashboardData {
 
       setData({
         revenueEtb, revenuePrevEtb, producedUnits, producedPrevUnits,
-        cashInEtb, cashOutEtb, receivablesEtb, payablesEtb, payablesUsd, payablesCny, unusualTransactionCount, stockoutRiskCount,
+        cashInEtb, cashOutEtb, cashInBreakdown, cashOutBreakdown, receivablesEtb, payablesEtb, payablesUsd, payablesCny, unusualTransactionCount, stockoutRiskCount,
         inventoryValueEtb, daysOfStock, activeCustomers, frequentCustomers,
         revenueTrend, productionTrend,
         topProducts, lowMarginProducts, topAdvice, secondaryAdvice, todoToday,

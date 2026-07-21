@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchDailyActivityData, fetchExpensesByDate } from '../api/dailyActivity'
-import type { DailyActivityData } from '../api/dailyActivity'
+import { fetchDailyActivityData } from '../api/dailyActivity'
+import type { DailyActivityData, MoneyRow } from '../api/dailyActivity'
 import { usePageState } from '../lib/pageState'
 import {
   CalendarDays, Loader2, Package, ShoppingCart, ArrowLeftRight,
@@ -17,6 +17,14 @@ const PURPOSE_LABEL: Record<string, string> = {
   SALES: 'Sales dispatch',
   RETURN: 'Return',
   OTHER: 'Other',
+}
+
+const MONEY_CATEGORY_LABEL: Record<MoneyRow['category'], string> = {
+  sale: 'Sale payment',
+  credit_repayment: 'Credit repayment',
+  expense: 'Expense',
+  supplier_payment: 'Supplier payment',
+  shipment_expense: 'Shipment cost',
 }
 
 type CategoryKey = 'production' | 'shipments_received' | 'transfers' | 'sales' | 'damage' | 'adjustments' | 'money'
@@ -40,7 +48,7 @@ interface Row { key: string; magnitude: number; content: React.ReactNode }
 interface DaySection { def: CategoryDef; rows: Row[]; magnitude: number }
 interface DayGroup {
   date: string; sections: DaySection[]
-  cashInEtb: number; cashOutEtb: number; cashOutUsd: number
+  cashInEtb: number; cashOutEtb: number; foreignOut: { currency: string; amount: number }[]
   totalUnits: number; totalOrders: number; totalSalesEtb: number; totalTransfers: number
   shipmentsCount: number; damageCount: number; damageUnits: number; adjustmentsCount: number
 }
@@ -109,7 +117,6 @@ function describePeriod(days: DayGroup[]): string {
 
 export function DailyActivity() {
   const [data, setData] = useState<DailyActivityData | null>(null)
-  const [expenseByDate, setExpenseByDate] = useState<Record<string, { etb: number; usd: number }>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [visibleCategories, setVisibleCategories] = usePageState<CategoryKey[]>('dailyActivity.categories', CATEGORIES.map(c => c.key))
@@ -123,25 +130,6 @@ export function DailyActivity() {
       try {
         const activity = await fetchDailyActivityData(14)
         setData(activity)
-
-        const dates = [...new Set([
-          ...activity.productionLogs.map(r => r.log_date),
-          ...activity.transfers.map(r => r.event_date),
-          ...activity.sales.map(r => r.sale_date),
-          ...activity.shipmentsReceived.map(r => r.received_at.split('T')[0]),
-          ...activity.damage.map(r => r.report_date),
-          ...activity.adjustments.map(r => r.movement_date.split('T')[0]),
-          ...activity.paymentsIn.map(r => r.payment_date),
-        ])]
-        const expenses = await fetchExpensesByDate(dates)
-        const map: Record<string, { etb: number; usd: number }> = {}
-        for (const e of (expenses ?? []) as any[]) {
-          const d = e.expense_date
-          if (!map[d]) map[d] = { etb: 0, usd: 0 }
-          if (e.currency === 'ETB') map[d].etb += Number(e.amount ?? 0)
-          else map[d].usd += Number(e.amount ?? 0)
-        }
-        setExpenseByDate(map)
       } catch (e: any) {
         console.error(e)
         setError(e?.message ?? 'Unable to load daily activity.')
@@ -173,8 +161,7 @@ export function DailyActivity() {
       ...data.shipmentsReceived.map(r => r.received_at.split('T')[0]),
       ...data.damage.map(r => r.report_date),
       ...data.adjustments.map(r => r.movement_date.split('T')[0]),
-      ...data.paymentsIn.map(r => r.payment_date),
-      ...Object.keys(expenseByDate),
+      ...data.money.map(r => r.date),
     ])
 
     const byMagnitudeDesc = (a: Row, b: Row) => b.magnitude - a.magnitude
@@ -305,22 +292,39 @@ export function DailyActivity() {
           }))
           .sort((a, b) => b.magnitude - a.magnitude)
 
-        const cashInEtb = data.paymentsIn.filter(p => p.payment_date === date).reduce((s, p) => s + p.amount_etb, 0)
-        const cashOutEtb = expenseByDate[date]?.etb ?? 0
-        const cashOutUsd = expenseByDate[date]?.usd ?? 0
-        const money: Row[] = (cashInEtb > 0 || cashOutEtb > 0 || cashOutUsd > 0) ? [{
-          key: 'money', magnitude: cashInEtb + cashOutEtb,
-          content: (
-            <>
-              {cashInEtb > 0 && <span className="flex items-center gap-1 text-green-700 font-medium font-mono"><TrendingUp size={11} /> +{N(cashInEtb)} ETB in</span>}
-              {(cashOutEtb > 0 || cashOutUsd > 0) && (
-                <span className="flex items-center gap-1 text-red-600 font-medium font-mono">
-                  <TrendingDown size={11} /> −{cashOutEtb > 0 ? `${N(cashOutEtb)} ETB` : ''}{cashOutEtb > 0 && cashOutUsd > 0 ? ' · ' : ''}{cashOutUsd > 0 ? `$${N(cashOutUsd)}` : ''} out
+        const dayMoney = data.money.filter(m => m.date === date)
+        const cashInEtb = dayMoney.filter(m => m.direction === 'in').reduce((s, m) => s + m.etbAmount, 0)
+        const cashOutEtb = dayMoney.filter(m => m.direction === 'out').reduce((s, m) => s + m.etbAmount, 0)
+        // Non-hawala foreign-currency supplier payments never touch an ETB
+        // account (etbAmount is 0 for those) — surfaced separately per
+        // currency rather than folded into the ETB net, same convention as
+        // the Dashboard/Reports payables split.
+        const foreignOutMap = new Map<string, number>()
+        for (const m of dayMoney) {
+          if (m.direction === 'out' && m.currency !== 'ETB' && m.etbAmount === 0) {
+            foreignOutMap.set(m.currency, (foreignOutMap.get(m.currency) ?? 0) + m.amount)
+          }
+        }
+        const foreignOut = [...foreignOutMap.entries()].map(([currency, amount]) => ({ currency, amount }))
+
+        const money: Row[] = dayMoney
+          .map((m, i) => ({
+            key: `money-${i}`,
+            magnitude: m.etbAmount || m.amount,
+            content: (
+              <>
+                {m.direction === 'in'
+                  ? <TrendingUp size={11} className="text-green-600 shrink-0" />
+                  : <TrendingDown size={11} className="text-red-500 shrink-0" />}
+                <span className="flex-1 text-gray-700">{MONEY_CATEGORY_LABEL[m.category]} · {m.party}</span>
+                {m.detail && <span className="text-gray-400">{m.detail}</span>}
+                <span className={`font-medium font-mono ${m.direction === 'in' ? 'text-green-700' : 'text-red-600'}`}>
+                  {m.direction === 'in' ? '+' : '−'}{N(m.amount)} {m.currency}
                 </span>
-              )}
-            </>
-          ),
-        }] : []
+              </>
+            ),
+          }))
+          .sort(byMagnitudeDesc)
 
         const sectionsAll: DaySection[] = [
           { def: CATEGORIES[0], rows: shipmentsReceived, magnitude: shipmentsReceived.length },
@@ -338,7 +342,7 @@ export function DailyActivity() {
 
         return {
           date, sections,
-          cashInEtb, cashOutEtb, cashOutUsd,
+          cashInEtb, cashOutEtb, foreignOut,
           totalUnits: production.reduce((s, r) => s + r.magnitude, 0),
           totalOrders,
           totalSalesEtb: sales.reduce((s, r) => s + r.magnitude, 0),
@@ -349,7 +353,7 @@ export function DailyActivity() {
           adjustmentsCount: adjustments.length,
         }
       })
-  }, [data, expenseByDate, visibleCategories, dayOrder, sectionOrder])
+  }, [data, visibleCategories, dayOrder, sectionOrder])
 
   const days = useMemo(() => allDays.filter(day => day.sections.length > 0), [allDays])
   const periodNarrative = useMemo(() => describePeriod(allDays), [allDays])
@@ -434,7 +438,7 @@ export function DailyActivity() {
                       {(day.cashInEtb > 0 || day.cashOutEtb > 0) && (
                         <span className={`flex items-center gap-1 font-medium ${netCashEtb >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                           <Receipt size={12} /> {netCashEtb >= 0 ? '+' : ''}{N(netCashEtb)} ETB net
-                          {day.cashOutUsd > 0 && ` · −$${N(day.cashOutUsd)}`}
+                          {day.foreignOut.map(f => ` · −${f.currency === 'USD' ? '$' : f.currency === 'CNY' ? '¥' : ''}${N(f.amount)}${f.currency !== 'USD' && f.currency !== 'CNY' ? ` ${f.currency}` : ''}`).join('')}
                         </span>
                       )}
                     </div>

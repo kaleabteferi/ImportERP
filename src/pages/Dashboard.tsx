@@ -223,6 +223,50 @@ export function Dashboard() {
           sub="2+ orders in 30 days" />
       </div>
 
+      {/* Cash flow — what actually made up "Net cash" above */}
+      {(d.cashInBreakdown.length > 0 || d.cashOutBreakdown.length > 0) && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-medium text-gray-500">Cash flow · {PERIOD_LABEL[period].toLowerCase()}</p>
+            <Link to="/money-tracking" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+              Every transaction <ChevronRight size={12} />
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-medium text-green-700 mb-1.5">In · {N(d.cashInEtb)} ETB</p>
+              {d.cashInBreakdown.length === 0 ? (
+                <p className="text-xs text-gray-300">Nothing in yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {d.cashInBreakdown.map(c => (
+                    <Link key={c.label} to={c.to} className="flex items-center justify-between text-xs group/row">
+                      <span className="text-gray-500 group-hover/row:text-gray-700">{c.label}</span>
+                      <span className="font-mono text-green-700">{N(c.amountEtb)}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-red-600 mb-1.5">Out · {N(d.cashOutEtb)} ETB</p>
+              {d.cashOutBreakdown.length === 0 ? (
+                <p className="text-xs text-gray-300">Nothing out yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {d.cashOutBreakdown.map(c => (
+                    <Link key={c.label} to={c.to} className="flex items-center justify-between text-xs group/row">
+                      <span className="text-gray-500 group-hover/row:text-gray-700">{c.label}</span>
+                      <span className="font-mono text-red-600">{N(c.amountEtb)}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tier 2 — trends */}
       <div className="grid grid-cols-2 gap-3">
         <Link to="/sales" className="group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150 hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400">

@@ -78,9 +78,23 @@ export interface AdjustmentRow {
   notes: string | null
 }
 
-export interface PaymentInRow {
-  payment_date: string
-  amount_etb: number
+// One row per real money movement — sales payments, credit repayments,
+// company expenses, supplier payments (hawala-aware), and paid shipment
+// expenses. `etbAmount` is what actually moved through an ETB account:
+// for a hawala supplier payment that's etb_amount (what left the till to
+// pay the dealer), not `amount` (the payable's own currency, which never
+// touches an ETB account) — same convention as the Dashboard/Reports cash
+// figures, so a day's net cash here always agrees with those.
+export type MoneyCategory = 'sale' | 'credit_repayment' | 'expense' | 'supplier_payment' | 'shipment_expense'
+export interface MoneyRow {
+  date: string
+  direction: 'in' | 'out'
+  category: MoneyCategory
+  party: string
+  amount: number
+  currency: string
+  etbAmount: number
+  detail?: string | null
 }
 
 export interface DailyActivityData {
@@ -90,7 +104,7 @@ export interface DailyActivityData {
   shipmentsReceived: ShipmentReceivedRow[]
   damage: DamageRow[]
   adjustments: AdjustmentRow[]
-  paymentsIn: PaymentInRow[]
+  money: MoneyRow[]
   warehouses: LookupOption[]
   products: LookupOption[]
   suppliers: LookupOption[]
@@ -99,10 +113,12 @@ export interface DailyActivityData {
 export async function fetchDailyActivityData(days = 14): Promise<DailyActivityData> {
   const since = daysAgoIso(days)
   const sinceTs = `${since}T00:00:00Z`
+  const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
   const [
     prodLogsRes, ordersRes, transfersRes, salesRes, shipmentsRes, damageRes,
-    adjustmentsRes, paymentsRes, warehousesRes, productsRes, suppliersRes,
+    adjustmentsRes, salesPaymentsRes, creditRepaymentsRes, expensesRes,
+    supplierPaymentsRes, shipmentExpensesRes, warehousesRes, productsRes, suppliersRes,
   ] = await Promise.all([
     supabase.from('production_daily_logs').select('log_date, quantity_produced, production_order_id, product_id, warehouse_id').gte('log_date', since),
     supabase.from('production_orders').select('id, warehouse_id, product_id'),
@@ -111,7 +127,11 @@ export async function fetchDailyActivityData(days = 14): Promise<DailyActivityDa
     supabase.from('shipments').select('id, shipment_number, supplier_id, warehouse_id, inventory_received_at').gte('inventory_received_at', sinceTs),
     supabase.from('damage_reports').select('id, report_number, report_date, product_id, warehouse_id, quantity, reason').gte('report_date', since),
     supabase.from('inventory_ledger').select('id, movement_date, product_id, warehouse_id, quantity, notes').eq('movement_type', 'ADJUSTMENT').gte('movement_date', sinceTs),
-    supabase.from('sales_payments').select('payment_date, amount_etb').gte('payment_date', since),
+    supabase.from('sales_payments').select('payment_date, amount_etb, sales_orders(customers(name))').gte('payment_date', since),
+    supabase.from('credit_transactions').select('amount, transaction_date, credit_accounts(customers(name))').eq('type', 'repayment').gte('transaction_date', since),
+    supabase.from('company_expenses').select('amount, currency, expense_date, vendor_name, description').gte('expense_date', since),
+    supabase.from('supplier_payments').select('amount, method, etb_amount, hawala_route, payment_date, supplier_payables(currency, suppliers(name))').gte('payment_date', since),
+    supabase.from('shipment_expenses').select('amount, amount_etb, currency, paid_at, vendor_name, description').eq('is_paid', true).gte('paid_at', sinceTs),
     supabase.from('warehouses').select('id, name'),
     supabase.from('products').select('id, name'),
     supabase.from('suppliers').select('id, name'),
@@ -125,7 +145,11 @@ export async function fetchDailyActivityData(days = 14): Promise<DailyActivityDa
     ['shipments', shipmentsRes.error],
     ['damage reports', damageRes.error],
     ['stock adjustments', adjustmentsRes.error],
-    ['payments', paymentsRes.error],
+    ['sales payments', salesPaymentsRes.error],
+    ['credit repayments', creditRepaymentsRes.error],
+    ['expenses', expensesRes.error],
+    ['supplier payments', supplierPaymentsRes.error],
+    ['shipment expenses', shipmentExpensesRes.error],
     ['warehouses', warehousesRes.error],
     ['products', productsRes.error],
     ['suppliers', suppliersRes.error],
@@ -134,6 +158,42 @@ export async function fetchDailyActivityData(days = 14): Promise<DailyActivityDa
   if (failed.length > 0) {
     throw new Error(`Failed to load: ${failed.map(([name]) => name).join(', ')}`)
   }
+
+  const money: MoneyRow[] = [
+    ...(salesPaymentsRes.data ?? []).map((r: any) => {
+      const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
+      const amt = Number(r.amount_etb ?? 0)
+      return { date: r.payment_date, direction: 'in' as const, category: 'sale' as const, party: customer?.name ?? 'Unknown customer', amount: amt, currency: 'ETB', etbAmount: amt }
+    }),
+    ...(creditRepaymentsRes.data ?? []).map((r: any) => {
+      const acct = one(r.credit_accounts); const customer = acct ? one(acct.customers) : null
+      const amt = Number(r.amount ?? 0)
+      return { date: r.transaction_date, direction: 'in' as const, category: 'credit_repayment' as const, party: customer?.name ?? 'Unknown customer', amount: amt, currency: 'ETB', etbAmount: amt }
+    }),
+    ...(expensesRes.data ?? []).map((r: any) => {
+      const amt = Number(r.amount ?? 0)
+      return { date: r.expense_date, direction: 'out' as const, category: 'expense' as const, party: r.vendor_name ?? r.description ?? 'Expense', amount: amt, currency: r.currency ?? 'ETB', etbAmount: r.currency === 'ETB' ? amt : 0 }
+    }),
+    ...(supplierPaymentsRes.data ?? []).map((r: any) => {
+      const payable = one(r.supplier_payables); const supplier = payable ? one((payable as any).suppliers) : null
+      const amt = Number(r.amount ?? 0)
+      const isHawala = r.method === 'hawala' && r.etb_amount != null
+      const etbAmount = isHawala ? Number(r.etb_amount) : ((payable as any)?.currency === 'ETB' ? amt : 0)
+      return {
+        date: r.payment_date, direction: 'out' as const, category: 'supplier_payment' as const,
+        party: supplier?.name ?? 'Unknown supplier', amount: amt, currency: (payable as any)?.currency ?? 'USD',
+        etbAmount, detail: isHawala ? (r.hawala_route ?? 'Hawala') : null,
+      }
+    }),
+    ...(shipmentExpensesRes.data ?? []).map((r: any) => {
+      const amt = Number(r.amount ?? 0)
+      return {
+        date: r.paid_at ? String(r.paid_at).slice(0, 10) : '', direction: 'out' as const, category: 'shipment_expense' as const,
+        party: r.vendor_name ?? r.description ?? 'Shipment cost', amount: amt, currency: r.currency ?? 'ETB',
+        etbAmount: Number(r.amount_etb ?? 0),
+      }
+    }).filter((r: MoneyRow) => r.date >= since),
+  ]
 
   const orderById = new Map((ordersRes.data ?? []).map((o: any) => [o.id, o]))
   const productionLogs: ProductionLogRow[] = (prodLogsRes.data ?? []).map((l: any) => {
@@ -180,19 +240,9 @@ export async function fetchDailyActivityData(days = 14): Promise<DailyActivityDa
       id: a.id, movement_date: a.movement_date, product_id: a.product_id,
       warehouse_id: a.warehouse_id, quantity: Number(a.quantity ?? 0), notes: a.notes,
     })),
-    paymentsIn: (paymentsRes.data ?? []).map((p: any) => ({ payment_date: p.payment_date, amount_etb: Number(p.amount_etb ?? 0) })),
+    money,
     warehouses: (warehousesRes.data ?? []) as LookupOption[],
     products: (productsRes.data ?? []) as LookupOption[],
     suppliers: (suppliersRes.data ?? []) as LookupOption[],
   }
-}
-
-export async function fetchExpensesByDate(dates: string[]) {
-  if (dates.length === 0) return []
-  const { data, error } = await supabase
-    .from('company_expenses')
-    .select('expense_date, amount, currency')
-    .in('expense_date', dates)
-  if (error) throw new Error(error.message)
-  return data
 }
