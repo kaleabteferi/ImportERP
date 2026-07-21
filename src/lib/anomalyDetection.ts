@@ -1,6 +1,6 @@
 // src/lib/anomalyDetection.ts — lightweight, non-LLM anomaly checks over the
 // unified transaction list (same shape Money Tracking already builds from
-// sales_payments, purchase_order_payments, credit_transactions, company_expenses,
+// sales_payments, supplier_payments, credit_transactions, company_expenses,
 // and shipment_expenses). Pure statistics: outlier amounts within a peer group,
 // and same-party/same-amount pairs close together in time (possible duplicate
 // entry — the exact failure mode a duplicate-order resubmit or a double-paid

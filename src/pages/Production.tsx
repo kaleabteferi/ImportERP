@@ -89,12 +89,11 @@ export function Production() {
   const [selectedWarehouseId, setSelectedWarehouseId] = usePageState('production.warehouseId', '')
   const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string; image_url: string | null }>>([])
   const [shipments, setShipments] = useState<Array<{ id: string; shipment_number: string }>>([])
-  const [purchaseOrders, setPurchaseOrders] = useState<Array<{ id: string; po_number: string }>>([])
   const [damageReports, setDamageReports] = useState<DamageReport[]>([])
   const [damageOpen, setDamageOpen] = useState(false)
   const [damageSaving, setDamageSaving] = useState(false)
   const [damageForm, setDamageForm] = useState({
-    productId: '', quantity: '', reason: '', shipmentId: '', purchaseOrderId: '',
+    productId: '', quantity: '', reason: '', shipmentId: '',
     reportDate: new Date().toISOString().split('T')[0],
   })
   const [bomQuery, setBomQuery] = useState('')
@@ -106,7 +105,7 @@ export function Production() {
     const since = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
 
     try {
-      const [ordersRes, logsRes, moveRes, salesRes, productsRes, bomRes, warehouseRows, shipmentsRes, poRes, damageRows] = await Promise.all([
+      const [ordersRes, logsRes, moveRes, salesRes, productsRes, bomRes, warehouseRows, shipmentsRes, damageRows] = await Promise.all([
         supabase.from('production_orders')
           .select('id, order_number, product_id, target_quantity, completed_quantity, status, planned_start_date, due_date, labor_cost_etb, bom_header_id, warehouse_id, created_at, updated_at')
           .in('status', ['DRAFT', 'IN_PROGRESS'])
@@ -128,7 +127,6 @@ export function Production() {
         supabase.from('bom_headers').select('id, product_id, name, stage').eq('is_active', true).order('name'),
         fetchWarehousesList(),
         supabase.from('shipments').select('id, shipment_number').order('created_at', { ascending: false }).limit(100),
-        supabase.from('purchase_orders').select('id, po_number').order('created_at', { ascending: false }).limit(100),
         fetchDamageReports(50),
       ])
 
@@ -138,7 +136,6 @@ export function Production() {
       if (salesRes.error) throw salesRes.error
       setProducts((productsRes.data ?? []).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku, image_url: p.image_url })))
       setShipments((shipmentsRes.data ?? []).map((s: any) => ({ id: s.id, shipment_number: s.shipment_number })))
-      setPurchaseOrders((poRes.data ?? []).map((p: any) => ({ id: p.id, po_number: p.po_number })))
       setDamageReports(damageRows)
       if (productsRes.error) throw productsRes.error
       if (bomRes.error) throw bomRes.error
@@ -235,11 +232,10 @@ export function Production() {
         quantity: qty,
         reason: damageForm.reason,
         shipmentId: damageForm.shipmentId || undefined,
-        purchaseOrderId: damageForm.purchaseOrderId || undefined,
         reportDate: damageForm.reportDate,
       })
       setDamageOpen(false)
-      setDamageForm({ productId: '', quantity: '', reason: '', shipmentId: '', purchaseOrderId: '', reportDate: new Date().toISOString().split('T')[0] })
+      setDamageForm({ productId: '', quantity: '', reason: '', shipmentId: '', reportDate: new Date().toISOString().split('T')[0] })
       load()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to log damage.')
@@ -747,7 +743,6 @@ export function Production() {
                 <span className="text-gray-600">
                   {d.report_date} · {products.find(p => p.id === d.product_id)?.name ?? '—'} · {d.reason}
                   {d.shipment_id && ` · ${shipments.find(s => s.id === d.shipment_id)?.shipment_number ?? ''}`}
-                  {d.purchase_order_id && ` · ${purchaseOrders.find(p => p.id === d.purchase_order_id)?.po_number ?? ''}`}
                 </span>
                 <span className="font-mono font-medium text-red-600">-{N(d.quantity)}</span>
               </div>
@@ -969,23 +964,13 @@ export function Production() {
                   value={damageForm.reason} onChange={e => setDamageForm(f => ({ ...f, reason: e.target.value }))}
                   placeholder="e.g. crushed carton, water damage on arrival" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">From shipment (optional)</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    value={damageForm.shipmentId} onChange={e => setDamageForm(f => ({ ...f, shipmentId: e.target.value }))}>
-                    <option value="">Not linked</option>
-                    {shipments.map(s => <option key={s.id} value={s.id}>{s.shipment_number}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">From PO (optional)</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    value={damageForm.purchaseOrderId} onChange={e => setDamageForm(f => ({ ...f, purchaseOrderId: e.target.value }))}>
-                    <option value="">Not linked</option>
-                    {purchaseOrders.map(p => <option key={p.id} value={p.id}>{p.po_number}</option>)}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">From shipment (optional)</label>
+                <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  value={damageForm.shipmentId} onChange={e => setDamageForm(f => ({ ...f, shipmentId: e.target.value }))}>
+                  <option value="">Not linked</option>
+                  {shipments.map(s => <option key={s.id} value={s.id}>{s.shipment_number}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Warehouse</label>

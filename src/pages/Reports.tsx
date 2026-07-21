@@ -26,6 +26,7 @@ export function Reports() {
   const [cash, setCash]     = useState<CashRow[]>([])
   const [payablesEtb, setPayablesEtb] = useState(0)
   const [payablesUsd, setPayablesUsd] = useState(0)
+  const [payablesCny, setPayablesCny] = useState(0)
   const [receivablesEtb, setReceivablesEtb] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -39,16 +40,19 @@ export function Reports() {
 
       const [
         salesRes, salesPaymentsRes, creditRepaymentsRes,
-        purchasePaymentsRes, expensesRes, shipmentExpensesPaidRes,
-        purchaseOrdersRes, shipmentExpensesUnpaidRes, customersRes,
+        supplierPaymentsRes, expensesRes, shipmentExpensesPaidRes,
+        supplierPayablesRes, shipmentExpensesUnpaidRes, customersRes,
       ] = await Promise.all([
         supabase.from('sales_orders').select('sale_date, total_etb, total_cogs_etb, gross_profit_etb').gte('sale_date', sixAgoIso).in('status', ['INVOICED', 'PAID']).order('sale_date'),
         supabase.from('sales_payments').select('amount_etb, payment_date').gte('payment_date', sixAgoIso),
         supabase.from('credit_transactions').select('amount, transaction_date').eq('type', 'repayment').gte('transaction_date', sixAgoIso),
-        supabase.from('purchase_order_payments').select('amount, currency, payment_date').gte('payment_date', sixAgoIso),
+        // Replaces purchase_order_payments — that table has never had a row
+        // (nothing in the app creates a purchase_orders record); supplier_payments
+        // is the real "money paid to a supplier" ledger, including hawala.
+        supabase.from('supplier_payments').select('amount, payment_date, method, etb_amount, supplier_payables(currency)').gte('payment_date', sixAgoIso),
         supabase.from('company_expenses').select('amount, currency, expense_date').gte('expense_date', sixAgoIso),
         supabase.from('shipment_expenses').select('amount_etb, currency, paid_at').eq('is_paid', true).gte('paid_at', sixAgoIso),
-        supabase.from('purchase_orders').select('total_amount, paid_amount, currency'),
+        supabase.from('supplier_payables').select('total_amount, paid_amount, currency'),
         supabase.from('shipment_expenses').select('amount_etb, currency').eq('is_paid', false),
         supabase.from('customers').select('outstanding_etb'),
       ])
@@ -68,7 +72,7 @@ export function Reports() {
 
       // ---- Cash flow — every payment recorded anywhere in the app ----
       // In: sales payments + credit account repayments.
-      // Out: supplier PO payments + company expenses + paid shipment expenses
+      // Out: supplier payments + company expenses + paid shipment expenses
       // (the Payables page's "Mark as paid" flow) — ETB-denominated rows only,
       // matching the same approximation used on the Dashboard.
       const cashMap = new Map<string, CashRow>()
@@ -80,26 +84,38 @@ export function Reports() {
       }
       for (const r of salesPaymentsRes.data ?? []) bump(r.payment_date, 'cashIn', Number(r.amount_etb ?? 0))
       for (const r of creditRepaymentsRes.data ?? []) bump(r.transaction_date, 'cashIn', Number(r.amount ?? 0))
-      for (const r of (purchasePaymentsRes.data ?? []).filter((p: any) => p.currency === 'ETB')) bump(r.payment_date, 'cashOut', Number(r.amount ?? 0))
+      // A supplier_payment's `amount` is in the payable's own currency
+      // (usually USD/CNY — that's the point of hawala). The real ETB cash
+      // outlay is `etb_amount` for a hawala payment, or `amount` itself when
+      // the payable happens to be ETB-denominated — matching the Dashboard's
+      // cashOutEtb calculation exactly.
+      for (const r of (supplierPaymentsRes.data ?? []) as any[]) {
+        const payable = Array.isArray(r.supplier_payables) ? r.supplier_payables[0] : r.supplier_payables
+        if (r.method === 'hawala' && r.etb_amount != null) bump(r.payment_date, 'cashOut', Number(r.etb_amount))
+        else if (payable?.currency === 'ETB') bump(r.payment_date, 'cashOut', Number(r.amount ?? 0))
+      }
       for (const r of (expensesRes.data ?? []).filter((e: any) => e.currency === 'ETB')) bump(r.expense_date, 'cashOut', Number(r.amount ?? 0))
       for (const r of (shipmentExpensesPaidRes.data ?? []).filter((e: any) => e.currency === 'ETB')) bump(r.paid_at ? String(r.paid_at).slice(0, 10) : null, 'cashOut', Number(r.amount_etb ?? 0))
 
       setCash([...cashMap.values()].sort((a, b) => a.month.localeCompare(b.month)))
 
       // ---- Outstanding today ----
-      const poOutstanding = (purchaseOrdersRes.data ?? [])
-        .filter((po: any) => po.currency === 'ETB')
-        .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0)
+      const payableOutstanding = (supplierPayablesRes.data ?? [])
+        .filter((p: any) => p.currency === 'ETB')
+        .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0)
       const shipExpOutstanding = (shipmentExpensesUnpaidRes.data ?? [])
         .filter((e: any) => e.currency === 'ETB')
         .reduce((s: number, e: any) => s + Number(e.amount_etb ?? 0), 0)
-      setPayablesEtb(poOutstanding + shipExpOutstanding)
-      // Purchase orders run mostly USD-priced — surfaced separately rather
-      // than folded into one ETB total, to avoid re-converting and risking
-      // the same currency-drift bug fixed elsewhere in this app.
-      setPayablesUsd((purchaseOrdersRes.data ?? [])
-        .filter((po: any) => po.currency === 'USD')
-        .reduce((s: number, po: any) => s + Math.max(0, Number(po.total_amount ?? 0) - Number(po.paid_amount ?? 0)), 0))
+      setPayablesEtb(payableOutstanding + shipExpOutstanding)
+      // Supplier payables run mostly USD/CNY-priced — surfaced separately
+      // rather than folded into one ETB total, to avoid re-converting and
+      // risking the same currency-drift bug fixed elsewhere in this app.
+      setPayablesUsd((supplierPayablesRes.data ?? [])
+        .filter((p: any) => p.currency === 'USD')
+        .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0))
+      setPayablesCny((supplierPayablesRes.data ?? [])
+        .filter((p: any) => p.currency === 'CNY')
+        .reduce((s: number, p: any) => s + Math.max(0, Number(p.total_amount ?? 0) - Number(p.paid_amount ?? 0)), 0))
       setReceivablesEtb((customersRes.data ?? []).reduce((s: number, c: any) => s + Number(c.outstanding_etb ?? 0), 0))
 
       setLoading(false)
@@ -145,13 +161,15 @@ export function Reports() {
 
       {/* Outstanding today */}
       <div className="grid grid-cols-2 gap-3 mb-6">
-        <Link to="/payables" className="group bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between transition-all hover:border-red-300 hover:shadow-sm">
+        <Link to="/supplier-payments" className="group bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between transition-all hover:border-red-300 hover:shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center shrink-0"><Wallet size={16} className="text-red-600" /></div>
             <div>
               <p className="text-xs text-gray-400">Payables outstanding</p>
               <p className="text-lg font-medium text-red-700">
-                {N(payablesEtb)} ETB{payablesUsd > 0 && ` · $${N(payablesUsd)}`}
+                {N(payablesEtb)} ETB
+                {payablesUsd > 0 && ` · $${N(payablesUsd)}`}
+                {payablesCny > 0 && ` · ¥${N(payablesCny)}`}
               </p>
             </div>
           </div>
