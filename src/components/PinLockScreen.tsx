@@ -20,6 +20,25 @@ export function PinLockScreen() {
 
   useEffect(() => { setMode(status === 'needs-setup' ? 'setup-create' : 'verify') }, [status])
 
+  // Physical keyboard as an alternative to tapping the on-screen keypad —
+  // digits 0-9 behave exactly like a Keypad tap, Backspace like the
+  // backspace button. Skipped in forgot-password mode, which already has
+  // its own text input capturing keystrokes.
+  useEffect(() => {
+    if (mode === 'forgot-password') return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault()
+        handleDigit(e.key)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        handleBackspace()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mode, entry, busy, firstPin])
+
   function fail(message: string) {
     setError(message)
     setShake(true)

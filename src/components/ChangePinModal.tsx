@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { KeyRound, X } from 'lucide-react'
 import { setPin as apiSetPin, verifyPin as apiVerifyPin } from '../api/pin'
 import { Dots, Keypad } from './PinKeypad'
@@ -11,6 +11,24 @@ export function ChangePinModal({ onClose }: { onClose: () => void }) {
   const [firstNew, setFirstNew] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  function handleBackspace() { setEntry(e => e.slice(0, -1)); setError(null) }
+
+  // Physical keyboard as an alternative to the on-screen keypad.
+  useEffect(() => {
+    if (step === 'done') return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault()
+        handleDigit(e.key)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        handleBackspace()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [step, entry, busy, firstNew])
 
   async function handleDigit(d: string) {
     if (busy || entry.length >= 4) return
@@ -64,7 +82,7 @@ export function ChangePinModal({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <Dots length={4} filled={entry.length} />
-            <Keypad onDigit={handleDigit} onBackspace={() => { setEntry(e => e.slice(0, -1)); setError(null) }} disabled={busy} />
+            <Keypad onDigit={handleDigit} onBackspace={handleBackspace} disabled={busy} />
           </>
         )}
       </div>
