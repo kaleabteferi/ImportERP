@@ -10,7 +10,7 @@ import { usePageState } from '../lib/pageState'
 import { detectAnomalies } from '../lib/anomalyDetection'
 import {
   Banknote, Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
-  Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight,
+  Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight, ArrowUpDown,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
 
@@ -329,6 +329,7 @@ export function MoneyTracking() {
   const [query, setQuery] = usePageState('moneyTracking.query', '')
   const [dateFrom, setDateFrom] = usePageState('moneyTracking.dateFrom', '')
   const [dateTo, setDateTo] = usePageState('moneyTracking.dateTo', '')
+  const [dateSort, setDateSort] = usePageState<'newest' | 'oldest'>('moneyTracking.dateSort', 'newest')
   const [methodFilter, setMethodFilter] = usePageState('moneyTracking.methodFilter', '')
   const [activeForm, setActiveForm] = useState<'income' | 'expense' | null>(null)
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null)
@@ -350,7 +351,7 @@ export function MoneyTracking() {
           // supplier_payments is the real "money paid to a supplier" ledger,
           // including hawala (route/rate carried in hawala_route).
           supabase.from('supplier_payments').select('id, amount, method, sensitive_flag, notes, payment_date, account_id, hawala_route, supplier_payables(reference, currency, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
-          supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
+          supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, sales_orders(order_number), credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
           supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name, account_id').order('expense_date', { ascending: false }).limit(200),
           // Shipment expenses paid via Payables -> "Mark as paid" — otherwise
           // invisible here even though real cash left the business.
@@ -373,7 +374,10 @@ export function MoneyTracking() {
 
       const salesTxns: Txn[] = (salesRes.data ?? []).map((r: any) => {
         const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
-        return { id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null } as Txn
+        return {
+          id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null,
+          detail: order?.order_number ? `Order ${order.order_number}` : null,
+        } as Txn
       })
       const supplierPayTxns: Txn[] = (supplierPayRes.data ?? []).map((r: any) => {
         const payable = one(r.supplier_payables); const supplier = payable ? one(payable.suppliers) : null
@@ -387,13 +391,22 @@ export function MoneyTracking() {
       })
       const creditTxns: Txn[] = (creditTxRes.data ?? []).map((r: any) => {
         const account = one(r.credit_accounts); const customer = account ? one(account.customers) : null
-        return { id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment', accountName: accountNameById.get(r.account_id) ?? null } as Txn
+        const order = one(r.sales_orders)
+        return {
+          id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment', accountName: accountNameById.get(r.account_id) ?? null,
+          detail: order?.order_number ? `Order ${order.order_number}` : 'General repayment',
+        } as Txn
       })
+      // party is vendor_name when there is one, description otherwise — so
+      // only surface description separately (what the money was actually
+      // for) when it isn't already doing double duty as the party name.
       const expenseTxns: Txn[] = (expenseRes.data ?? []).map((r: any) => ({
         id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', method: r.method ?? 'cash', date: r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'expense', accountName: accountNameById.get(r.account_id) ?? null,
+        detail: r.vendor_name ? r.description : null,
       } as Txn))
       const shipExpTxns: Txn[] = (shipExpRes.data ?? []).map((r: any) => ({
         id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
+        detail: r.vendor_name ? r.description : null,
       } as Txn))
 
       setTxns([...salesTxns, ...supplierPayTxns, ...creditTxns, ...expenseTxns, ...shipExpTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
@@ -422,8 +435,9 @@ export function MoneyTracking() {
     .filter(t => !methodFilter || t.method === methodFilter)
     .filter(t => !dateFrom || (t.date ?? '').slice(0, 10) >= dateFrom)
     .filter(t => !dateTo || (t.date ?? '').slice(0, 10) <= dateTo)
-    .filter(t => t.party.toLowerCase().includes(query.toLowerCase())),
-    [txns, direction, query, methodFilter, dateFrom, dateTo])
+    .filter(t => t.party.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => dateSort === 'newest' ? (b.date ?? '').localeCompare(a.date ?? '') : (a.date ?? '').localeCompare(b.date ?? '')),
+    [txns, direction, query, methodFilter, dateFrom, dateTo, dateSort])
   const hasListFilters = !!(query || methodFilter || dateFrom || dateTo || direction !== 'all')
 
   // Last 14 days, net cash per day — a quick "is the trend healthy" glance
@@ -610,6 +624,13 @@ export function MoneyTracking() {
                 <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
                   className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
               </div>
+              <button
+                onClick={() => setDateSort(s => s === 'newest' ? 'oldest' : 'newest')}
+                title="Sort by date"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+              >
+                <ArrowUpDown size={12} className={dateSort === 'oldest' ? 'rotate-180' : ''} /> {dateSort === 'newest' ? 'Newest first' : 'Oldest first'}
+              </button>
               {hasListFilters && (
                 <button onClick={() => { setQuery(''); setMethodFilter(''); setDateFrom(''); setDateTo(''); setDirection('all') }}
                   className="text-xs text-blue-600 hover:underline">Clear filters</button>
