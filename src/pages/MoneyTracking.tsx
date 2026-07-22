@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { recordQuickIncome, fetchWarehousesList } from '../api/income'
 import { recordCompanyExpense, fetchCompaniesList, fetchEmployeesList } from '../api/companyExpenses'
@@ -693,7 +694,12 @@ export function MoneyTracking() {
             ))}
           </div>
 
-          <div className="text-xs font-medium text-gray-500 mb-2">Credit — what's owed, and by whom</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-medium text-gray-500">Credit — what's owed, and by whom</div>
+            <Link to="/credit-accounts" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+              Record a repayment <ChevronRight size={12} />
+            </Link>
+          </div>
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             {credit.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No open credit accounts.</p>

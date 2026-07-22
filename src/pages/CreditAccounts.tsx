@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { fetchCreditAccounts, fetchCustomersForCredit, openCreditAccount, recordCreditTransaction, fetchOutstandingCreditOrders } from '../api/credit'
 import type { OutstandingCreditOrder } from '../api/credit'
-import { CreditCard as CardIcon, Loader2, Plus, X, ShieldAlert } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { usePageState } from '../lib/pageState'
+import { CreditCard as CardIcon, Loader2, Plus, X, ShieldAlert, ArrowRightLeft, ArrowUpDown } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
 interface CreditAccount {
@@ -242,8 +244,15 @@ export function CreditAccounts() {
 
   useEffect(() => { load() }, [load])
 
+  const [statusFilter, setStatusFilter] = usePageState<'all' | 'active' | 'overdue' | 'settled'>('creditAccounts.statusFilter', 'all')
+  const [dateSort, setDateSort] = usePageState<'soonest' | 'latest'>('creditAccounts.dateSort', 'soonest')
+
   const totalOutstanding = accounts.reduce((s, a) => s + a.balance, 0)
   const overdueCount = accounts.filter(a => a.status === 'overdue').length
+  const sortedAccounts = useMemo(() => accounts
+    .filter(a => statusFilter === 'all' || a.status === statusFilter)
+    .sort((a, b) => dateSort === 'soonest' ? a.due_date.localeCompare(b.due_date) : b.due_date.localeCompare(a.due_date)),
+    [accounts, statusFilter, dateSort])
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -252,8 +261,11 @@ export function CreditAccounts() {
           <h1 className="text-lg font-medium flex items-center gap-2">
             <CardIcon size={18} /> Credit accounts
           </h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            What each customer owes, and where — draws happen automatically when you record a credit sale in Money Tracking
+          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
+            What each customer owes, and where — draws happen automatically when you record a credit sale
+            <Link to="/receivables" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
+              <ArrowRightLeft size={10} /> Credit-funded sales also show in Receivables until repaid
+            </Link>
           </p>
         </div>
         <button
@@ -292,9 +304,28 @@ export function CreditAccounts() {
           No credit accounts yet. Open one above to get started.
         </div>
       ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="overdue">Overdue</option>
+              <option value="settled">Settled</option>
+            </select>
+            <button
+              onClick={() => setDateSort(s => s === 'soonest' ? 'latest' : 'soonest')}
+              title="Sort by due date"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >
+              <ArrowUpDown size={12} className={dateSort === 'latest' ? 'rotate-180' : ''} /> Due {dateSort === 'soonest' ? 'soonest first' : 'latest first'}
+            </button>
+          </div>
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {accounts.map((a, i) => (
-            <div key={a.id} className={i < accounts.length - 1 ? 'border-b border-gray-50' : ''}>
+          {sortedAccounts.length === 0 ? (
+            <p className="px-4 py-8 text-xs text-gray-400 text-center">No accounts match this filter.</p>
+          ) : sortedAccounts.map((a, i) => (
+            <div key={a.id} className={i < sortedAccounts.length - 1 ? 'border-b border-gray-50' : ''}>
               <div className="flex items-center gap-3 px-4 py-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{a.customer_name}</p>
@@ -326,6 +357,7 @@ export function CreditAccounts() {
             </div>
           ))}
         </div>
+        </>
       )}
     </div>
   )

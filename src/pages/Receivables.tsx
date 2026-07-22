@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { recordPayment } from '../api/sales'
 import { fetchAccounts } from '../api/accounts'
 import type { Account } from '../api/accounts'
-import { CreditCard, Loader2, AlertTriangle, ShieldAlert, X } from 'lucide-react'
+import { usePageState } from '../lib/pageState'
+import { CreditCard, Loader2, AlertTriangle, ShieldAlert, X, Landmark, ArrowUpDown, ExternalLink } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
 interface Receivable {
@@ -15,6 +17,7 @@ interface Receivable {
   sale_date: string | null
   status: string
   days_outstanding: number
+  creditAccountId: string | null
 }
 
 const N = (n: number) =>
@@ -166,6 +169,24 @@ export function Receivables() {
         }
 
         const today = new Date()
+        const orderIds = (salesRes.data ?? []).map((r: any) => r.id)
+        // Which of these orders were funded by a credit draw, and which
+        // account — paying one down here with a plain cash/bank payment
+        // would settle it in this view while leaving Credit Accounts'
+        // balance untouched, since that only moves on credit_transactions.
+        // Route those to Credit Accounts instead of the risk of desync.
+        const creditAccountByOrder = new Map<string, string>()
+        if (orderIds.length > 0) {
+          const { data: draws } = await supabase
+            .from('credit_transactions')
+            .select('sales_order_id, credit_account_id')
+            .eq('type', 'draw')
+            .in('sales_order_id', orderIds)
+          for (const d of (draws ?? []) as any[]) {
+            if (d.sales_order_id) creditAccountByOrder.set(d.sales_order_id, d.credit_account_id)
+          }
+        }
+
         const rowsData = (salesRes.data ?? []).map((r: any) => {
           const saleDate = r.sale_date ? new Date(r.sale_date) : today
           const days = Math.floor((today.getTime() - saleDate.getTime()) / 86400000)
@@ -185,6 +206,7 @@ export function Receivables() {
             sale_date: r.sale_date,
             status: r.status,
             days_outstanding: days,
+            creditAccountId: creditAccountByOrder.get(r.id) ?? null,
           }
         })
 
@@ -199,8 +221,15 @@ export function Receivables() {
 
   useEffect(() => { load() }, [load])
 
+  const [dateSort, setDateSort] = usePageState<'newest' | 'oldest'>('receivables.dateSort', 'oldest')
+  const [fundingFilter, setFundingFilter] = usePageState<'all' | 'cash' | 'credit'>('receivables.fundingFilter', 'all')
+
   const totalOutstanding = rows.reduce((s, r) => s + (r.total_etb - r.paid_etb), 0)
   const overdue = rows.filter(r => r.days_outstanding > 30)
+  const sortedRows = useMemo(() => rows
+    .filter(r => fundingFilter === 'all' || (fundingFilter === 'credit' ? !!r.creditAccountId : !r.creditAccountId))
+    .sort((a, b) => dateSort === 'newest' ? (b.sale_date ?? '').localeCompare(a.sale_date ?? '') : (a.sale_date ?? '').localeCompare(b.sale_date ?? '')),
+    [rows, dateSort, fundingFilter])
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -233,15 +262,38 @@ export function Receivables() {
           No open receivables. Invoiced sales orders appear here.
         </div>
       ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <select value={fundingFilter} onChange={e => setFundingFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
+              <option value="all">All receivables</option>
+              <option value="cash">Cash/bank sales only</option>
+              <option value="credit">Credit sales only</option>
+            </select>
+            <button
+              onClick={() => setDateSort(s => s === 'newest' ? 'oldest' : 'newest')}
+              title="Sort by date"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >
+              <ArrowUpDown size={12} className={dateSort === 'oldest' ? 'rotate-180' : ''} /> {dateSort === 'newest' ? 'Newest first' : 'Oldest first'}
+            </button>
+          </div>
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {rows.map((r, i) => {
+          {sortedRows.map((r, i) => {
             const outstanding = r.total_etb - r.paid_etb
             const isOverdue = r.days_outstanding > 30
             return (
-              <div key={r.id} className={i < rows.length - 1 ? 'border-b border-gray-50' : ''}>
+              <div key={r.id} className={i < sortedRows.length - 1 ? 'border-b border-gray-50' : ''}>
                 <div className="flex items-center gap-4 px-4 py-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{r.customer_name}</p>
+                    <p className="text-sm font-medium flex items-center gap-1.5">
+                      {r.customer_name}
+                      {r.creditAccountId && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 text-violet-700">
+                          <Landmark size={9} /> Credit sale
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-gray-400">
                       {r.order_number ?? 'Invoice'} · {r.sale_date ?? '—'} · {r.days_outstanding}d
                     </p>
@@ -257,12 +309,22 @@ export function Receivables() {
                       of {N(r.total_etb)} · paid {N(r.paid_etb)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setOpenFormId(openFormId === r.id ? null : r.id)}
-                    className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 shrink-0"
-                  >
-                    {openFormId === r.id ? <X size={12} /> : 'Record payment'}
-                  </button>
+                  {r.creditAccountId ? (
+                    <Link
+                      to="/credit-accounts"
+                      title="This was funded by a credit draw — settle it in Credit Accounts so both the order and the credit line update together"
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-violet-200 text-violet-700 hover:bg-violet-50 shrink-0"
+                    >
+                      Settle in Credit <ExternalLink size={11} />
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => setOpenFormId(openFormId === r.id ? null : r.id)}
+                      className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 shrink-0"
+                    >
+                      {openFormId === r.id ? <X size={12} /> : 'Record payment'}
+                    </button>
+                  )}
                 </div>
                 {openFormId === r.id && (
                   <RecordPaymentForm
@@ -276,6 +338,7 @@ export function Receivables() {
             )
           })}
         </div>
+        </>
       )}
     </div>
   )

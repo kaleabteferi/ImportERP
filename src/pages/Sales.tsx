@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { createSalesOrder, fetchOrdersWithMargins, recordPayment } from '../api/sales'
+import { createSalesOrder, fetchOrdersWithMargins, recordPayment, fetchSalesOrderForEdit, deleteSalesOrder } from '../api/sales'
 import { fetchCustomers, createCustomer } from '../api/customers'
 import { fetchWarehousesList } from '../api/income'
 import { fetchAccounts } from '../api/accounts'
@@ -9,7 +9,7 @@ import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import {
   ShoppingCart, Loader2, Plus, X, Check, AlertTriangle, CheckCircle2,
-  Package, Minus, Trash2, TrendingUp, Search,
+  Package, Minus, Trash2, TrendingUp, Search, Pencil, ArrowUpDown,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
@@ -77,6 +77,10 @@ export function Sales() {
   const [customerFilter, setCustomerFilter] = usePageState('sales.customerFilter', '')
   const [dateFrom, setDateFrom] = usePageState('sales.dateFrom', '')
   const [dateTo, setDateTo] = usePageState('sales.dateTo', '')
+  const [dateSort, setDateSort] = usePageState<'newest' | 'oldest'>('sales.dateSort', 'newest')
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [rowError, setRowError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -158,6 +162,42 @@ export function Sales() {
     setCreditAccountId('')
     setJustCreatedCustomerId(null)
     setSaleDate(new Date().toISOString().split('T')[0])
+    setEditingOrderId(null)
+  }
+
+  function closeModal() {
+    setOpen(false)
+    resetForm()
+  }
+
+  async function openEditOrder(order: OrderRow) {
+    setRowError(null)
+    try {
+      const full = await fetchSalesOrderForEdit(order.id)
+      setCustomerId(full.customer_id)
+      setWarehouseId(full.warehouse_id)
+      setSaleDate(full.sale_date)
+      setCart(full.lines.map(l => ({ productId: l.product_id, quantity: l.quantity, unitPriceEtb: l.unit_price_etb })))
+      setPayNow(false)
+      setEditingOrderId(order.id)
+      setError(null); setSuccess(null)
+      setOpen(true)
+    } catch (e: any) {
+      setRowError(e?.message ?? 'Failed to load this order for editing.')
+    }
+  }
+
+  async function handleDelete(order: OrderRow) {
+    if (!confirm(`Delete ${order.order_number}? This restores the stock it took out. Can't be undone.`)) return
+    setDeletingId(order.id); setRowError(null)
+    try {
+      await deleteSalesOrder(order.id)
+      await load()
+    } catch (e: any) {
+      setRowError(e?.message ?? 'Failed to delete this order.')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   async function addCustomer() {
@@ -176,15 +216,37 @@ export function Sales() {
     if (cart.length === 0) { setError('Add at least one item.'); return }
     if (cart.some(l => l.quantity <= 0 || l.unitPriceEtb <= 0)) { setError('Every line needs a quantity and price greater than 0.'); return }
     if (payNow && method !== 'credit' && !accountId) { setError('Choose which account received the money.'); return }
-    const shortLine = cart.find(l => l.quantity > (stockByProduct[l.productId] ?? 0))
-    if (shortLine) {
-      const p = products.find(x => x.id === shortLine.productId)
-      setError(`Not enough stock at this warehouse for ${p?.name ?? 'this product'} — ${stockByProduct[shortLine.productId] ?? 0} available, ${shortLine.quantity} requested.`)
-      return
+    // Editing an order restores its own stock before recreating it, so the
+    // cached stockByProduct (still counting this order's lines as "sold")
+    // would under-report what's really available — skip the pre-check and
+    // let create_sales_order validate against the post-delete stock itself.
+    if (!editingOrderId) {
+      const shortLine = cart.find(l => l.quantity > (stockByProduct[l.productId] ?? 0))
+      if (shortLine) {
+        const p = products.find(x => x.id === shortLine.productId)
+        setError(`Not enough stock at this warehouse for ${p?.name ?? 'this product'} — ${stockByProduct[shortLine.productId] ?? 0} available, ${shortLine.quantity} requested.`)
+        return
+      }
     }
 
     setSaving(true); setError(null); setSuccess(null)
     try {
+      if (editingOrderId) {
+        await deleteSalesOrder(editingOrderId)
+        const result = await createSalesOrder({
+          customer_id: customerId,
+          warehouse_id: warehouseId,
+          sale_date: saleDate,
+          payment_terms: 'Credit',
+          lines: cart.map(l => ({ product_id: l.productId, quantity: l.quantity, unit_price_etb: l.unitPriceEtb })),
+        })
+        setSuccess(`${result.order_number} updated — ${N(result.total_etb)} ETB, margin ${result.gross_margin_pct?.toFixed(1) ?? '—'}%`)
+        setOpen(false)
+        resetForm()
+        load()
+        return
+      }
+
       // A customer created inline on this page can't have picked a credit
       // account yet (none exist). Open one automatically instead of
       // blocking the sale, sized to cover this order.
@@ -257,8 +319,9 @@ export function Sales() {
       return o.order_number.toLowerCase().includes(q)
         || (o.invoice_number ?? '').toLowerCase().includes(q)
         || oneName(o.customers).toLowerCase().includes(q)
-    }),
-    [orders, statusFilter, customerFilter, dateFrom, dateTo, listSearch])
+    })
+    .sort((a, b) => dateSort === 'newest' ? b.sale_date.localeCompare(a.sale_date) : a.sale_date.localeCompare(b.sale_date)),
+    [orders, statusFilter, customerFilter, dateFrom, dateTo, listSearch, dateSort])
   const hasListFilters = !!(listSearch || statusFilter || customerFilter || dateFrom || dateTo)
   function clearListFilters() {
     setListSearch(''); setStatusFilter(''); setCustomerFilter(''); setDateFrom(''); setDateTo('')
@@ -272,7 +335,7 @@ export function Sales() {
           <p className="text-xs text-gray-400 mt-0.5">Record a sale — stock, payment, and customer credit update automatically</p>
         </div>
         <button
-          onClick={() => { setOpen(true); setError(null); setSuccess(null) }}
+          onClick={() => { resetForm(); setOpen(true); setError(null); setSuccess(null) }}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
         >
           <Plus size={13} /> New sale
@@ -282,6 +345,11 @@ export function Sales() {
       {!open && error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
           <AlertTriangle size={12} /> {error}
+        </div>
+      )}
+      {rowError && (
+        <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <AlertTriangle size={12} /> {rowError}
         </div>
       )}
       {success && (
@@ -329,6 +397,13 @@ export function Sales() {
               <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
                 className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
             </div>
+            <button
+              onClick={() => setDateSort(s => s === 'newest' ? 'oldest' : 'newest')}
+              title="Sort by date"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            >
+              <ArrowUpDown size={12} className={dateSort === 'oldest' ? 'rotate-180' : ''} /> {dateSort === 'newest' ? 'Newest first' : 'Oldest first'}
+            </button>
             {hasListFilters && (
               <button onClick={clearListFilters} className="text-xs text-blue-600 hover:underline">Clear filters</button>
             )}
@@ -337,7 +412,7 @@ export function Sales() {
             <div className="text-center py-12 text-gray-400 text-sm">No orders match this filter.</div>
           ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5
+          <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <div>Order</div>
             <div>Customer</div>
@@ -345,9 +420,12 @@ export function Sales() {
             <div className="text-right">Total</div>
             <div className="text-right">Margin</div>
             <div>Status</div>
+            <div></div>
           </div>
-          {filteredOrders.map((o, i) => (
-            <div key={o.id} className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm ${i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}`}>
+          {filteredOrders.map((o, i) => {
+            const editable = Number(o.paid_amount ?? 0) === 0
+            return (
+            <div key={o.id} className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-3 items-center text-sm ${i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}`}>
               <div>
                 <p className="font-medium">{o.order_number}</p>
                 {o.invoice_number && <p className="text-xs text-gray-400">{o.invoice_number}</p>}
@@ -371,8 +449,23 @@ export function Sales() {
                   {o.status}
                 </span>
               </div>
+              <div className="flex items-center gap-1 justify-end">
+                {editable ? (
+                  <>
+                    <button onClick={() => openEditOrder(o)} title="Edit"
+                      className="p-1 text-gray-300 hover:text-blue-600"><Pencil size={12} /></button>
+                    <button onClick={() => handleDelete(o)} disabled={deletingId === o.id} title="Delete"
+                      className="p-1 text-gray-300 hover:text-red-500 disabled:opacity-40">
+                      {deletingId === o.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-[10px] text-gray-300" title="Already paid — edit the payment in Receivables instead">—</span>
+                )}
+              </div>
             </div>
-          ))}
+            )
+          })}
         </div>
           )}
         </>
@@ -380,11 +473,11 @@ export function Sales() {
 
       {open && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}>
+          onClick={e => e.target === e.currentTarget && closeModal()}>
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New sale</h2>
-              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+              <h2 className="text-sm font-medium">{editingOrderId ? 'Edit sale' : 'New sale'}</h2>
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
             <div className="px-5 py-4 space-y-4">
               {error && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
@@ -504,6 +597,10 @@ export function Sales() {
               </div>
 
               <div className="border-t border-gray-100 pt-3">
+                {editingOrderId ? (
+                  <p className="text-xs text-gray-400">Editing only changes the items, date, customer, or warehouse — payment is recorded separately from Receivables.</p>
+                ) : (
+                <>
                 <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
                   <input type="checkbox" checked={payNow} onChange={e => setPayNow(e.target.checked)} />
                   Payment received now
@@ -552,13 +649,15 @@ export function Sales() {
                 {payNow && method === 'hawala' && (
                   <div className="mt-2"><HawalaFields value={hawala} onChange={setHawala} /></div>
                 )}
+                </>
+                )}
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={closeModal} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
               <button onClick={submit} disabled={saving}
                 className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 min-w-[130px] justify-center">
-                {saving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : `Record sale · ${N(cartTotal)} ETB`}
+                {saving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : editingOrderId ? `Save changes · ${N(cartTotal)} ETB` : `Record sale · ${N(cartTotal)} ETB`}
               </button>
             </div>
           </div>
