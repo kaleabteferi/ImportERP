@@ -488,6 +488,19 @@ export function Production() {
     .filter(l => l.log_date === todayStr)
     .reduce((s, l) => s + l.quantity_produced, 0)
 
+  // How many units per day an order needs to hit its due date — null when
+  // there's no due date to pace against. Inclusive of both the start and
+  // due day, so a 1-day order (start === due) still divides by 1, not 0.
+  function dailyGoal(o: ProductionOrder): number | null {
+    if (!o.due_date) return null
+    const start = o.planned_start_date ? new Date(o.planned_start_date) : new Date()
+    const due = new Date(o.due_date)
+    const days = Math.max(1, Math.round((due.getTime() - start.getTime()) / 86400000) + 1)
+    return o.target_quantity / days
+  }
+  const totalDailyGoal = activeOrders.reduce((s, o) => s + (dailyGoal(o) ?? 0), 0)
+  const todayEfficiencyPct = totalDailyGoal > 0 ? Math.round((totalToday / totalDailyGoal) * 100) : null
+
   const withdrawals = movements.filter(m => m.movement_type === 'PRODUCTION_CONSUMED')
   const outputs     = movements.filter(m => m.movement_type === 'PRODUCTION_OUTPUT')
   const salesMoves  = movements.filter(m => m.movement_type === 'SALE')
@@ -501,6 +514,11 @@ export function Production() {
           <p className="text-xs text-gray-400 mt-0.5">
             {activeOrders.length} open orders
             {totalToday > 0 && ` · ${N(totalToday)} units logged today`}
+            {todayEfficiencyPct !== null && (
+              <span className={`font-medium ${todayEfficiencyPct >= 100 ? 'text-green-600' : todayEfficiencyPct >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
+                {' '}· {todayEfficiencyPct}% of today's goal
+              </span>
+            )}
             {lateOrders.length > 0 && (
               <span className="text-red-600 font-medium"> · {lateOrders.length} late</span>
             )}
@@ -632,6 +650,8 @@ export function Production() {
                     const barColor = pct >= 100
                       ? 'bg-green-500' : pct >= 50 ? 'bg-blue-500' : 'bg-amber-400'
                     const remaining = order.target_quantity - order.completed_quantity
+                    const goal = dailyGoal(order)
+                    const effPct = goal && goal > 0 ? Math.round(((todayLog?.quantity_produced ?? 0) / goal) * 100) : null
 
                     return (
                       <div key={order.id}
@@ -672,17 +692,21 @@ export function Production() {
                           <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
                                style={{ width: `${pct}%` }} />
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
+                        <div className="grid grid-cols-5 gap-2">
                           {[
                             { label: 'Target',    val: N(order.target_quantity) },
                             { label: 'Done',      val: N(order.completed_quantity) },
                             { label: 'Remaining', val: N(remaining) },
-                            { label: 'Today',     val: todayLog ? N(todayLog.quantity_produced) : '—' },
+                            { label: 'Today',     val: todayLog ? N(todayLog.quantity_produced) : '—', sub: goal ? `of ${N(Math.ceil(goal))} goal` : undefined },
+                            { label: 'Efficiency', val: effPct !== null ? `${effPct}%` : '—', tone: effPct === null ? undefined : effPct >= 100 ? 'good' : effPct >= 70 ? 'warn' : 'bad' },
                           ].map(stat => (
                             <div key={stat.label}
                                  className="bg-gray-50 rounded-lg px-3 py-2 text-center">
                               <p className="text-xs text-gray-400 mb-1">{stat.label}</p>
-                              <p className="text-sm font-medium font-mono">{stat.val}</p>
+                              <p className={`text-sm font-medium font-mono ${
+                                stat.tone === 'good' ? 'text-green-600' : stat.tone === 'warn' ? 'text-amber-600' : stat.tone === 'bad' ? 'text-red-600' : ''
+                              }`}>{stat.val}</p>
+                              {stat.sub && <p className="text-[10px] text-gray-400">{stat.sub}</p>}
                             </div>
                           ))}
                         </div>
