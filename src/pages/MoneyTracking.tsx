@@ -5,13 +5,15 @@ import { recordQuickIncome, fetchWarehousesList } from '../api/income'
 import { recordCompanyExpense, fetchCompaniesList, fetchEmployeesList } from '../api/companyExpenses'
 import { fetchCustomers } from '../api/customers'
 import { fetchCreditAccounts } from '../api/credit'
-import { fetchAccounts } from '../api/accounts'
+import { fetchAccounts, fetchAccountBalances } from '../api/accounts'
+import type { Account } from '../api/accounts'
 import { updateTransaction, deleteTransaction } from '../api/transactions'
 import { usePageState } from '../lib/pageState'
 import { detectAnomalies } from '../lib/anomalyDetection'
 import {
   Banknote, Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
   Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight, ArrowUpDown,
+  Wallet, ChevronLeft,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
 
@@ -21,6 +23,17 @@ interface Txn {
   method: string; date: string | null; sensitive: boolean; notes: string | null
   source: 'sale' | 'purchase' | 'credit_repayment' | 'expense' | 'shipment_expense' | 'supplier_payment'
   accountName: string | null
+  // The account_id this transaction is tagged to, and how much of it actually
+  // moved through that account, in the account's own currency. Usually equal
+  // to `amount`, except a hawala supplier payment: `amount` is in the
+  // payable's currency (USD/CNY), but the account that funded it was debited
+  // in ETB (etb_amount) — the dealer, not the account, converted currencies.
+  // null when this transaction doesn't affect its tagged account's balance
+  // at all (currency mismatch) — mirrors fetchAccountBalances exactly, so a
+  // per-account statement built from this always agrees with the balance
+  // shown on the account card.
+  accountId: string | null
+  accountAmount: number | null
   detail?: string | null
 }
 interface CreditAccount { id: string; customer_id: string; customer_name: string; credit_limit: number; balance: number; due_date: string; status: string }
@@ -323,7 +336,9 @@ export function MoneyTracking() {
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [companies, setCompanies] = useState<Option[]>([])
   const [employees, setEmployees] = useState<Option[]>([])
-  const [accounts, setAccounts] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountBalances, setAccountBalances] = useState<Record<string, number>>({})
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [direction, setDirection] = usePageState<'all' | Direction>('moneyTracking.direction', 'all')
@@ -355,8 +370,11 @@ export function MoneyTracking() {
           supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, sales_orders(order_number), credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
           supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name, account_id').order('expense_date', { ascending: false }).limit(200),
           // Shipment expenses paid via Payables -> "Mark as paid" — otherwise
-          // invisible here even though real cash left the business.
-          supabase.from('shipment_expenses').select('id, description, amount_etb, currency, payment_method, sensitive_flag, notes, expense_date, vendor_name, account_id, paid_at').eq('is_paid', true).order('paid_at', { ascending: false }).limit(200),
+          // invisible here even though real cash left the business. Selects
+          // the native `amount`/`currency`, not `amount_etb` — a shipment
+          // expense paid in USD should show and count as USD, the same way
+          // a supplier payment already does, not get silently ETB-converted.
+          supabase.from('shipment_expenses').select('id, description, amount, amount_etb, currency, payment_method, sensitive_flag, notes, expense_date, vendor_name, account_id, paid_at').eq('is_paid', true).order('paid_at', { ascending: false }).limit(200),
           fetchCreditAccounts(),
           fetchCustomers(),
           fetchWarehousesList(),
@@ -372,43 +390,63 @@ export function MoneyTracking() {
       if (shipExpRes.error) throw shipExpRes.error
 
       const accountNameById = new Map(accountRows.map(a => [a.id, a.name]))
+      const accountCurrencyById = new Map(accountRows.map(a => [a.id, a.currency]))
 
       const salesTxns: Txn[] = (salesRes.data ?? []).map((r: any) => {
         const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
+        const amt = Number(r.amount_etb ?? 0)
         return {
-          id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null,
+          id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: amt, currency: 'ETB', method: r.method ?? 'cash', date: r.created_at, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'sale', accountName: accountNameById.get(r.account_id) ?? null,
+          accountId: r.account_id ?? null, accountAmount: accountCurrencyById.get(r.account_id) === 'ETB' ? amt : null,
           detail: order?.order_number ? `Order ${order.order_number}` : null,
         } as Txn
       })
       const supplierPayTxns: Txn[] = (supplierPayRes.data ?? []).map((r: any) => {
         const payable = one(r.supplier_payables); const supplier = payable ? one(payable.suppliers) : null
+        const acctCurrency = accountCurrencyById.get(r.account_id)
+        const isHawala = r.method === 'hawala' && r.etb_amount != null
+        const accountAmount = isHawala
+          ? (acctCurrency === 'ETB' ? Number(r.etb_amount) : null)
+          : (acctCurrency && acctCurrency === (payable?.currency ?? null) ? Number(r.amount ?? 0) : null)
         return {
           id: `supplierpay-${r.id}`, direction: 'out', party: supplier?.name ?? 'Unknown supplier',
           amount: Number(r.amount ?? 0), currency: payable?.currency ?? 'USD', method: r.method ?? 'cash',
           date: r.payment_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'supplier_payment',
-          accountName: accountNameById.get(r.account_id) ?? null,
+          accountName: accountNameById.get(r.account_id) ?? null, accountId: r.account_id ?? null, accountAmount,
           detail: r.hawala_route ?? payable?.reference ?? null,
         } as Txn
       })
       const creditTxns: Txn[] = (creditTxRes.data ?? []).map((r: any) => {
         const account = one(r.credit_accounts); const customer = account ? one(account.customers) : null
         const order = one(r.sales_orders)
+        const amt = Number(r.amount ?? 0)
         return {
-          id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: Number(r.amount ?? 0), currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment', accountName: accountNameById.get(r.account_id) ?? null,
+          id: `credit-${r.id}`, direction: 'in', party: customer?.name ?? 'Unknown customer', amount: amt, currency: 'ETB', method: r.method ?? 'cash', date: r.transaction_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'credit_repayment', accountName: accountNameById.get(r.account_id) ?? null,
+          accountId: r.account_id ?? null, accountAmount: accountCurrencyById.get(r.account_id) === 'ETB' ? amt : null,
           detail: order?.order_number ? `Order ${order.order_number}` : 'General repayment',
         } as Txn
       })
       // party is vendor_name when there is one, description otherwise — so
       // only surface description separately (what the money was actually
       // for) when it isn't already doing double duty as the party name.
-      const expenseTxns: Txn[] = (expenseRes.data ?? []).map((r: any) => ({
-        id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', method: r.method ?? 'cash', date: r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'expense', accountName: accountNameById.get(r.account_id) ?? null,
-        detail: r.vendor_name ? r.description : null,
-      } as Txn))
-      const shipExpTxns: Txn[] = (shipExpRes.data ?? []).map((r: any) => ({
-        id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount_etb ?? 0), currency: 'ETB', method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
-        detail: r.vendor_name ? r.description : null,
-      } as Txn))
+      const expenseTxns: Txn[] = (expenseRes.data ?? []).map((r: any) => {
+        const amt = Number(r.amount ?? 0)
+        const currency = r.currency ?? 'ETB'
+        return {
+          id: `expense-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: amt, currency, method: r.method ?? 'cash', date: r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'expense', accountName: accountNameById.get(r.account_id) ?? null,
+          accountId: r.account_id ?? null, accountAmount: accountCurrencyById.get(r.account_id) === currency ? amt : null,
+          detail: r.vendor_name ? r.description : null,
+        } as Txn
+      })
+      const shipExpTxns: Txn[] = (shipExpRes.data ?? []).map((r: any) => {
+        const amt = Number(r.amount ?? 0)
+        const currency = r.currency ?? 'ETB'
+        return {
+          id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: amt, currency, method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
+          accountId: r.account_id ?? null, accountAmount: accountCurrencyById.get(r.account_id) === currency ? amt : null,
+          detail: r.vendor_name ? r.description : null,
+        } as Txn
+      })
 
       setTxns([...salesTxns, ...supplierPayTxns, ...creditTxns, ...expenseTxns, ...shipExpTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
       setCredit((creditAcctRows ?? []).map((r: any) => ({
@@ -417,7 +455,8 @@ export function MoneyTracking() {
       })))
       setCustomers((customerRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
       setWarehouses((warehouseRows ?? []).map((w: any) => ({ id: w.id, name: w.name })))
-      setAccounts(accountRows.map(a => ({ id: a.id, name: a.name })))
+      setAccounts(accountRows)
+      fetchAccountBalances(accountRows).then(setAccountBalances).catch(() => setAccountBalances({}))
       setCompanies((companyRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
       setEmployees((employeeRows ?? []).map((e: any) => ({ id: e.id, name: e.full_name })))
     } catch (e: any) {
@@ -440,6 +479,26 @@ export function MoneyTracking() {
     .sort((a, b) => dateSort === 'newest' ? (b.date ?? '').localeCompare(a.date ?? '') : (a.date ?? '').localeCompare(b.date ?? '')),
     [txns, direction, query, methodFilter, dateFrom, dateTo, dateSort])
   const hasListFilters = !!(query || methodFilter || dateFrom || dateTo || direction !== 'all')
+
+  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? null
+
+  // A single account's statement: every transaction tagged to it (using
+  // accountAmount, not amount — see the Txn comment) walked chronologically
+  // to build a running balance, then reversed so the newest entry — and its
+  // balance, which is the account's current balance — reads first, matching
+  // how the rest of this page already orders things.
+  const accountLedger = useMemo(() => {
+    if (!selectedAccountId) return []
+    const rows = txns
+      .filter(t => t.accountId === selectedAccountId && t.accountAmount != null)
+      .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || a.id.localeCompare(b.id))
+    let running = 0
+    const withBalance = rows.map(t => {
+      running += t.direction === 'in' ? (t.accountAmount as number) : -(t.accountAmount as number)
+      return { ...t, runningBalance: running }
+    })
+    return withBalance.reverse()
+  }, [txns, selectedAccountId])
 
   // Last 14 days, net cash per day — a quick "is the trend healthy" glance
   // without leaving the page.
@@ -561,6 +620,36 @@ export function MoneyTracking() {
             </div>
           </div>
 
+          {accounts.length > 0 && (
+            <div className="mb-5">
+              <p className="text-xs font-medium text-gray-500 mb-2">Accounts — who's holding what, and where it came from</p>
+              <div className="flex gap-2.5 overflow-x-auto pb-1">
+                {accounts.map(a => {
+                  const bal = accountBalances[a.id] ?? 0
+                  const selected = selectedAccountId === a.id
+                  return (
+                    <button key={a.id} onClick={() => setSelectedAccountId(selected ? null : a.id)}
+                      className={`shrink-0 w-44 text-left px-3.5 py-3 rounded-xl border transition-colors ${
+                        selected ? 'border-blue-400 bg-blue-50/60 ring-1 ring-blue-400' : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${a.type === 'cash' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
+                          <Wallet size={13} />
+                        </div>
+                        <p className="text-xs font-medium truncate">{a.name}</p>
+                      </div>
+                      <p className={`text-sm font-mono font-medium ${bal < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                        {Math.round(bal).toLocaleString()} {a.currency}
+                      </p>
+                      <p className="text-[10px] text-gray-400 capitalize">{a.type} · tap for statement</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {anomalies.length > 0 && (
             <div className="bg-white border border-amber-200 rounded-xl overflow-hidden mb-5">
               <button onClick={() => setInsightsOpen(v => !v)}
@@ -610,6 +699,62 @@ export function MoneyTracking() {
             </div>
           </div>
 
+          {selectedAccount ? (
+            <>
+              <button onClick={() => setSelectedAccountId(null)}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2">
+                <ChevronLeft size={13} /> All transactions
+              </button>
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+                <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{selectedAccount.name}</p>
+                    <p className="text-xs text-gray-400 capitalize">{selectedAccount.type} · {selectedAccount.currency} · money in from sales, money out to expenses</p>
+                  </div>
+                  <p className={`text-lg font-mono font-medium ${(accountBalances[selectedAccount.id] ?? 0) < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                    {Math.round(accountBalances[selectedAccount.id] ?? 0).toLocaleString()} {selectedAccount.currency}
+                  </p>
+                </div>
+                {accountLedger.length === 0 ? (
+                  <p className="px-4 py-8 text-xs text-gray-400 text-center">Nothing has moved through this account yet.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-4 py-2 bg-gray-50/60 border-b border-gray-100 text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                      <div>What happened</div>
+                      <div className="text-right w-20">In</div>
+                      <div className="text-right w-20">Out</div>
+                      <div className="text-right w-24">Balance</div>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {accountLedger.map(t => (
+                        <div key={t.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center px-4 py-2.5 text-xs">
+                          <div className="min-w-0">
+                            <p className="font-medium truncate flex items-center gap-1.5">
+                              {t.party}
+                              {t.sensitive && <ShieldAlert size={11} className="text-amber-500 shrink-0" aria-label="Sensitive" />}
+                            </p>
+                            <p className="text-gray-400 truncate">
+                              {t.date ?? '—'}{t.detail && ` · ${t.detail}`}{t.notes && ` · ${t.notes}`}
+                            </p>
+                          </div>
+                          <div className="font-mono text-green-700 w-20 text-right">
+                            {t.direction === 'in' ? N(t.accountAmount as number) : ''}
+                          </div>
+                          <div className="font-mono text-red-600 w-20 text-right">
+                            {t.direction === 'out' ? N(t.accountAmount as number) : ''}
+                          </div>
+                          <div className={`font-mono font-medium w-24 text-right ${t.runningBalance < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                            {Math.round(t.runningBalance).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
           <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
             <div className="text-xs font-medium text-gray-500">Transactions</div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -693,6 +838,8 @@ export function MoneyTracking() {
               </div>
             ))}
           </div>
+            </>
+          )}
 
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-medium text-gray-500">Credit — what's owed, and by whom</div>
