@@ -13,6 +13,7 @@ export type AutoExpenseSource =
   | 'customs_vat'
   | 'customs_wht'
   | 'customs_clearing'
+  | 'customs_fob_uplift'
 
 export interface AutoExpenseInput {
   shipmentId: string

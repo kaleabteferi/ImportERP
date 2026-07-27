@@ -42,6 +42,8 @@ function InfoTip({ text }: { text: string }) {
   )
 }
 
+interface UpliftRow { label: string; pct: number }
+
 export function CustomsEstimator() {
   const [fobUsd, setFobUsd] = useState('')
   const [freightUsd, setFreightUsd] = useState('')
@@ -51,6 +53,14 @@ export function CustomsEstimator() {
   const [dutyPct, setDutyPct] = useState('')
   const [excisePct, setExcisePct] = useState('0')
   const [quantity, setQuantity] = useState('')
+  const [uplift, setUplift] = useState<UpliftRow[]>([
+    { label: 'Insurance', pct: 2 },
+    { label: 'Freight allowance', pct: 5 },
+    { label: 'Handling', pct: 5 },
+  ])
+  function updateUplift(i: number, patch: Partial<UpliftRow>) {
+    setUplift(u => u.map((row, idx) => idx === i ? { ...row, ...patch } : row))
+  }
 
   useEffect(() => {
     supabase.from('forex_rates').select('rate, effective_date')
@@ -64,6 +74,8 @@ export function CustomsEstimator() {
       })
   }, [])
 
+  const upliftPctTotal = uplift.reduce((s, u) => s + (Number(u.pct) || 0), 0)
+
   const result = useMemo(() => {
     const fob = Number(fobUsd) || 0
     const freight = Number(freightUsd) || 0
@@ -72,8 +84,9 @@ export function CustomsEstimator() {
     const duty = Number(dutyPct) || 0
     const excise = Number(excisePct) || 0
     const qty = Number(quantity) || 0
+    const upliftUsd = fob * (upliftPctTotal / 100)
 
-    const cifUsd = fob + freight + insurance
+    const cifUsd = fob + freight + insurance + upliftUsd
     const cifEtb = cifUsd * rate
 
     const dutyEtb = cifEtb * (duty / 100)
@@ -88,11 +101,11 @@ export function CustomsEstimator() {
     const totalPayableEtb = cifEtb + totalTaxesEtb
 
     return {
-      cifUsd, cifEtb, dutyEtb, exciseEtb, vatEtb, surtaxEtb, withholdingEtb,
+      cifUsd, cifEtb, upliftUsd, dutyEtb, exciseEtb, vatEtb, surtaxEtb, withholdingEtb,
       totalTaxesEtb, totalPayableEtb,
       perUnitEtb: qty > 0 ? totalPayableEtb / qty : null,
     }
-  }, [fobUsd, freightUsd, insuranceUsd, fxRate, dutyPct, excisePct, quantity])
+  }, [fobUsd, freightUsd, insuranceUsd, fxRate, dutyPct, excisePct, quantity, upliftPctTotal])
 
   const hasInput = Number(fobUsd) > 0 && Number(fxRate) > 0 && dutyPct !== ''
 
@@ -167,6 +180,27 @@ export function CustomsEstimator() {
                            focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="500" />
             </div>
           </div>
+
+          <div className="bg-gray-50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-medium text-gray-600">FOB uplift</p>
+                <InfoTip text="An extra cost estimated as a percentage of FOB value, on top of freight/insurance — rename the labels and adjust the rates to whatever you actually mean by it." />
+              </div>
+              <span className="text-xs font-mono font-medium text-purple-700">{upliftPctTotal}%</span>
+            </div>
+            <div className="space-y-1.5">
+              {uplift.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={row.label} onChange={e => updateUplift(i, { label: e.target.value })}
+                    className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg bg-white" placeholder="Label" />
+                  <input type="number" min="0" step="0.5" value={row.pct} onChange={e => updateUplift(i, { pct: parseFloat(e.target.value) || 0 })}
+                    className="w-16 px-2 py-1 text-xs font-mono text-right border border-gray-200 rounded-lg bg-white" />
+                  <span className="text-xs text-gray-400 w-4">%</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -212,6 +246,9 @@ export function CustomsEstimator() {
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
+            {result.upliftUsd > 0 && (
+              <Row label={`FOB uplift (${upliftPctTotal}%)`} value={`${N(result.upliftUsd)} USD`} tip="Included in the CIF value below" />
+            )}
             <Row label="CIF value" value={`${N(result.cifUsd)} USD  ·  ${N(result.cifEtb)} ETB`} />
             <Row label="Customs duty" value={`${N(result.dutyEtb)} ETB`} tip="CIF × duty rate" />
             {Number(excisePct) > 0 && (

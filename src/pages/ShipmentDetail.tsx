@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Loader2, X, Check,
   RefreshCw, Package, Receipt, Calculator,
-  FileText, Truck, Lock, Info, Paperclip, Trash2, ClipboardPaste,
+  FileText, Truck, Lock, Info, Paperclip, Trash2, ClipboardPaste, Landmark,
 } from 'lucide-react'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -14,6 +14,7 @@ import { TimelinePanel } from '../components/shipments/TimelinePanel'
 import { MarginAnalysis } from '../components/shipments/MarginAnalysis'
 import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
+import { CustomsTab } from '../components/shipments/CustomsTab'
 import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments'
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { BulkImportModal } from '../components/BulkImportModal'
@@ -145,11 +146,12 @@ const CAT_LABELS: Record<string, string> = {
   OTHER:            'Other',
 }
 
-type TabKey = 'items' | 'expenses' | 'costs' | 'commercial' | 'packing' | 'waybill' | 'timeline' | 'margin' | 'documents'
+type TabKey = 'items' | 'expenses' | 'customs' | 'costs' | 'commercial' | 'packing' | 'waybill' | 'timeline' | 'margin' | 'documents'
 
 const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'items',      label: 'PI Items',          icon: Package   },
   { key: 'expenses',   label: 'Expenses',          icon: Receipt   },
+  { key: 'customs',    label: 'Customs',           icon: Landmark  },
   { key: 'costs',      label: 'Cost breakdown',    icon: Calculator},
   { key: 'commercial', label: 'Commercial invoice',icon: FileText  },
   { key: 'packing',    label: 'Packing list',      icon: Package   },
@@ -496,6 +498,18 @@ export function ShipmentDetail() {
   // -- Derived -----------------------------------------------
 
   const totalExpEtb  = expenses.reduce((s, e) => s + (e.amount_etb ?? 0), 0)
+  // Customs has its own dedicated tab now — this is what the Expenses tab's
+  // own "Total" actually itemizes below it (totalExpEtb above stays the true
+  // all-in landed-cost figure used everywhere else, unchanged).
+  const nonCustomsExpenses = expenses.filter(e => e.category !== 'ETHIOPIA_CUSTOMS')
+  const customsExpenses = expenses.filter(e => e.category === 'ETHIOPIA_CUSTOMS')
+  const nonCustomsExpEtb = nonCustomsExpenses.reduce((s, e) => s + (e.amount_etb ?? 0), 0)
+  const freightUsd = expenses
+    .filter(e => e.category === 'OCEAN_FREIGHT' && e.currency === 'USD')
+    .reduce((s, e) => s + e.amount, 0)
+  const insuranceUsd = expenses
+    .filter(e => e.category === 'OCEAN_FREIGHT' && /insurance/i.test(e.description))
+    .reduce((s, e) => s + (e.currency === 'USD' ? e.amount : e.amount / fxRate), 0)
   const totalFobUsd  = items.reduce((s, i) => s + i.quantity * i.unit_price_usd, 0)
   const st           = shipment ? (STATUS[shipment.status] ?? STATUS['ORDERED']) : null
   const allProvisional = items.some(i => i.cost_status === 'PROVISIONAL')
@@ -918,10 +932,11 @@ export function ShipmentDetail() {
                 <InfoTip text="Record every cost attached to this shipment here. This includes: ocean freight, Djibouti port handling, trucking to Addis, Ethiopian customs duty, VAT, surtax, withholding tax, and clearing agent fees. These costs are allocated across your products to calculate the true unit landed cost. Add ALL costs before finalizing." />
               </div>
               <p className="text-xs text-gray-400 mt-0.5">
-                Total: <span className="font-medium text-gray-700">{N(totalExpEtb)} ETB</span>
-                {expenses.some(e => e.cost_status === 'PROVISIONAL') && (
+                Total: <span className="font-medium text-gray-700">{N(nonCustomsExpEtb)} ETB</span>
+                {nonCustomsExpenses.some(e => e.cost_status === 'PROVISIONAL') && (
                   <span className="text-amber-600 ml-1">(some provisional)</span>
                 )}
+                <span className="ml-1">· customs tracked separately in the Customs tab</span>
               </p>
             </div>
             <button
@@ -949,13 +964,13 @@ export function ShipmentDetail() {
             </div>
           </div>
 
-          {expenses.length === 0 ? (
+          {nonCustomsExpenses.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
               <Receipt size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No expenses yet</p>
               <p className="text-xs text-gray-400 mb-4 max-w-sm mx-auto">
-                Start by adding the ocean freight invoice. Then add Djibouti port,
-                trucking, and customs costs as you receive them.
+                Start by adding the ocean freight invoice. Then add Djibouti port and
+                trucking costs as you receive them — customs has its own tab.
               </p>
               <button
                 onClick={() => setExpOpen(true)}
@@ -967,7 +982,7 @@ export function ShipmentDetail() {
             </div>
           ) : (
             <div className="space-y-3">
-              {Object.entries(CAT_LABELS).map(([cat, catLabel]) => {
+              {Object.entries(CAT_LABELS).filter(([cat]) => cat !== 'ETHIOPIA_CUSTOMS').map(([cat, catLabel]) => {
                 const catExps = expenses.filter(e => e.category === cat)
                 if (!catExps.length) return null
                 const catTotal = catExps.reduce((s, e) => s + (e.amount_etb ?? 0), 0)
@@ -1042,12 +1057,35 @@ export function ShipmentDetail() {
 
               <div className="flex items-center justify-between px-4 py-3
                               bg-white border border-gray-200 rounded-xl font-medium">
-                <span className="text-sm text-gray-600">Total all expenses</span>
-                <span className="text-base font-mono text-gray-900">{N(totalExpEtb)} ETB</span>
+                <span className="text-sm text-gray-600">Total (excl. customs)</span>
+                <span className="text-base font-mono text-gray-900">{N(nonCustomsExpEtb)} ETB</span>
               </div>
             </div>
           )}
         </div>
+      )}
+
+      {/* CUSTOMS TAB */}
+      {activeTab === 'customs' && (
+        <CustomsTab
+          shipmentId={id!}
+          shipmentItems={items.map(i => ({
+            id: i.id,
+            product_name: i.products?.name ?? '—',
+            quantity: i.quantity,
+            unit_price_usd: i.unit_price_usd,
+          }))}
+          fxRate={fxRate}
+          freightUsd={freightUsd}
+          insuranceUsd={insuranceUsd}
+          customsExpenses={customsExpenses}
+          onSaved={load}
+          onEdit={expId => {
+            const exp = expenses.find(e => e.id === expId)
+            if (exp) openEditExp(exp)
+          }}
+          onDelete={deleteExpense}
+        />
       )}
 
       {/*  COST BREAKDOWN TAB */}
@@ -1952,22 +1990,7 @@ export function ShipmentDetail() {
       {expOpen && (
         <ExpenseForm
           shipmentId={id!}
-          shipmentItems={items.map(i => ({
-            id: i.id,
-            product_name: i.products?.name ?? '—',
-            quantity: i.quantity,
-            unit_price_usd: i.unit_price_usd,
-          }))}
           fxRate={fxRate}
-          freightUsd={expenses
-            .filter(e => e.category === 'OCEAN_FREIGHT' && e.currency === 'USD')
-            .reduce((s, e) => s + e.amount, 0)}
-          insuranceUsd={expenses
-            .filter(e =>
-              e.category === 'OCEAN_FREIGHT' &&
-              /insurance/i.test(e.description)
-            )
-            .reduce((s, e) => s + (e.currency === 'USD' ? e.amount : e.amount / fxRate), 0)}
           editExpense={editExpId ? expenses.find(e => e.id === editExpId) : undefined}
           onSave={() => {
             setExpOpen(false)
