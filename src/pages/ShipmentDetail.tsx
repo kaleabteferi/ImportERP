@@ -15,6 +15,7 @@ import { MarginAnalysis } from '../components/shipments/MarginAnalysis'
 import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
 import { CustomsTab } from '../components/shipments/CustomsTab'
+import { SupplierPayableBanner } from '../components/shipments/SupplierPayableBanner'
 import { ShipmentAttachments } from '../components/shipments/ShipmentAttachments'
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { BulkImportModal } from '../components/BulkImportModal'
@@ -750,6 +751,15 @@ export function ShipmentDetail() {
               </button>
             </div>
           </div>
+
+          {shipment && (
+            <SupplierPayableBanner
+              shipmentId={shipment.id}
+              supplierId={shipment.supplier_id}
+              supplierName={shipment.suppliers?.name ?? 'this supplier'}
+              totalFobUsd={totalFobUsd}
+            />
+          )}
 
           {showItemImport && (
             <BulkImportModal
