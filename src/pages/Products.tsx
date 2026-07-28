@@ -16,11 +16,16 @@ const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'weight_kg', label: 'Weight (kg)', width: '90px' },
   { key: 'volume_m3', label: 'Volume (m³)', width: '90px' },
   { key: 'assembly_type', label: 'Assembly type', width: '110px' },
+  { key: 'default_customs_value', label: 'Default CD value (USD)', width: '120px' },
+  { key: 'carton_length_cm', label: 'Carton L (cm)', width: '100px' },
+  { key: 'carton_width_cm', label: 'Carton W (cm)', width: '100px' },
+  { key: 'carton_height_cm', label: 'Carton H (cm)', width: '100px' },
+  { key: 'default_units_per_carton', label: 'Units/carton', width: '100px' },
   { key: 'description', label: 'Description', width: '200px' },
 ]
-const PRODUCT_IMPORT_EXAMPLE = `sku,name,unit_of_measure,weight_kg,volume_m3,assembly_type,description
-TV-55-DMD,Dimond TV 55',PCS,18.5,0.21,SKD,55 inch smart LED
-STV-2B-SCH,Saachi 2-Burner Stove,PCS,4.2,0.03,IMPORTED,`
+const PRODUCT_IMPORT_EXAMPLE = `sku,name,unit_of_measure,weight_kg,volume_m3,assembly_type,default_customs_value,carton_length_cm,carton_width_cm,carton_height_cm,default_units_per_carton,description
+TV-55-DMD,Dimond TV 55',PCS,18.5,0.21,SKD,180,70,15,45,1,55 inch smart LED
+STV-2B-SCH,Saachi 2-Burner Stove,PCS,4.2,0.03,IMPORTED,,50,40,30,10,`
 
 interface Product {
   id: string
@@ -32,6 +37,11 @@ interface Product {
   volume_m3: number | null
   is_assembled: boolean
   assembly_type: string | null
+  default_customs_value: number | null
+  carton_length_cm: number | null
+  carton_width_cm: number | null
+  carton_height_cm: number | null
+  default_units_per_carton: number | null
   is_active: boolean
   image_url: string | null
   created_at: string | null
@@ -43,7 +53,8 @@ const EMPTY = {
   sku: '', name: '', description: '',
   unit_of_measure: 'PCS', weight_kg: '',
   volume_m3: '', is_assembled: false,
-  assembly_type: 'IMPORTED',
+  assembly_type: 'IMPORTED', default_customs_value: '',
+  carton_length_cm: '', carton_width_cm: '', carton_height_cm: '', default_units_per_carton: '',
 }
 
 export function Products() {
@@ -98,6 +109,11 @@ export function Products() {
       volume_m3:       p.volume_m3 ?? '',
       is_assembled:    p.is_assembled,
       assembly_type:   p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED'),
+      default_customs_value: p.default_customs_value ?? '',
+      carton_length_cm: p.carton_length_cm ?? '',
+      carton_width_cm: p.carton_width_cm ?? '',
+      carton_height_cm: p.carton_height_cm ?? '',
+      default_units_per_carton: p.default_units_per_carton ?? '',
     })
     setEditId(p.id)
     setImageUrl(p.image_url)
@@ -121,6 +137,11 @@ export function Products() {
       volume_m3:       form.volume_m3 ? parseFloat(form.volume_m3) : null,
       is_assembled:    form.is_assembled,
       assembly_type:   form.assembly_type,
+      default_customs_value: form.default_customs_value ? parseFloat(form.default_customs_value) : null,
+      carton_length_cm: form.carton_length_cm ? parseFloat(form.carton_length_cm) : null,
+      carton_width_cm: form.carton_width_cm ? parseFloat(form.carton_width_cm) : null,
+      carton_height_cm: form.carton_height_cm ? parseFloat(form.carton_height_cm) : null,
+      default_units_per_carton: form.default_units_per_carton ? parseFloat(form.default_units_per_carton) : null,
     }
     const { error: err } = editId
       ? await supabase.from('products').update(payload).eq('id', editId)
@@ -148,6 +169,11 @@ export function Products() {
         volume_m3: row.volume_m3 ? parseFloat(row.volume_m3) : null,
         is_assembled: assemblyType === 'FULL' || assemblyType === 'SKD',
         assembly_type: assemblyType,
+        default_customs_value: row.default_customs_value ? parseFloat(row.default_customs_value) : null,
+        carton_length_cm: row.carton_length_cm ? parseFloat(row.carton_length_cm) : null,
+        carton_width_cm: row.carton_width_cm ? parseFloat(row.carton_width_cm) : null,
+        carton_height_cm: row.carton_height_cm ? parseFloat(row.carton_height_cm) : null,
+        default_units_per_carton: row.default_units_per_carton ? parseFloat(row.default_units_per_carton) : null,
       })
       if (error) errors.push(`${sku}: ${error.message}`)
       else succeeded++
@@ -239,7 +265,7 @@ export function Products() {
         <>
           <BulkActionBar count={count} itemLabel="product" onClear={clear} onDelete={bulkDelete} />
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_auto] gap-3
+          <div className="grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_90px_auto] gap-3
                           px-4 py-2.5 bg-gray-50 border-b border-gray-100
                           text-xs font-medium text-gray-400 uppercase tracking-wide items-center">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
@@ -250,6 +276,7 @@ export function Products() {
             <div className="text-right"><SortHeader label="Weight" align="right" active={sortKey === 'weight_kg'} dir={sortDir} onClick={() => toggleSort('weight_kg')} /></div>
             <div className="text-right"><SortHeader label="Volume" align="right" active={sortKey === 'volume_m3'} dir={sortDir} onClick={() => toggleSort('volume_m3')} /></div>
             <div><SortHeader label="Type" active={sortKey === 'assembly_type'} dir={sortDir} onClick={() => toggleSort('assembly_type')} /></div>
+            <div className="text-right">CD value</div>
             <div><SortHeader label="Added" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} /></div>
             <div></div>
           </div>
@@ -257,7 +284,7 @@ export function Products() {
           {sorted.map((p, i) => (
             <div
               key={p.id}
-              className={`grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_auto] gap-3
+              className={`grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_90px_auto] gap-3
                           px-4 py-3 items-center text-sm
                           ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''} ${selected.has(p.id) ? 'bg-blue-50/40' : ''}`}
             >
@@ -292,6 +319,9 @@ export function Products() {
                       : 'bg-gray-100 text-gray-600'}`}>
                   {p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED')}
                 </span>
+              </div>
+              <div className="text-right text-xs font-mono text-gray-500">
+                {p.default_customs_value != null ? `$${p.default_customs_value}` : '—'}
               </div>
               <div className="text-xs text-gray-400">
                 {p.created_at ? new Date(p.created_at).toLocaleDateString('en-ET', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
@@ -459,6 +489,41 @@ export function Products() {
               </div>
 
               <div>
+                <label className="block text-xs text-gray-500 mb-1">Standard carton size (cm) — L × W × H</label>
+                <div className="grid grid-cols-3 gap-3">
+                  <input type="number" step="0.1" placeholder="L"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+                    value={form.carton_length_cm} onChange={e => set('carton_length_cm', e.target.value)} />
+                  <input type="number" step="0.1" placeholder="W"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+                    value={form.carton_width_cm} onChange={e => set('carton_width_cm', e.target.value)} />
+                  <input type="number" step="0.1" placeholder="H"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+                    value={form.carton_height_cm} onChange={e => set('carton_height_cm', e.target.value)} />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  {form.carton_length_cm && form.carton_width_cm && form.carton_height_cm
+                    ? `= ${((parseFloat(form.carton_length_cm) * parseFloat(form.carton_width_cm) * parseFloat(form.carton_height_cm)) / 1000000).toFixed(4)} m³ per carton — `
+                    : ''}
+                  Pre-fills the packing list's carton dimensions when this product is packed into a container — editable per shipment.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Standard units per carton</label>
+                <input
+                  type="number"
+                  step="1"
+                  className="w-full px-3 py-2 text-sm border border-gray-200
+                             rounded-lg focus:outline-none focus:ring-2
+                             focus:ring-blue-400 font-mono"
+                  value={form.default_units_per_carton}
+                  onChange={e => set('default_units_per_carton', e.target.value)}
+                  placeholder="e.g. 10"
+                />
+              </div>
+
+              <div>
                 <label className="block text-xs text-gray-500 mb-1">Assembly type</label>
                 <select
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
@@ -475,6 +540,25 @@ export function Products() {
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   SKD/CKD stock routes to assembly components when shipment is received.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Default CD (customs) value per unit (USD)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full px-3 py-2 text-sm border border-gray-200
+                             rounded-lg focus:outline-none focus:ring-2
+                             focus:ring-blue-400 font-mono"
+                  value={form.default_customs_value}
+                  onChange={e => set('default_customs_value', e.target.value)}
+                  placeholder="e.g. 180.00"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Pre-fills the customs value when this product is added to a proforma invoice — editable per shipment.
                 </p>
               </div>
 
