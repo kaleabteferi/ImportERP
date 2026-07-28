@@ -1,16 +1,19 @@
 // src/pages/ShipmentDetail.tsx
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Loader2, X, Check,
   RefreshCw, Package, Receipt, Calculator,
-  FileText, Truck, Lock, Info, Paperclip, Trash2, ClipboardPaste, Landmark,
+  FileText, Lock, Info, Paperclip, Trash2, ClipboardPaste, Landmark,
+  AlertOctagon,
 } from 'lucide-react'
+import { addShortageNote } from '../api/shortageNotes'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { TimelinePanel } from '../components/shipments/TimelinePanel'
+import { ContainerTimelineTabs } from '../components/shipments/ContainerTimelineTabs'
+import { ShipmentStatusStepper } from '../components/shipments/ShipmentStatusStepper'
 import { MarginAnalysis } from '../components/shipments/MarginAnalysis'
 import { TrendingUp, Calendar } from 'lucide-react'
 import { ExpenseForm } from '../components/shipments/ExpenseForm'
@@ -66,23 +69,10 @@ interface Warehouse {
   city: string | null
 }
 
-interface CompanySettings {
-  company_name: string
-  address: string | null
-  city: string | null
-  tin_number: string | null
-}
-
-interface Consignee {
-  name: string
-  address: string | null
-  city: string | null
-  tin_number: string | null
-}
-
 interface ShipmentItem {
   id: string
   product_id: string
+  container_id: string | null
   quantity: number
   unit_price_usd: number
   unit_of_measure?: string | null
@@ -100,6 +90,7 @@ interface ShipmentItem {
     weight_kg: number | null
     volume_m3: number | null
   } | null
+  containers?: { container_number: string } | null
 }
 
 interface Expense {
@@ -147,16 +138,18 @@ const CAT_LABELS: Record<string, string> = {
   OTHER:            'Other',
 }
 
-type TabKey = 'items' | 'expenses' | 'customs' | 'costs' | 'commercial' | 'packing' | 'waybill' | 'timeline' | 'margin' | 'documents'
+type TabKey = 'items' | 'expenses' | 'customs' | 'costs' | 'timeline' | 'margin' | 'documents'
 
+// Commercial invoice / Packing list / Truck waybill used to also render
+// inline here, duplicating (and, after the multi-container change, drifting
+// from) the same documents already generated on the dedicated Documents
+// page (`/shipments/:id/documents`, linked below) -- removed in favor of
+// that one place to view/print them.
 const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'items',      label: 'PI Items',          icon: Package   },
   { key: 'expenses',   label: 'Expenses',          icon: Receipt   },
   { key: 'customs',    label: 'Customs',           icon: Landmark  },
   { key: 'costs',      label: 'Cost breakdown',    icon: Calculator},
-  { key: 'commercial', label: 'Commercial invoice',icon: FileText  },
-  { key: 'packing',    label: 'Packing list',      icon: Package   },
-  { key: 'waybill',    label: 'Truck waybill',     icon: Truck     },
   { key: 'timeline', label: 'Timeline & dates',  icon: Calendar    },
   { key: 'margin',   label: 'Margin analysis',   icon: TrendingUp  },
   { key: 'documents', label: 'Documents',        icon: Paperclip   },
@@ -172,15 +165,6 @@ const EMPTY_ITEM = {
 }
 
 // -- Info tooltip component ------------------------------------
-
-function itemPacking(item: ShipmentItem) {
-  const uom = item.unit_of_measure ?? item.products?.unit_of_measure ?? 'PCS'
-  const pcsPerCtn = item.units_per_carton ?? 2
-  const ctns = item.carton_qty
-    ?? (uom === 'CTN' ? item.quantity : Math.ceil(item.quantity / pcsPerCtn))
-  const totalPcs = uom === 'CTN' ? item.quantity * pcsPerCtn : item.quantity
-  return { uom, pcsPerCtn, ctns, totalPcs }
-}
 
 function InfoTip({ text }: { text: string }) {
   const [show, setShow] = useState(false)
@@ -218,6 +202,10 @@ export function ShipmentDetail() {
   const navigate = useNavigate()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showItemImport, setShowItemImport] = useState(false)
+  const [shortageTarget, setShortageTarget] = useState<{ itemId: string; productId: string; name: string } | null>(null)
+  const [shortageForm, setShortageForm] = useState({ quantity_short: '', notes: '' })
+  const [savingShortage, setSavingShortage] = useState(false)
+  const [shortageError, setShortageError] = useState<string | null>(null)
 
   const [shipment, setShipment]   = useState<Shipment | null>(null)
   const [items, setItems]         = useState<ShipmentItem[]>([])
@@ -236,30 +224,23 @@ export function ShipmentDetail() {
   const [receiving, setReceiving] = useState(false)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('')
-  const [company, setCompany]     = useState<CompanySettings | null>(null)
-  const [consignee, setConsignee] = useState<Consignee | null>(null)
-  
-
   const load = useCallback(async () => {
     if (!id) return
     setLoading(true)
     setError(null)
 
-    const [shRes, itemsRes, expRes, prodRes, fxRes, whRes, coRes, cnRes] = await Promise.all([
+    const [shRes, itemsRes, expRes, prodRes, fxRes, whRes] = await Promise.all([
       supabase.from('shipments')
         .select('*, suppliers(name, contact_person, email)')
         .eq('id', id)
         .single(),
-      supabase.from('shipment_items').select('*').eq('shipment_id', id),
+      supabase.from('shipment_items').select('*, containers(container_number)').eq('shipment_id', id),
       supabase.from('shipment_expenses').select('*').eq('shipment_id', id),
       supabase.from('products').select('*').eq('is_active', true),
       supabase.from('forex_rates').select('rate')
         .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
         .order('effective_date', { ascending: false }).limit(1),
       supabase.from('warehouses').select('*').order('name'),
-      supabase.from('company_settings').select('company_name, address, city, tin_number').limit(1).maybeSingle(),
-      supabase.from('consignees').select('name, address, city, tin_number')
-        .order('is_default', { ascending: false }).limit(1).maybeSingle(),
     ])
 
     const prodMap = new Map((prodRes.data ?? []).map((p: Product) => [p.id, p]))
@@ -280,8 +261,6 @@ export function ShipmentDetail() {
         || whRes.data?.[0]?.id
         || ''
       setSelectedWarehouseId(defaultWarehouse)
-      setCompany(coRes.data ?? null)
-      setConsignee(cnRes.data ?? null)
     }
     setLoading(false)
   }, [id])
@@ -394,6 +373,30 @@ export function ShipmentDetail() {
         load()
       }
     })
+  }
+
+  // "Yaltechane" tracking -- flags a product as having come up short on this
+  // shipment, against the supplier, so it resurfaces as a reminder when
+  // starting the next order with the same supplier (src/pages/ProformaInvoices.tsx).
+  async function saveShortageNote() {
+    if (!shortageTarget || !shipment) return
+    setSavingShortage(true)
+    setShortageError(null)
+    try {
+      await addShortageNote({
+        supplierId: shipment.supplier_id,
+        productId: shortageTarget.productId,
+        shipmentId: id,
+        quantityShort: shortageForm.quantity_short ? parseFloat(shortageForm.quantity_short) : null,
+        notes: shortageForm.notes || null,
+      })
+      setShortageTarget(null)
+      setShortageForm({ quantity_short: '', notes: '' })
+    } catch (e: any) {
+      setShortageError(e?.message ?? String(e))
+    } finally {
+      setSavingShortage(false)
+    }
   }
 
   async function updateShipmentWarehouse(warehouseId: string) {
@@ -514,9 +517,6 @@ export function ShipmentDetail() {
   const totalFobUsd  = items.reduce((s, i) => s + i.quantity * i.unit_price_usd, 0)
   const st           = shipment ? (STATUS[shipment.status] ?? STATUS['ORDERED']) : null
   const allProvisional = items.some(i => i.cost_status === 'PROVISIONAL')
-  const today        = new Date().toLocaleDateString('en-ET', {
-    day: 'numeric', month: 'long', year: 'numeric'
-  })
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
@@ -625,6 +625,8 @@ export function ShipmentDetail() {
           </div>
         ))}
       </div>
+
+      <ShipmentStatusStepper status={shipment.status} />
 
       {/* Shipment already landed at Ali's Djibouti warehouse — receiving it
           again here directly into a warehouse would double-credit
@@ -820,10 +822,35 @@ export function ShipmentDetail() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {items.map(item => {
-                      const prod     = item.products
-                      const totalUsd = item.quantity * item.unit_price_usd
-                      return (
+                    {(() => {
+                      // Group by container so a shipment holding several
+                      // containers with different items shows which is
+                      // which -- only rendered when there's more than one
+                      // group, so single-container/manual shipments look
+                      // exactly as before.
+                      const byContainer = new Map<string, { label: string; rows: ShipmentItem[] }>()
+                      for (const item of items) {
+                        const key = item.container_id ?? '__none__'
+                        const label = item.containers?.container_number ?? 'Ungrouped'
+                        if (!byContainer.has(key)) byContainer.set(key, { label, rows: [] })
+                        byContainer.get(key)!.rows.push(item)
+                      }
+                      const groups = [...byContainer.values()].sort((a, b) =>
+                        a.label === 'Ungrouped' ? 1 : b.label === 'Ungrouped' ? -1 : a.label.localeCompare(b.label))
+
+                      return groups.map(group => (
+                        <Fragment key={group.label}>
+                          {groups.length > 1 && (
+                            <tr className="bg-gray-100">
+                              <td colSpan={8} className="px-4 py-1.5 text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                {group.label} ({group.rows.length} item{group.rows.length !== 1 ? 's' : ''})
+                              </td>
+                            </tr>
+                          )}
+                          {group.rows.map(item => {
+                    const prod     = item.products
+                    const totalUsd = item.quantity * item.unit_price_usd
+                    return (
                         <tr key={item.id} className="hover:bg-gray-50/50">
                           <td className="px-4 py-3">
                             <p className="font-medium text-gray-900">
@@ -871,16 +898,28 @@ export function ShipmentDetail() {
                             </span>
                           </td>
                           <td className="px-3 py-3">
-                            <button
-                              onClick={() => deleteItem(item.id, prod?.name ?? 'this item')}
-                              className="text-gray-300 hover:text-red-500 transition-colors"
-                            >
-                              <X size={13} />
-                            </button>
+                            <div className="flex items-center gap-2 justify-end">
+                              <button
+                                onClick={() => { setShortageTarget({ itemId: item.id, productId: item.product_id, name: prod?.name ?? 'this item' }); setShortageError(null) }}
+                                title="Flag a shortage against this supplier"
+                                className="text-gray-300 hover:text-amber-500 transition-colors"
+                              >
+                                <AlertOctagon size={13} />
+                              </button>
+                              <button
+                                onClick={() => deleteItem(item.id, prod?.name ?? 'this item')}
+                                className="text-gray-300 hover:text-red-500 transition-colors"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
-                      )
-                    })}
+                    )
+                          })}
+                        </Fragment>
+                      ))
+                    })()}
                   </tbody>
                   <tfoot>
                     <tr className="bg-gray-50 border-t border-gray-100 font-medium">
@@ -1294,471 +1333,13 @@ export function ShipmentDetail() {
         </div>
       )}
 
-      {/* COMMERCIAL INVOICE TAB */}
-      {activeTab === 'commercial' && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <p className="text-sm font-medium">Commercial invoice</p>
-            <InfoTip text="The Commercial Invoice is the official document sent to Ethiopian customs. It shows the buyer (you), the seller (your supplier), the goods, quantities, unit prices, and total value. This document determines the customs valuation used to calculate duty. It must match your Proforma Invoice exactly." />
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
-            {/* Invoice header */}
-            <div className="px-6 py-5 border-b border-gray-100">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-base font-medium text-gray-900">Commercial Invoice</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Invoice No: {shipment.shipment_number.replace('SHP', 'CI')} ·
-                    Date: {today}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">Incoterm: FOB</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Port: {shipment.eta_djibouti ? 'Djibouti' : '-'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Seller / Buyer */}
-            <div className="grid grid-cols-2 gap-0 border-b border-gray-100">
-              <div className="px-6 py-4 border-r border-gray-100">
-                <p className="text-xs font-medium text-gray-400 uppercase
-                              tracking-wide mb-2">Seller (Exporter)</p>
-                <p className="text-sm font-medium">{supplier?.name ?? '-'}</p>
-                <p className="text-xs text-gray-500 mt-1">China</p>
-                {supplier?.email && (
-                  <p className="text-xs text-gray-400 mt-0.5">{supplier.email}</p>
-                )}
-              </div>
-              <div className="px-6 py-4">
-                <p className="text-xs font-medium text-gray-400 uppercase
-                              tracking-wide mb-2">Buyer (Importer)</p>
-                <p className="text-sm font-medium">{company?.company_name ?? consignee?.name ?? 'Set company name in Settings'}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {[company?.address ?? consignee?.address, company?.city ?? consignee?.city ?? 'Addis Ababa', 'Ethiopia'].filter(Boolean).join(', ')}
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">TIN: {company?.tin_number ?? consignee?.tin_number ?? '-'}</p>
-              </div>
-            </div>
-
-            {/* Shipment details */}
-            <div className="grid grid-cols-3 gap-0 border-b border-gray-100">
-              {[
-                { label: 'Container', val: shipment.container_number ?? '-' },
-                { label: 'Vessel', val: shipment.vessel_name ?? '-' },
-                { label: 'Port of discharge', val: 'Djibouti' },
-              ].map(f => (
-                <div key={f.label} className="px-6 py-3 border-r last:border-r-0 border-gray-100">
-                  <p className="text-xs text-gray-400">{f.label}</p>
-                  <p className="text-sm font-medium mt-0.5">{f.val}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Items */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500">Description of goods</th>
-                    <th className="text-left px-3 py-2.5 font-medium text-gray-500">HS code</th>
-                    <th className="text-left px-3 py-2.5 font-medium text-gray-500">Origin</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Qty</th>
-                    <th className="text-left px-3 py-2.5 font-medium text-gray-500">Unit</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Unit price (USD)</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Total (USD)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
-                        No items - add them in the PI Items tab first.
-                      </td>
-                    </tr>
-                  ) : items.map(item => {
-                    const prod = item.products
-                    return (
-                      <tr key={item.id} className="hover:bg-gray-50/50">
-                        <td className="px-4 py-3 font-medium">{prod?.name ?? '-'}</td>
-                        <td className="px-3 py-3 font-mono text-gray-500">-</td>
-                        <td className="px-3 py-3 text-gray-500">China</td>
-                        <td className="px-3 py-3 text-right font-mono">{N(item.quantity)}</td>
-                        <td className="px-3 py-3 text-gray-500">{prod?.unit_of_measure ?? 'PCS'}</td>
-                        <td className="px-3 py-3 text-right font-mono">${item.unit_price_usd}</td>
-                        <td className="px-3 py-3 text-right font-mono font-medium">
-                          ${N(item.quantity * item.unit_price_usd)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-gray-50 border-t border-gray-200 font-medium">
-                    <td colSpan={3} className="px-4 py-3 text-xs text-gray-500">Total</td>
-                    <td className="px-3 py-3 text-right font-mono">
-                      {N(items.reduce((s, i) => s + i.quantity, 0))}
-                    </td>
-                    <td></td>
-                    <td></td>
-                    <td className="px-3 py-3 text-right font-mono text-blue-700">
-                      ${N(totalFobUsd)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div className="px-6 py-4 border-t border-gray-100">
-              <p className="text-xs text-gray-400">
-                I/We hereby certify that the information on this invoice is true
-                and correct, and that the contents and value of this shipment
-                are as stated above.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <Info size={12} />
-            <span>
-              HS codes are required for customs. Enter them in the PI Items tab
-              (requires a hs_code column - add via Supabase if not yet present).
-              Your clearing agent will verify these against the Ethiopian tariff schedule.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* PACKING LIST TAB */}
-      {activeTab === 'packing' && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <p className="text-sm font-medium">Packing list</p>
-            <InfoTip text="The Packing List details how goods are physically packed in the container. It shows carton count, pieces per carton, weight per carton, and dimensions. This document is used by Djibouti port and Ethiopian customs to verify the physical shipment matches the Commercial Invoice. Weight and volume from this document are used for By Weight and By Volume cost allocation." />
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
-            <div className="px-6 py-5 border-b border-gray-100">
-              <div className="flex justify-between">
-                <div>
-                  <p className="text-base font-medium">Packing List</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    PL No: {shipment.shipment_number.replace('SHP', 'PL')} ·
-                    Container: {shipment.container_number ?? '-'}
-                  </p>
-                </div>
-                <div className="text-right text-xs text-gray-400">
-                  <p>Shipper: {supplier?.name ?? '-'}</p>
-                  <p className="mt-0.5">Consignee: {consignee?.name ?? company?.company_name ?? '-'}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500">#</th>
-                    <th className="text-left px-3 py-2.5 font-medium text-gray-500">Product</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">
-                      <div className="flex items-center justify-end gap-1">
-                        Ctns
-                        <InfoTip text="Number of cartons (boxes). Each carton contains multiple units of the product." />
-                      </div>
-                    </th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">
-                      <div className="flex items-center justify-end gap-1">
-                        Pcs/Ctn
-                        <InfoTip text="Pieces per carton - how many units are packed in each box." />
-                      </div>
-                    </th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Total pcs</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">
-                      <div className="flex items-center justify-end gap-1">
-                        G.W (kg)
-                        <InfoTip text="Gross weight - total weight including carton packaging. Used for By Weight cost allocation." />
-                      </div>
-                    </th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">
-                      <div className="flex items-center justify-end gap-1">
-                        Vol (m³)
-                        <InfoTip text="Total volume in cubic metres. Used for By Volume cost allocation and container capacity planning." />
-                      </div>
-                    </th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Unit price</th>
-                    <th className="text-right px-3 py-2.5 font-medium text-gray-500">Batch value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
-                        No items - add them in the PI Items tab first.
-                      </td>
-                    </tr>
-                  ) : items.map((item, i) => {
-                    const prod     = item.products
-                    const packing  = itemPacking(item)
-                    const totalVol = item.volume_m3_total
-                    return (
-                      <tr key={item.id} className="hover:bg-gray-50/50">
-                        <td className="px-4 py-3 text-gray-400">{i + 1}</td>
-                        <td className="px-3 py-3">
-                          <p className="font-medium">{prod?.name ?? '-'}</p>
-                          <p className="font-mono text-gray-400 mt-0.5">{prod?.sku ?? '-'}</p>
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono">
-                          {packing.ctns > 0 ? N(packing.ctns) : '-'}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono text-gray-500">
-                          {packing.pcsPerCtn}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono font-medium">
-                          {N(packing.totalPcs)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono">
-                          {item.weight_kg_total ? `${N(item.weight_kg_total)} kg` : '-'}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono">
-                          {totalVol ? `${totalVol.toFixed(3)} m³` : '-'}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono text-gray-600">
-                          ${item.unit_price_usd}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono font-medium text-blue-700">
-                          ${N(item.quantity * item.unit_price_usd)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-gray-50 border-t border-gray-200 font-medium text-sm">
-                    <td colSpan={2} className="px-4 py-3 text-xs text-gray-500">Total</td>
-                    <td className="px-3 py-3 text-right font-mono text-xs">
-                      {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))}
-                    </td>
-                    <td></td>
-                    <td className="px-3 py-3 text-right font-mono text-xs">
-                      {N(items.reduce((s, i) => s + itemPacking(i).totalPcs, 0))}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-xs">
-                      {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-xs">
-                      {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
-                    </td>
-                    <td></td>
-                    <td className="px-3 py-3 text-right font-mono text-blue-700">
-                      ${N(totalFobUsd)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div className="px-6 py-3 border-t border-gray-100 text-xs text-gray-400">
-              Total cartons: {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))} ·
-              Total gross weight: {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg ·
-              Total volume: {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 text-xs text-gray-400">
-            <Info size={12} className="mt-0.5 shrink-0" />
-            <span>
-              Pieces per carton and carton numbers shown here are estimated.
-              Update actual values by editing each PI item's weight and volume fields.
-              The clearing agent uses this document for physical verification at the port.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* TRUCK WAYBILL TAB */}
-      {activeTab === 'waybill' && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <p className="text-sm font-medium">Truck waybill</p>
-            <InfoTip text="The Truck Waybill (also called CMR or Road Waybill) is the transport document for goods moving from Djibouti to Addis Ababa by truck. It is issued by the trucking company and must accompany the goods during transit. Ethiopian customs requires this at checkpoints. Keep a copy in your records." />
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
-            <div className="px-6 py-5 border-b border-gray-100">
-              <div className="flex justify-between">
-                <div>
-                  <p className="text-base font-medium">Road Transport Waybill</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    WB No: {shipment.shipment_number.replace('SHP', 'WB')} ·
-                    Date: {today}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">Route: Djibouti → Addis Ababa</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Distance: ~900 km</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-0 border-b border-gray-100">
-              <div className="px-6 py-4 border-r border-gray-100">
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
-                  Consignor (Sender)
-                </p>
-                <p className="text-sm font-medium">Djibouti Port / Clearing Agent</p>
-                <p className="text-xs text-gray-500 mt-1">Port of Djibouti, Djibouti</p>
-              </div>
-              <div className="px-6 py-4">
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
-                  Consignee (Receiver)
-                </p>
-                <p className="text-sm font-medium">{consignee?.name ?? company?.company_name ?? 'Set consignee in Settings'}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {[consignee?.address ?? company?.address, consignee?.city ?? company?.city ?? 'Addis Ababa', 'Ethiopia'].filter(Boolean).join(', ')}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-0 border-b border-gray-100">
-              {[
-                {
-                  label: 'Container no.',
-                  val: shipment.container_number ?? '-',
-                  tip: 'Container number from the Bill of Lading'
-                },
-                {
-                  label: 'Seal number',
-                  val: '-',
-                  tip: 'Customs seal number applied at Djibouti port'
-                },
-                {
-                  label: 'Truck plate',
-                  val: '-',
-                  tip: 'Truck license plate number (enter when truck departs Djibouti)'
-                },
-              ].map(f => (
-                <div key={f.label}
-                     className="px-6 py-3 border-r last:border-r-0 border-gray-100">
-                  <div className="flex items-center gap-1">
-                    <p className="text-xs text-gray-400">{f.label}</p>
-                    <InfoTip text={f.tip} />
-                  </div>
-                  <p className="text-sm font-medium mt-0.5">{f.val}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Cargo summary */}
-            <div className="px-6 py-4 border-b border-gray-100">
-              <p className="text-xs font-medium text-gray-400 uppercase
-                            tracking-wide mb-3">Cargo description</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="text-left px-3 py-2 font-medium text-gray-500">Description</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-500">Packages</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-500">Gross weight</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-500">Volume</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-500">Value (USD)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
-                          No items - add them in the PI Items tab.
-                        </td>
-                      </tr>
-                    ) : items.map(item => {
-                      const prod = item.products
-                      const packing = itemPacking(item)
-                      return (
-                        <tr key={item.id} className="border-b border-gray-50 last:border-0">
-                          <td className="px-3 py-2.5 font-medium">{prod?.name ?? '-'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono">
-                            {packing.ctns} ctns
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono">
-                            {item.weight_kg_total ? `${N(item.weight_kg_total)} kg` : '-'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono">
-                            {item.volume_m3_total ? `${item.volume_m3_total.toFixed(3)} m³` : '-'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono">
-                            ${N(item.quantity * item.unit_price_usd)}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-gray-50 border-t border-gray-200 font-medium">
-                      <td className="px-3 py-2.5 text-xs text-gray-500">Total</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-xs">
-                        {N(items.reduce((s, i) => s + itemPacking(i).ctns, 0))} ctns
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-xs">
-                        {N(items.reduce((s, i) => s + (i.weight_kg_total ?? 0), 0))} kg
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-xs">
-                        {items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0).toFixed(2)} m³
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-blue-700">
-                        ${N(totalFobUsd)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            {/* Transit info */}
-            <div className="grid grid-cols-2 gap-0 border-b border-gray-100">
-              <div className="px-6 py-4 border-r border-gray-100">
-                <p className="text-xs font-medium text-gray-400 uppercase
-                              tracking-wide mb-2">Departure</p>
-                <p className="text-sm font-medium">
-                  {shipment.arrived_addis_date ?? 'Pending'}
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">Port of Djibouti</p>
-              </div>
-              <div className="px-6 py-4">
-                <p className="text-xs font-medium text-gray-400 uppercase
-                              tracking-wide mb-2">Expected arrival</p>
-                <p className="text-sm font-medium">
-                  {shipment.arrived_addis_date ?? 'Pending'}
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">Kaliti, Addis Ababa</p>
-              </div>
-            </div>
-
-            <div className="px-6 py-4 text-xs text-gray-400">
-              This waybill serves as the contract of carriage for road transport
-              of the above-described goods from Djibouti to Addis Ababa, Ethiopia.
-              All goods are subject to Ethiopian customs regulations and inspection.
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 text-xs text-gray-400">
-            <Info size={12} className="mt-0.5 shrink-0" />
-            <span>
-              Add actual truck plate number and seal number as fields on the shipment
-              record. Update shipment status to "In Transit" when the truck departs Djibouti,
-              and "Warehouse Received" when goods arrive at your Addis warehouse.
-            </span>
-          </div>
-        </div>
-      )}
 
       {activeTab === 'timeline' && (
-  <TimelinePanel
+  <ContainerTimelineTabs
     shipmentId={id!}
     fxRate={fxRate}
     containerVolumeM3={items.reduce((s, i) => s + (i.volume_m3_total ?? 0), 0)}
+    djiboutiReceivedAt={shipment?.djibouti_received_at}
   />
 )}
 
@@ -2029,6 +1610,40 @@ export function ShipmentDetail() {
           onCancel={() => setShowDeleteModal(false)}
           onDeleted={() => navigate('/shipments')}
         />
+      )}
+      {shortageTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          onClick={e => e.target === e.currentTarget && setShortageTarget(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="text-sm font-medium">Flag shortage — {shortageTarget.name}</h2>
+              <button onClick={() => setShortageTarget(null)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-xs text-gray-400">
+                Noted against {shipment?.suppliers?.name ?? 'this supplier'} — shows as a reminder when you start their next order.
+              </p>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Quantity short (optional)</label>
+                <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  value={shortageForm.quantity_short} onChange={e => setShortageForm(p => ({ ...p, quantity_short: e.target.value }))} placeholder="e.g. 15" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Notes</label>
+                <textarea rows={2} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                  value={shortageForm.notes} onChange={e => setShortageForm(p => ({ ...p, notes: e.target.value }))} placeholder="What was missing or short?" />
+              </div>
+              {shortageError && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{shortageError}</div>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
+              <button onClick={() => setShortageTarget(null)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={saveShortageNote} disabled={savingShortage}
+                className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 text-white text-xs rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors min-w-[90px] justify-center">
+                {savingShortage ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Flag it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

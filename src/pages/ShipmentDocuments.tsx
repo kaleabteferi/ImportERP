@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
@@ -19,12 +19,25 @@ type DocType = 'commercial' | 'packing' | 'waybill'
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 
+// Packing lists must call out SKD/CKD lines distinctly from finished goods --
+// customs and the assembly line both care whether a carton holds a
+// ready-to-sell unit or components that still need assembling. Order:
+// finished goods first, then semi-knocked-down, then fully knocked-down.
+const ASSEMBLY_GROUP_ORDER = ['IMPORTED', 'FULL', 'SKD', 'CKD'] as const
+const ASSEMBLY_GROUP_LABEL: Record<string, string> = {
+  IMPORTED: 'Finished goods (imported)',
+  FULL: 'Finished goods (fully assembled)',
+  SKD: 'SKD — Semi-Knocked Down',
+  CKD: 'CKD — Completely Knocked Down',
+}
+
 export function ShipmentDocuments() {
   const { id } = useParams<{ id: string }>()
   const printRef = useRef<HTMLDivElement>(null)
 
   const [data, setData]       = useState<DocData | null>(null)
   const [docType, setDocType] = useState<DocType>('commercial')
+  const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving]   = useState(false)
@@ -47,6 +60,7 @@ export function ShipmentDocuments() {
     blNo: '',
     vesselName: '',
     voyageNo: '',
+    truckingRatePerKg: '1600',
   })
 
   async function load() {
@@ -58,7 +72,7 @@ export function ShipmentDocuments() {
       .select('*, suppliers(name, contact_person, email, country)')
       .eq('id', id).single(),
     supabase.from('shipment_items')
-      .select('id, product_id, quantity, unit_price_usd, weight_kg_total, volume_m3_total, hs_code, country_of_origin, carton_qty, units_per_carton, gross_weight_per_ctn, net_weight_per_ctn, carton_number_from, carton_number_to, carton_marks')
+      .select('id, product_id, container_id, quantity, unit_price_usd, weight_kg_total, volume_m3_total, hs_code, country_of_origin, carton_qty, units_per_carton, gross_weight_per_ctn, net_weight_per_ctn, carton_number_from, carton_number_to, carton_marks, containers(container_number, vessel_name, bl_number, etd)')
       .eq('shipment_id', id)
       .order('created_at'),
     supabase.from('company_settings').select('*').single(),
@@ -66,7 +80,7 @@ export function ShipmentDocuments() {
     supabase.from('forex_rates').select('rate')
       .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
       .order('effective_date', { ascending: false }).limit(1),
-    supabase.from('products').select('id, name, sku, unit_of_measure').eq('is_active', true),
+    supabase.from('products').select('id, name, sku, unit_of_measure, assembly_type').eq('is_active', true),
   ])
 
   // JS join — no FK required
@@ -143,8 +157,21 @@ export function ShipmentDocuments() {
     <div className="p-5 text-center text-gray-400">Shipment not found.</div>
   )
 
-  const { shipment, items, company, consignee, fxRate: customsRate } = data
+  const { shipment, items: allItems, company, consignee, fxRate: customsRate } = data
   const supplier  = shipment?.suppliers
+
+  // Distinct containers actually present on this shipment's items, for the
+  // "All containers (combined)" / per-container document filter. A
+  // container-less (manual) shipment or one with a single container shows
+  // no picker at all -- this stays invisible unless there's a real choice.
+  const containerOptions = [...new Map(
+    allItems.filter((i: any) => i.container_id).map((i: any) => [i.container_id, i.containers?.container_number ?? i.container_id])
+  ).entries()] as [string, string][]
+  const selectedContainer = selectedContainerId
+    ? allItems.find((i: any) => i.container_id === selectedContainerId)?.containers ?? null
+    : null
+  const items = selectedContainerId ? allItems.filter((i: any) => i.container_id === selectedContainerId) : allItems
+
   const totalFob  = items.reduce((s: number, i: any) => s + i.quantity * i.unit_price_usd, 0)
   const totalWt   = items.reduce((s: number, i: any) => s + (i.weight_kg_total ?? 0), 0)
   const totalVol  = items.reduce((s: number, i: any) => s + (i.volume_m3_total ?? 0), 0)
@@ -232,6 +259,26 @@ export function ShipmentDocuments() {
           ))}
         </div>
 
+        {/* Container filter -- only shown when this shipment actually has
+            more than one container; real-world customs docs are usually
+            per-container, but "All combined" preserves today's exact
+            output for single-container/manual shipments by default. */}
+        {containerOptions.length > 1 && (
+          <div className="flex items-center gap-2 mb-5 print:hidden">
+            <label className="text-xs text-gray-400">Container</label>
+            <select
+              value={selectedContainerId ?? ''}
+              onChange={e => setSelectedContainerId(e.target.value || null)}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              <option value="">All containers (combined)</option>
+              {containerOptions.map(([id, number]) => (
+                <option key={id} value={id}>{number}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Edit panel */}
         {editing && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
@@ -304,6 +351,11 @@ export function ShipmentDocuments() {
                     <label className="block text-xs text-amber-700 mb-1">Expected arrival</label>
                     <input type="date" className="w-full px-2.5 py-1.5 text-xs border border-amber-300 rounded-lg bg-white focus:outline-none"
                            value={overrides.arrivalDate} onChange={e => setOverrides(p => ({ ...p, arrivalDate: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-amber-700 mb-1">Inland rate (ETB/kg)</label>
+                    <input type="number" step="1" className="w-full px-2.5 py-1.5 text-xs border border-amber-300 rounded-lg bg-white focus:outline-none font-mono"
+                           value={overrides.truckingRatePerKg} onChange={e => setOverrides(p => ({ ...p, truckingRatePerKg: e.target.value }))} placeholder="1600" />
                   </div>
                 </>
               )}
@@ -412,8 +464,8 @@ export function ShipmentDocuments() {
             {/* Shipping details */}
             <div className="grid grid-cols-4 border-b border-gray-200">
               {[
-                { label: 'Vessel / carrier', val: overrides.vesselName || '—' },
-                { label: 'BL number',        val: overrides.blNo || shipment?.container_number || '—' },
+                { label: 'Vessel / carrier', val: overrides.vesselName || selectedContainer?.vessel_name || shipment?.vessel_name || '—' },
+                { label: 'BL number',        val: overrides.blNo || selectedContainer?.bl_number || shipment?.bl_number || '—' },
                 { label: 'Port of loading',  val: overrides.portLoading },
                 { label: 'Port of discharge',val: overrides.portDischarge },
               ].map((f, i) => (
@@ -566,8 +618,8 @@ export function ShipmentDocuments() {
 
             <div className="grid grid-cols-4 border-b border-gray-200">
               {[
-                { label: 'Container no.', val: shipment?.container_number ?? '—' },
-                { label: 'Vessel', val: overrides.vesselName || '—' },
+                { label: 'Container no.', val: selectedContainer?.container_number ?? shipment?.container_number ?? '—' },
+                { label: 'Vessel', val: overrides.vesselName || selectedContainer?.vessel_name || shipment?.vessel_name || '—' },
                 { label: 'Port of loading', val: overrides.portLoading },
                 { label: 'Port of discharge', val: overrides.portDischarge },
               ].map((f, i) => (
@@ -597,7 +649,25 @@ export function ShipmentDocuments() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item: any, i: number) => {
+                  {(() => {
+                    const groups = ASSEMBLY_GROUP_ORDER
+                      .map(type => ({
+                        type,
+                        rows: items.filter((it: any) => (it.products?.assembly_type ?? 'IMPORTED') === type),
+                      }))
+                      .filter(g => g.rows.length > 0)
+                    let runningIndex = 0
+                    return groups.map(group => (
+                      <Fragment key={group.type}>
+                        {groups.length > 1 && (
+                          <tr key={`hdr-${group.type}`} className="bg-gray-200">
+                            <td colSpan={11} className="px-4 py-1.5 text-xs font-bold text-gray-700 uppercase tracking-wide">
+                              {ASSEMBLY_GROUP_LABEL[group.type] ?? group.type} ({group.rows.length} line{group.rows.length !== 1 ? 's' : ''})
+                            </td>
+                          </tr>
+                        )}
+                        {group.rows.map((item: any) => {
+                    const i = runningIndex++
                     const prod = item.products
   const isCarton = item.unit_of_measure === 'CTN'
 
@@ -663,7 +733,10 @@ export function ShipmentDocuments() {
                         </td>
                       </tr>
                     )
-                  })}
+                        })}
+                      </Fragment>
+                    ))
+                  })()}
                 </tbody>
                 <tfoot>
                   <tr className="bg-gray-100 border-t-2 border-gray-400 font-bold">
@@ -740,7 +813,7 @@ export function ShipmentDocuments() {
             {/* Transport details */}
             <div className="grid grid-cols-4 border-b border-gray-200">
               {[
-                { label: 'Container no.', val: shipment?.container_number ?? '—' },
+                { label: 'Container no.', val: selectedContainer?.container_number ?? shipment?.container_number ?? '—' },
                 { label: 'Truck plate no.',val: overrides.truckPlate || '—' },
                 { label: 'Seal number',    val: overrides.sealNo || '—' },
                 { label: 'Driver name',    val: overrides.driverName || '—' },
@@ -861,6 +934,29 @@ export function ShipmentDocuments() {
                   </tr>
                 </tfoot>
               </table>
+            </div>
+
+            {/* Inland transport cost */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 print:bg-white">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
+                Inland transport charge
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <p className="text-xs text-gray-400">Total weight</p>
+                  <p className="text-sm font-bold font-mono">{totalWt > 0 ? `${N(totalWt)} KG` : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Rate</p>
+                  <p className="text-sm font-bold font-mono">{N(parseFloat(overrides.truckingRatePerKg) || 0)} ETB/KG</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Inland charge</p>
+                  <p className="text-sm font-bold font-mono text-blue-700">
+                    {N(totalWt * (parseFloat(overrides.truckingRatePerKg) || 0))} ETB
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Signatures */}
