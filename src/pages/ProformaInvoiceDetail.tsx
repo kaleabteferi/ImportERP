@@ -253,8 +253,9 @@ export function ProformaInvoiceDetail() {
   // so every remaining unit really does end up somewhere. Only gives up on
   // an item whose own single carton is bigger than a full empty 40HC -- no
   // amount of extra containers fixes that; it's a data problem to go check.
-  async function suggestLayout() {
+  async function suggestLayout(auto = false) {
     if (!pi) return
+    if (auto && suggesting) return
     setSuggesting(true)
     setError(null)
     setNotice(null)
@@ -324,9 +325,14 @@ export function ProformaInvoiceDetail() {
       const unplacedNames = result.unplaced.map(u => items.find(x => x.id === u.piItemId)?.item_description ?? 'an item')
 
       if (result.assignments.length === 0 && createdContainerNumbers.length === 0) {
-        setNotice(result.skipped.length > 0
-          ? `Nothing to suggest — ${skippedNames.join(', ')} ${skippedNames.length === 1 ? 'is' : 'are'} missing carton size or units-per-carton. Set it on the Products page and try again.`
-          : 'Nothing to suggest — every line item is already fully allocated to a container.')
+        if (result.skipped.length > 0) {
+          setNotice(`${skippedNames.join(', ')} ${skippedNames.length === 1 ? 'is' : 'are'} missing carton size or units-per-carton — set it on the Products page to allocate ${skippedNames.length === 1 ? 'it' : 'them'}.`)
+        } else if (!auto) {
+          // A manual click always gets a response, even a reassuring one --
+          // an auto-triggered check (e.g. opening this tab) that finds
+          // nothing to do stays silent instead of nagging every visit.
+          setNotice('Nothing to suggest — every line item is already fully allocated to a container.')
+        }
         setSuggesting(false)
         return
       }
@@ -474,7 +480,7 @@ export function ProformaInvoiceDetail() {
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${tab === 'items' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
           <Package size={12} /> Line items ({items.length})
         </button>
-        <button onClick={() => setTab('containers')}
+        <button onClick={() => { setTab('containers'); suggestLayout(true) }}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${tab === 'containers' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
           <Boxes size={12} /> Containers ({containers.length})
         </button>
@@ -546,7 +552,7 @@ export function ProformaInvoiceDetail() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-medium">Containers</p>
             <div className="flex items-center gap-2">
-              <button onClick={suggestLayout} disabled={suggesting || containers.length === 0 || items.length === 0}
+              <button onClick={() => suggestLayout()} disabled={suggesting || containers.length === 0 || items.length === 0}
                 title={containers.length === 0 ? 'Add a container first' : 'Auto-split remaining items across containers'}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-600 border border-gray-200 text-xs rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors">
                 {suggesting ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Suggest layout
