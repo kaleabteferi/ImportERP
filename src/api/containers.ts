@@ -109,27 +109,39 @@ export async function deleteContainer(id: string) {
 // packing_lists has UNIQUE(container_id) -- exactly one per container.
 // Fetch-or-create so callers never have to think about whether it exists yet.
 //
-// The count-based pl_number is racy under concurrent calls (e.g. React
-// StrictMode double-invoking the mount effect that calls this, or two
-// containers created back-to-back before the first insert commits) --
-// mirrors the retry-on-conflict pattern already used for shipment_number in
-// src/pages/Shipments.tsx. On a collision, re-check by container_id first
-// (a concurrent call for the SAME container may have already won) before
-// retrying with a fresh number.
+// pl_number is derived from the highest existing PL-<year>-NNN number for
+// the current year, not a row COUNT -- a global count doesn't reflect the
+// real next-free number once any packing list has ever been deleted (it
+// undercounts), the same class of bug fixed for pl_items.line_number.
+// Still racy under genuine concurrent calls (e.g. React StrictMode
+// double-invoking the mount effect that calls this, or two containers
+// created back-to-back before the first insert commits), so this retries
+// on a collision, re-checking by container_id first (a concurrent call for
+// the SAME container may have already won) before trying a fresh number.
 export async function getOrCreatePackingList(containerId: string, piId: string): Promise<string> {
   const { data: existing, error: fetchError } = await supabase
     .from('packing_lists').select('id').eq('container_id', containerId).maybeSingle()
   if (fetchError) throw new Error(fetchError.message)
   if (existing) return existing.id as string
 
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const { count } = await supabase
-      .from('packing_lists').select('id', { count: 'exact', head: true })
-    const plNumber = `PL-${new Date().getFullYear()}-${String((count ?? 0) + 1 + attempt).padStart(3, '0')}`
+  const year = new Date().getFullYear()
+  const prefix = `PL-${year}-`
 
+  async function nextPlNumber(bump: number): Promise<string> {
+    const { data } = await supabase
+      .from('packing_lists').select('pl_number')
+      .like('pl_number', `${prefix}%`)
+    const maxSeq = (data ?? []).reduce((max, r) => {
+      const seq = parseInt(String(r.pl_number).slice(prefix.length), 10)
+      return Number.isFinite(seq) && seq > max ? seq : max
+    }, 0)
+    return `${prefix}${String(maxSeq + 1 + bump).padStart(3, '0')}`
+  }
+
+  for (let attempt = 0; attempt < 4; attempt++) {
     const { data, error } = await supabase
       .from('packing_lists')
-      .insert({ pl_number: plNumber, container_id: containerId, pi_id: piId })
+      .insert({ pl_number: await nextPlNumber(attempt), container_id: containerId, pi_id: piId })
       .select('id')
       .single()
     if (!error) return data.id as string
@@ -186,12 +198,24 @@ export interface PlItemInput {
 }
 
 export async function addPackingListItem(packingListId: string, input: PlItemInput) {
-  const { count } = await supabase
-    .from('pl_items').select('id', { count: 'exact', head: true }).eq('pl_id', packingListId)
-  const { error } = await supabase.from('pl_items').insert({
+  // line_number must be higher than every line_number that still exists for
+  // this packing list, not just "one more than how many rows are left" --
+  // COUNT(*) + 1 collides with pl_items_unique_line(pl_id, line_number) as
+  // soon as a non-last line is deleted (e.g. lines 1,2 exist, delete 1,
+  // count is now 1, count+1 = 2 which line 2 already has). MAX(line_number)
+  // always lands past every existing number regardless of which line was
+  // removed. Retries once on a genuine concurrent-insert collision, same
+  // pattern as this session's other count/max-based sequence fixes.
+  async function nextLineNumber(): Promise<number> {
+    const { data } = await supabase
+      .from('pl_items').select('line_number').eq('pl_id', packingListId)
+      .order('line_number', { ascending: false }).limit(1).maybeSingle()
+    return (data?.line_number ?? 0) + 1
+  }
+
+  const payload = {
     pl_id: packingListId,
     pi_item_id: input.pi_item_id,
-    line_number: (count ?? 0) + 1,
     carton_qty: input.carton_qty,
     units_per_carton: input.units_per_carton,
     unit_price_foreign: input.unit_price_foreign,
@@ -201,8 +225,14 @@ export async function addPackingListItem(packingListId: string, input: PlItemInp
     width_cm: input.width_cm ?? null,
     height_cm: input.height_cm ?? null,
     marks_and_numbers: input.marks_and_numbers ?? null,
-  })
-  if (error) throw new Error(error.message)
+  }
+
+  const { error } = await supabase.from('pl_items').insert({ ...payload, line_number: await nextLineNumber() })
+  if (!error) return
+  if (error.code !== '23505') throw new Error(error.message)
+
+  const { error: retryError } = await supabase.from('pl_items').insert({ ...payload, line_number: await nextLineNumber() })
+  if (retryError) throw new Error(retryError.message)
 }
 
 export async function deletePackingListItem(id: string) {
