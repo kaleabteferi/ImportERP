@@ -13,7 +13,7 @@ import { PackingListBuilder } from '../components/containers/PackingListBuilder'
 import { GenerateShipmentButton } from '../components/containers/GenerateShipmentButton'
 import { ContainerFillGauge } from '../components/containers/ContainerFillGauge'
 import { containerCapacityM3, containerPayloadKg } from '../lib/containerSpecs'
-import { suggestPackingLayout } from '../lib/packingSuggestion'
+import { suggestPackingLayout, estimateNewContainersNeeded, singleCartonExceedsContainer } from '../lib/packingSuggestion'
 
 interface Product { id: string; name: string; sku: string; default_customs_value: number | null }
 
@@ -213,6 +213,15 @@ export function ProformaInvoiceDetail() {
   // this PI's containers -- a starting layout, not a final one. Only ever
   // adds new pl_items for whatever's still unallocated; it never touches a
   // line someone already packed by hand.
+  //
+  // If the existing containers don't have room for everything, this doesn't
+  // just report "some of it didn't fit" -- it creates as many additional
+  // 40HC containers as the shortfall requires (a placeholder number,
+  // "PENDING-N", since the real container number isn't known until it's
+  // booked) and re-packs against the larger set, so every remaining unit
+  // really does end up in a container. Only gives up on an item whose own
+  // single carton is bigger than an entirely empty container -- no amount
+  // of extra containers fixes that; it's a data problem to go check.
   async function suggestLayout() {
     if (!pi) return
     setSuggesting(true)
@@ -230,7 +239,8 @@ export function ProformaInvoiceDetail() {
         const cartonWeightKg = (p?.weight_kg && unitsPerCarton) ? Number(p.weight_kg) * unitsPerCarton : null
         return { piItemId: it.id, remainingUnits, unitsPerCarton, cartonVolumeM3, cartonWeightKg }
       })
-      const suggestionContainers = containers.map(c => ({
+
+      let workingContainers = containers.map(c => ({
         containerId: c.id,
         capacityM3: containerCapacityM3(c.container_type),
         payloadKg: containerPayloadKg(c.container_type),
@@ -238,9 +248,39 @@ export function ProformaInvoiceDetail() {
         usedKg: containerWeights[c.id] ?? 0,
       }))
 
-      const result = suggestPackingLayout(suggestionItems, suggestionContainers)
+      const NEW_CONTAINER_TYPE = '40HC'
+      const freshCapacityM3 = containerCapacityM3(NEW_CONTAINER_TYPE)
+      const freshPayloadKg = containerPayloadKg(NEW_CONTAINER_TYPE)
 
-      if (result.assignments.length === 0) {
+      let result = suggestPackingLayout(suggestionItems, workingContainers)
+      const createdContainerNumbers: string[] = []
+
+      // Top up with fresh containers until nothing's left unplaced, capped
+      // so a genuinely-impossible item (bigger than an empty container)
+      // can't spin this into an endless container-creation loop.
+      for (let attempt = 0; attempt < 5 && result.unplaced.length > 0; attempt++) {
+        if (singleCartonExceedsContainer(result.unplaced, suggestionItems, freshCapacityM3, freshPayloadKg)) break
+
+        const needed = estimateNewContainersNeeded(result.unplaced, suggestionItems, freshCapacityM3, freshPayloadKg)
+        const { data: pending } = await supabase.from('containers').select('container_number').like('container_number', 'PENDING-%')
+        let maxN = (pending ?? []).reduce((max: number, r: any) => {
+          const n = parseInt(String(r.container_number).slice('PENDING-'.length), 10)
+          return Number.isFinite(n) && n > max ? n : max
+        }, 0)
+
+        const freshContainers = []
+        for (let i = 0; i < needed; i++) {
+          maxN += 1
+          const containerNumber = `PENDING-${maxN}`
+          const newId = await createContainer(pi.id, { container_number: containerNumber, container_type: NEW_CONTAINER_TYPE })
+          createdContainerNumbers.push(containerNumber)
+          freshContainers.push({ containerId: newId, capacityM3: freshCapacityM3, payloadKg: freshPayloadKg, usedM3: 0, usedKg: 0 })
+        }
+        workingContainers = [...workingContainers, ...freshContainers]
+        result = suggestPackingLayout(suggestionItems, workingContainers)
+      }
+
+      if (result.assignments.length === 0 && createdContainerNumbers.length === 0) {
         setNotice(result.skipped.length > 0
           ? `Nothing to suggest — every remaining item is missing ${result.skipped[0].reason}. Set it on the Products page and try again.`
           : 'Nothing to suggest — every line item is already fully allocated to a container.')
@@ -272,8 +312,11 @@ export function ProformaInvoiceDetail() {
       }
 
       const notes: string[] = []
+      if (createdContainerNumbers.length > 0) {
+        notes.push(`Created ${createdContainerNumbers.length} new container(s) (${createdContainerNumbers.join(', ')}) to fit everything — rename them to the real container number once booked.`)
+      }
       if (result.unplaced.length > 0) {
-        notes.push(`${result.unplaced.length} item(s) had cartons that didn't fit in the remaining container space — add another container for the rest.`)
+        notes.push(`${result.unplaced.length} item(s) still didn't fit — a single carton is bigger than a full container, so check its carton size on the Products page.`)
       }
       if (result.skipped.length > 0) {
         notes.push(`${result.skipped.length} item(s) skipped — missing carton size or units-per-carton on the Products page.`)
