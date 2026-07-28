@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
 import { useAuth } from '../lib/auth'
 import { QuickActions } from '../components/dashboard/QuickActions'
+import { ManufacturingPerformanceCard } from '../components/dashboard/ManufacturingPerformanceCard'
 import { GlobalSearchBar } from '../components/GlobalSearchBar'
 import {
   Sparkles, TrendingUp, TrendingDown, ChevronDown, ChevronRight,
@@ -327,6 +328,10 @@ export function Dashboard() {
                 )}
               </div>
             )}
+          </QuestionCard>
+
+          <QuestionCard question="How efficient is production, and how much overtime is it costing?" viewAllTo="/production" viewAllLabel="Go to Production">
+            <ManufacturingPerformanceCard />
           </QuestionCard>
 
           <QuestionCard question="What should I do today?" defaultOpen={d.todoToday.length > 0}>
