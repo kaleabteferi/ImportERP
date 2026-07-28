@@ -160,7 +160,7 @@ export async function getOrCreatePackingList(containerId: string, piId: string):
 export async function listPackingListItems(packingListId: string) {
   const { data, error } = await supabase
     .from('pl_items')
-    .select('*, pi_items(item_description, unit_of_measure, product_id, products(name, sku))')
+    .select('*, pi_items(item_description, unit_of_measure, product_id, products(name, sku, volume_m3))')
     .eq('pl_id', packingListId)
     .order('line_number')
   if (error) throw new Error(error.message)
@@ -170,14 +170,18 @@ export async function listPackingListItems(packingListId: string) {
 // How much of each pi_item has already been split across ALL of this PI's
 // containers -- lets the packing-list builder show "remaining to allocate"
 // per line instead of letting the same units get double-booked silently.
-export async function getAllocatedQuantities(piId: string): Promise<Record<string, number>> {
+// excludePlItemId leaves a specific line's own allocation out of the total --
+// used while editing that line, so its own already-counted units don't make
+// its own remaining look smaller than what's actually still free.
+export async function getAllocatedQuantities(piId: string, excludePlItemId?: string): Promise<Record<string, number>> {
   const { data, error } = await supabase
     .from('pl_items')
-    .select('pi_item_id, total_units, packing_lists!inner(pi_id)')
+    .select('id, pi_item_id, total_units, packing_lists!inner(pi_id)')
     .eq('packing_lists.pi_id', piId)
   if (error) throw new Error(error.message)
   const totals: Record<string, number> = {}
   for (const row of data ?? []) {
+    if (excludePlItemId && (row as any).id === excludePlItemId) continue
     const key = (row as any).pi_item_id as string
     totals[key] = (totals[key] ?? 0) + Number((row as any).total_units ?? 0)
   }
@@ -233,6 +237,24 @@ export async function addPackingListItem(packingListId: string, input: PlItemInp
 
   const { error: retryError } = await supabase.from('pl_items').insert({ ...payload, line_number: await nextLineNumber() })
   if (retryError) throw new Error(retryError.message)
+}
+
+// Updates an existing line in place -- never touches line_number, so it
+// can't collide with pl_items_unique_line the way re-adding would.
+export async function updatePackingListItem(id: string, input: PlItemInput) {
+  const { error } = await supabase.from('pl_items').update({
+    pi_item_id: input.pi_item_id,
+    carton_qty: input.carton_qty,
+    units_per_carton: input.units_per_carton,
+    unit_price_foreign: input.unit_price_foreign,
+    gross_weight_per_ctn: input.gross_weight_per_ctn ?? null,
+    net_weight_per_ctn: input.net_weight_per_ctn ?? null,
+    length_cm: input.length_cm ?? null,
+    width_cm: input.width_cm ?? null,
+    height_cm: input.height_cm ?? null,
+    marks_and_numbers: input.marks_and_numbers ?? null,
+  }).eq('id', id)
+  if (error) throw new Error(error.message)
 }
 
 export async function deletePackingListItem(id: string) {

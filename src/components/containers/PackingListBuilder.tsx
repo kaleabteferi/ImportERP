@@ -7,10 +7,10 @@
 // split — this is how "different items per container" gets represented
 // (e.g. chairs -> container A, tables -> container B).
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, X, Loader2, Package } from 'lucide-react'
+import { Plus, X, Pencil, Check, Loader2, Package } from 'lucide-react'
 import type { PiItem } from '../../api/proformaInvoices'
 import {
-  getOrCreatePackingList, listPackingListItems, addPackingListItem,
+  getOrCreatePackingList, listPackingListItems, addPackingListItem, updatePackingListItem,
   deletePackingListItem, getAllocatedQuantities,
 } from '../../api/containers'
 
@@ -25,13 +25,26 @@ const EMPTY_LINE = { pi_item_id: '', carton_qty: '', units_per_carton: '', lengt
 
 const N3 = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 4 }).format(n)
 
+// Real volume when carton dimensions were entered, otherwise the product's
+// own per-unit volume (set on the Products page) x units packed -- an
+// estimate, but a real one, instead of reading 0 until someone measures
+// every carton by hand.
+function effectiveVolume(l: any): { m3: number; estimated: boolean } {
+  const dimensionVolume = Number(l.total_volume_m3 ?? 0)
+  if (dimensionVolume > 0) return { m3: dimensionVolume, estimated: false }
+  const perUnit = l.pi_items?.products?.volume_m3
+  if (perUnit) return { m3: Number(perUnit) * Number(l.total_units ?? 0), estimated: true }
+  return { m3: 0, estimated: false }
+}
+
 export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Props) {
   const [packingListId, setPackingListId] = useState<string | null>(null)
   const [lines, setLines] = useState<any[]>([])
   const [allocated, setAllocated] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ ...EMPTY_LINE })
-  const [adding, setAdding] = useState(false)
+  const [editingLineId, setEditingLineId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -41,7 +54,10 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
       setPackingListId(plId)
       const [items, allocs] = await Promise.all([
         listPackingListItems(plId),
-        getAllocatedQuantities(piId),
+        // Editing a line shouldn't make its own already-counted units look
+        // like they're eating into its own remaining -- excluded here and
+        // re-fetched fresh whenever which line is being edited changes.
+        getAllocatedQuantities(piId, editingLineId ?? undefined),
       ])
       setLines(items)
       setAllocated(allocs)
@@ -49,7 +65,7 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
       setError(e?.message ?? String(e))
     }
     setLoading(false)
-  }, [containerId, piId])
+  }, [containerId, piId, editingLineId])
 
   useEffect(() => { load() }, [load])
 
@@ -73,11 +89,30 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
     }))
   }
 
+  function startEdit(l: any) {
+    setEditingLineId(l.id)
+    setForm({
+      pi_item_id: l.pi_item_id,
+      carton_qty: String(l.carton_qty),
+      units_per_carton: String(l.units_per_carton),
+      length_cm: l.length_cm != null ? String(l.length_cm) : '',
+      width_cm: l.width_cm != null ? String(l.width_cm) : '',
+      height_cm: l.height_cm != null ? String(l.height_cm) : '',
+    })
+    setError(null)
+  }
+
+  function cancelEdit() {
+    setEditingLineId(null)
+    setForm({ ...EMPTY_LINE })
+    setError(null)
+  }
+
   const cartonVolumeM3 = form.length_cm && form.width_cm && form.height_cm
     ? (parseFloat(form.length_cm) * parseFloat(form.width_cm) * parseFloat(form.height_cm)) / 1000000
     : null
 
-  async function addLine() {
+  async function saveLine() {
     if (!packingListId || !form.pi_item_id || !form.carton_qty || !form.units_per_carton) {
       setError('Fill in item, cartons, and units per carton'); return
     }
@@ -86,10 +121,10 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
     // here rather than re-typed (and possibly re-typed wrong) per container.
     const piItem = piItems.find(pi => pi.id === form.pi_item_id)
     if (!piItem) { setError('Selected item not found.'); return }
-    setAdding(true)
+    setSaving(true)
     setError(null)
     try {
-      await addPackingListItem(packingListId, {
+      const payload = {
         pi_item_id: form.pi_item_id,
         carton_qty: parseFloat(form.carton_qty),
         units_per_carton: parseFloat(form.units_per_carton),
@@ -97,19 +132,26 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
         length_cm: form.length_cm ? parseFloat(form.length_cm) : null,
         width_cm: form.width_cm ? parseFloat(form.width_cm) : null,
         height_cm: form.height_cm ? parseFloat(form.height_cm) : null,
-      })
+      }
+      if (editingLineId) {
+        await updatePackingListItem(editingLineId, payload)
+      } else {
+        await addPackingListItem(packingListId, payload)
+      }
       setForm({ ...EMPTY_LINE })
+      setEditingLineId(null)
       await load()
       onChanged?.()
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
-    setAdding(false)
+    setSaving(false)
   }
 
   async function removeLine(id: string) {
     try {
       await deletePackingListItem(id)
+      if (editingLineId === id) cancelEdit()
       await load()
       onChanged?.()
     } catch (e: any) {
@@ -139,28 +181,41 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
               <th className="font-medium py-1 text-right">Total units</th>
               <th className="font-medium py-1 text-right">Unit price</th>
               <th className="font-medium py-1 text-right">Volume</th>
-              <th className="w-6"></th>
+              <th className="w-12"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {lines.map(l => (
-              <tr key={l.id}>
-                <td className="py-1.5">{l.pi_items?.item_description ?? l.pi_items?.products?.name ?? '—'}</td>
-                <td className="py-1.5 text-right font-mono">{l.carton_qty}</td>
-                <td className="py-1.5 text-right font-mono">{l.units_per_carton}</td>
-                <td className="py-1.5 text-right font-mono">{l.total_units}</td>
-                <td className="py-1.5 text-right font-mono">${l.unit_price_foreign}</td>
-                <td className="py-1.5 text-right font-mono">
-                  {l.total_volume_m3 > 0 ? `${N3(l.total_volume_m3)} m³` : <span className="text-amber-500">no size</span>}
-                </td>
-                <td className="py-1.5"><button onClick={() => removeLine(l.id)} className="text-gray-300 hover:text-red-500 transition-colors"><X size={12} /></button></td>
-              </tr>
-            ))}
+            {lines.map(l => {
+              const vol = effectiveVolume(l)
+              return (
+                <tr key={l.id} className={editingLineId === l.id ? 'bg-blue-50/60' : ''}>
+                  <td className="py-1.5">{l.pi_items?.item_description ?? l.pi_items?.products?.name ?? '—'}</td>
+                  <td className="py-1.5 text-right font-mono">{l.carton_qty}</td>
+                  <td className="py-1.5 text-right font-mono">{l.units_per_carton}</td>
+                  <td className="py-1.5 text-right font-mono">{l.total_units}</td>
+                  <td className="py-1.5 text-right font-mono">${l.unit_price_foreign}</td>
+                  <td className="py-1.5 text-right font-mono">
+                    {vol.m3 > 0
+                      ? <span className={vol.estimated ? 'text-amber-600' : ''}>{N3(vol.m3)} m³{vol.estimated ? ' (est.)' : ''}</span>
+                      : <span className="text-amber-500">no size</span>}
+                  </td>
+                  <td className="py-1.5">
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <button onClick={() => startEdit(l)} className="text-gray-300 hover:text-blue-600 transition-colors"><Pencil size={12} /></button>
+                      <button onClick={() => removeLine(l.id)} className="text-gray-300 hover:text-red-500 transition-colors"><X size={12} /></button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}
 
-      <div className="flex flex-wrap items-end gap-2 bg-gray-50 rounded-lg p-2.5">
+      <div className={`flex flex-wrap items-end gap-2 rounded-lg p-2.5 ${editingLineId ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
+        {editingLineId && (
+          <p className="w-full text-xs font-medium text-blue-700">Editing this line — Save to apply, or Cancel.</p>
+        )}
         <div>
           <label className="block text-xs text-gray-400 mb-1">Line item</label>
           <select className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg bg-white w-48"
@@ -198,10 +253,16 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
           <input type="number" step="0.1" className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg w-16"
             value={form.height_cm} onChange={e => setForm(p => ({ ...p, height_cm: e.target.value }))} />
         </div>
-        <button onClick={addLine} disabled={adding}
+        <button onClick={saveLine} disabled={saving}
           className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-          {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add
+          {saving ? <Loader2 size={12} className="animate-spin" /> : editingLineId ? <Check size={12} /> : <Plus size={12} />}
+          {editingLineId ? 'Save' : 'Add'}
         </button>
+        {editingLineId && (
+          <button onClick={cancelEdit} className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-white transition-colors">
+            Cancel
+          </button>
+        )}
         {cartonVolumeM3 != null && form.carton_qty && (
           <p className="w-full text-xs text-gray-400">
             = {N3(cartonVolumeM3)} m³/carton × {form.carton_qty} cartons = <span className="font-medium text-gray-600">{N3(cartonVolumeM3 * parseFloat(form.carton_qty || '0'))} m³ total</span>

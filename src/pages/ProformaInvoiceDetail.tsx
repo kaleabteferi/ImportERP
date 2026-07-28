@@ -2,9 +2,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes } from 'lucide-react'
+import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil } from 'lucide-react'
 import {
-  getProformaInvoice, listPiItems, addPiItem, deletePiItem, fetchLastPiItemForProduct,
+  getProformaInvoice, listPiItems, addPiItem, updatePiItem, deletePiItem, fetchLastPiItemForProduct,
 } from '../api/proformaInvoices'
 import type { ProformaInvoice, PiItem } from '../api/proformaInvoices'
 import { listContainers, createContainer } from '../api/containers'
@@ -43,6 +43,7 @@ export function ProformaInvoiceDetail() {
   const [itemOpen, setItemOpen] = useState(false)
   const [itemForm, setItemForm] = useState({ ...EMPTY_ITEM })
   const [savingItem, setSavingItem] = useState(false)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
 
   const [containerOpen, setContainerOpen] = useState(false)
   const [containerForm, setContainerForm] = useState({ ...EMPTY_CONTAINER })
@@ -63,7 +64,14 @@ export function ProformaInvoiceDetail() {
         // packing_lists.total_volume_m3 is a cached summary column nothing in
         // the app ever writes to -- sum straight from pl_items.total_volume_m3
         // (a real generated column) instead of trusting that stale cache.
-        supabase.from('pl_items').select('total_volume_m3, packing_lists!inner(pi_id, container_id)').eq('packing_lists.pi_id', id),
+        // Falls back to the product's own per-unit volume x units packed when
+        // a line has no carton dimensions entered yet, so fill % shows a real
+        // estimate immediately for any product that already has a volume set
+        // on the Products page, rather than reading 0 until someone measures
+        // every carton by hand.
+        supabase.from('pl_items')
+          .select('total_volume_m3, total_units, pi_items(products(volume_m3)), packing_lists!inner(pi_id, container_id)')
+          .eq('packing_lists.pi_id', id),
       ])
       setPi(piData as any)
       setItems(itemsData as any)
@@ -72,7 +80,13 @@ export function ProformaInvoiceDetail() {
       const volumes: Record<string, number> = {}
       for (const row of (plItemsRes.data ?? []) as any[]) {
         const containerId = row.packing_lists?.container_id
-        if (containerId) volumes[containerId] = (volumes[containerId] ?? 0) + Number(row.total_volume_m3 ?? 0)
+        if (!containerId) continue
+        const dimensionVolume = Number(row.total_volume_m3 ?? 0)
+        const productVolumePerUnit = row.pi_items?.products?.volume_m3
+        const effectiveVolume = dimensionVolume > 0
+          ? dimensionVolume
+          : (productVolumePerUnit ? Number(productVolumePerUnit) * Number(row.total_units ?? 0) : 0)
+        volumes[containerId] = (volumes[containerId] ?? 0) + effectiveVolume
       }
       setContainerVolumes(volumes)
     } catch (e: any) {
@@ -83,6 +97,33 @@ export function ProformaInvoiceDetail() {
 
   useEffect(() => { load() }, [load])
 
+  function openAddItem() {
+    setItemForm({ ...EMPTY_ITEM })
+    setEditingItemId(null)
+    setError(null)
+    setItemOpen(true)
+  }
+
+  function openEditItem(it: PiItem) {
+    setItemForm({
+      product_id: it.product_id ?? '',
+      item_description: it.item_description,
+      hs_code: it.hs_code,
+      country_of_origin: it.country_of_origin,
+      quantity: String(it.quantity),
+      unit_of_measure: it.unit_of_measure,
+      unit_price: String(it.unit_price),
+      customs_value: it.customs_value != null ? String(it.customs_value) : '',
+      duty_rate_pct: it.duty_rate_pct != null ? String(it.duty_rate_pct) : '',
+      vat_rate_pct: it.vat_rate_pct != null ? String(it.vat_rate_pct) : '15',
+      surtax_rate_pct: it.surtax_rate_pct != null ? String(it.surtax_rate_pct) : '10',
+      excise_rate_pct: it.excise_rate_pct != null ? String(it.excise_rate_pct) : '0',
+    })
+    setEditingItemId(it.id)
+    setError(null)
+    setItemOpen(true)
+  }
+
   async function saveItem() {
     if (!id) return
     if (!itemForm.item_description || !itemForm.hs_code || !itemForm.quantity || !itemForm.unit_price) {
@@ -90,23 +131,29 @@ export function ProformaInvoiceDetail() {
     }
     setSavingItem(true)
     setError(null)
+    const payload = {
+      product_id: itemForm.product_id || null,
+      item_description: itemForm.item_description,
+      hs_code: itemForm.hs_code,
+      country_of_origin: itemForm.country_of_origin,
+      quantity: parseFloat(itemForm.quantity),
+      unit_of_measure: itemForm.unit_of_measure,
+      unit_price: parseFloat(itemForm.unit_price),
+      customs_value: itemForm.customs_value ? parseFloat(itemForm.customs_value) : null,
+      duty_rate_pct: itemForm.duty_rate_pct ? parseFloat(itemForm.duty_rate_pct) : null,
+      vat_rate_pct: parseFloat(itemForm.vat_rate_pct || '15'),
+      surtax_rate_pct: parseFloat(itemForm.surtax_rate_pct || '10'),
+      excise_rate_pct: parseFloat(itemForm.excise_rate_pct || '0'),
+    }
     try {
-      await addPiItem(id, {
-        product_id: itemForm.product_id || null,
-        item_description: itemForm.item_description,
-        hs_code: itemForm.hs_code,
-        country_of_origin: itemForm.country_of_origin,
-        quantity: parseFloat(itemForm.quantity),
-        unit_of_measure: itemForm.unit_of_measure,
-        unit_price: parseFloat(itemForm.unit_price),
-        customs_value: itemForm.customs_value ? parseFloat(itemForm.customs_value) : null,
-        duty_rate_pct: itemForm.duty_rate_pct ? parseFloat(itemForm.duty_rate_pct) : null,
-        vat_rate_pct: parseFloat(itemForm.vat_rate_pct || '15'),
-        surtax_rate_pct: parseFloat(itemForm.surtax_rate_pct || '10'),
-        excise_rate_pct: parseFloat(itemForm.excise_rate_pct || '0'),
-      })
+      if (editingItemId) {
+        await updatePiItem(editingItemId, payload)
+      } else {
+        await addPiItem(id, payload)
+      }
       setItemOpen(false)
       setItemForm({ ...EMPTY_ITEM })
+      setEditingItemId(null)
       await load()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -191,7 +238,7 @@ export function ProformaInvoiceDetail() {
         <div>
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-medium">Line items</p>
-            <button onClick={() => { setItemForm({ ...EMPTY_ITEM }); setError(null); setItemOpen(true) }}
+            <button onClick={openAddItem}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
               <Plus size={13} /> Add item
             </button>
@@ -202,7 +249,7 @@ export function ProformaInvoiceDetail() {
               <Package size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No line items yet</p>
               <p className="text-xs text-gray-400 mb-4">Add each product from the supplier's proforma invoice before splitting into containers.</p>
-              <button onClick={() => setItemOpen(true)}
+              <button onClick={openAddItem}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
                 <Plus size={13} /> Add first item
               </button>
@@ -218,7 +265,7 @@ export function ProformaInvoiceDetail() {
                     <th className="text-right px-3 py-2.5 font-medium text-gray-400 uppercase tracking-wide">Unit price</th>
                     <th className="text-right px-3 py-2.5 font-medium text-gray-400 uppercase tracking-wide">Total</th>
                     <th className="text-right px-3 py-2.5 font-medium text-gray-400 uppercase tracking-wide">CD value</th>
-                    <th className="w-8"></th>
+                    <th className="w-16"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -233,7 +280,12 @@ export function ProformaInvoiceDetail() {
                       <td className="px-3 py-3 text-right font-mono text-gray-600">${it.unit_price}</td>
                       <td className="px-3 py-3 text-right font-mono font-medium text-blue-700">${it.total_price != null ? N(it.total_price) : '—'}</td>
                       <td className="px-3 py-3 text-right font-mono text-gray-500">{it.customs_value != null ? `$${N(it.customs_value)}` : '—'}</td>
-                      <td className="px-3 py-3"><button onClick={() => removeItem(it.id)} className="text-gray-300 hover:text-red-500 transition-colors"><X size={13} /></button></td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <button onClick={() => openEditItem(it)} className="text-gray-300 hover:text-blue-600 transition-colors"><Pencil size={13} /></button>
+                          <button onClick={() => removeItem(it.id)} className="text-gray-300 hover:text-red-500 transition-colors"><X size={13} /></button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -293,12 +345,12 @@ export function ProformaInvoiceDetail() {
         </div>
       )}
 
-      {/* Add item modal */}
+      {/* Add/edit item modal */}
       {itemOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setItemOpen(false)}>
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">Add line item</h2>
+              <h2 className="text-sm font-medium">{editingItemId ? 'Edit line item' : 'Add line item'}</h2>
               <button onClick={() => setItemOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
             </div>
             <div className="px-5 py-4 space-y-4">
@@ -402,7 +454,7 @@ export function ProformaInvoiceDetail() {
               <button onClick={() => setItemOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={saveItem} disabled={savingItem}
                 className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
-                {savingItem ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> Add item</>}
+                {savingItem ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingItemId ? 'Save changes' : 'Add item'}</>}
               </button>
             </div>
           </div>
