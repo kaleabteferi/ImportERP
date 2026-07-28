@@ -7,7 +7,7 @@ import {
   getProformaInvoice, listPiItems, addPiItem, updatePiItem, deletePiItem, fetchLastPiItemForProduct,
 } from '../api/proformaInvoices'
 import type { ProformaInvoice, PiItem } from '../api/proformaInvoices'
-import { listContainers, createContainer, getAllocatedQuantities, getOrCreatePackingList, addPackingListItem } from '../api/containers'
+import { listContainers, createContainer, updateContainer, getAllocatedQuantities, getOrCreatePackingList, addPackingListItem } from '../api/containers'
 import type { Container } from '../api/containers'
 import { PackingListBuilder } from '../components/containers/PackingListBuilder'
 import { GenerateShipmentButton } from '../components/containers/GenerateShipmentButton'
@@ -50,6 +50,7 @@ export function ProformaInvoiceDetail() {
   const [containerOpen, setContainerOpen] = useState(false)
   const [containerForm, setContainerForm] = useState({ ...EMPTY_CONTAINER })
   const [savingContainer, setSavingContainer] = useState(false)
+  const [editingContainerId, setEditingContainerId] = useState<string | null>(null)
   const [expandedContainer, setExpandedContainer] = useState<string | null>(null)
   const [containerVolumes, setContainerVolumes] = useState<Record<string, number>>({})
   const [containerWeights, setContainerWeights] = useState<Record<string, number>>({})
@@ -187,22 +188,43 @@ export function ProformaInvoiceDetail() {
     }
   }
 
+  function openEditContainer(c: Container) {
+    setContainerForm({
+      container_number: c.container_number,
+      container_type: c.container_type,
+      vessel_name: c.vessel_name ?? '',
+      eta_djibouti: c.eta_djibouti ?? '',
+    })
+    setEditingContainerId(c.id)
+    setError(null)
+    setContainerOpen(true)
+  }
+
   async function saveContainer() {
     if (!id) return
     if (!containerForm.container_number) { setError('Container number is required'); return }
     setSavingContainer(true)
     setError(null)
     try {
-      const newId = await createContainer(id, {
+      const payload = {
         container_number: containerForm.container_number,
         container_type: containerForm.container_type,
         vessel_name: containerForm.vessel_name || null,
         eta_djibouti: containerForm.eta_djibouti || null,
-      })
-      setContainerOpen(false)
-      setContainerForm({ ...EMPTY_CONTAINER })
-      await load()
-      setExpandedContainer(newId)
+      }
+      if (editingContainerId) {
+        await updateContainer(editingContainerId, payload)
+        setContainerOpen(false)
+        setContainerForm({ ...EMPTY_CONTAINER })
+        setEditingContainerId(null)
+        await load()
+      } else {
+        const newId = await createContainer(id, payload)
+        setContainerOpen(false)
+        setContainerForm({ ...EMPTY_CONTAINER })
+        await load()
+        setExpandedContainer(newId)
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -450,7 +472,7 @@ export function ProformaInvoiceDetail() {
                 {suggesting ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Suggest layout
               </button>
               <GenerateShipmentButton containers={containers} onGenerated={() => load()} />
-              <button onClick={() => { setContainerForm({ ...EMPTY_CONTAINER }); setError(null); setContainerOpen(true) }}
+              <button onClick={() => { setContainerForm({ ...EMPTY_CONTAINER }); setEditingContainerId(null); setError(null); setContainerOpen(true) }}
                 disabled={items.length === 0}
                 title={items.length === 0 ? 'Add line items first' : undefined}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors">
@@ -475,9 +497,13 @@ export function ProformaInvoiceDetail() {
                       <p className="text-sm font-medium font-mono">{c.container_number}</p>
                       <p className="text-xs text-gray-400 mt-0.5">{c.vessel_name || 'vessel TBD'}{c.eta_djibouti ? ` · ETA ${c.eta_djibouti}` : ''}</p>
                     </div>
-                    {c.shipment_id && (
-                      <span className="text-xs text-green-700 bg-green-50 px-2 py-1 rounded-lg shrink-0">In shipment</span>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {c.shipment_id && (
+                        <span className="text-xs text-green-700 bg-green-50 px-2 py-1 rounded-lg">In shipment</span>
+                      )}
+                      <button onClick={e => { e.stopPropagation(); openEditContainer(c) }}
+                        className="text-gray-300 hover:text-blue-600 transition-colors"><Pencil size={13} /></button>
+                    </div>
                   </div>
                   <div className="px-4 pt-3 pb-1 max-w-md">
                     <ContainerFillGauge containerType={c.container_type} packedM3={containerVolumes[c.id] ?? 0} />
@@ -615,7 +641,7 @@ export function ProformaInvoiceDetail() {
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setContainerOpen(false)}>
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New container</h2>
+              <h2 className="text-sm font-medium">{editingContainerId ? 'Edit container' : 'New container'}</h2>
               <button onClick={() => setContainerOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
             </div>
             <div className="px-5 py-4 space-y-4">
@@ -650,7 +676,7 @@ export function ProformaInvoiceDetail() {
               <button onClick={() => setContainerOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={saveContainer} disabled={savingContainer}
                 className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
-                {savingContainer ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> Create</>}
+                {savingContainer ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingContainerId ? 'Save changes' : 'Create'}</>}
               </button>
             </div>
           </div>
