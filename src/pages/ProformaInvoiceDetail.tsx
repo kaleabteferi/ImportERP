@@ -2,16 +2,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2 } from 'lucide-react'
 import {
   getProformaInvoice, listPiItems, addPiItem, updatePiItem, deletePiItem, fetchLastPiItemForProduct,
 } from '../api/proformaInvoices'
 import type { ProformaInvoice, PiItem } from '../api/proformaInvoices'
-import { listContainers, createContainer } from '../api/containers'
+import { listContainers, createContainer, getAllocatedQuantities, getOrCreatePackingList, addPackingListItem } from '../api/containers'
 import type { Container } from '../api/containers'
 import { PackingListBuilder } from '../components/containers/PackingListBuilder'
 import { GenerateShipmentButton } from '../components/containers/GenerateShipmentButton'
 import { ContainerFillGauge } from '../components/containers/ContainerFillGauge'
+import { containerCapacityM3, containerPayloadKg } from '../lib/containerSpecs'
+import { suggestPackingLayout } from '../lib/packingSuggestion'
 
 interface Product { id: string; name: string; sku: string; default_customs_value: number | null }
 
@@ -50,6 +52,10 @@ export function ProformaInvoiceDetail() {
   const [savingContainer, setSavingContainer] = useState(false)
   const [expandedContainer, setExpandedContainer] = useState<string | null>(null)
   const [containerVolumes, setContainerVolumes] = useState<Record<string, number>>({})
+  const [containerWeights, setContainerWeights] = useState<Record<string, number>>({})
+  const [suggesting, setSuggesting] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [refreshToken, setRefreshToken] = useState(0)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -70,7 +76,7 @@ export function ProformaInvoiceDetail() {
         // on the Products page, rather than reading 0 until someone measures
         // every carton by hand.
         supabase.from('pl_items')
-          .select('total_volume_m3, total_units, pi_items(products(volume_m3)), packing_lists!inner(pi_id, container_id)')
+          .select('total_volume_m3, total_units, carton_qty, gross_weight_per_ctn, pi_items(products(volume_m3, weight_kg)), packing_lists!inner(pi_id, container_id)')
           .eq('packing_lists.pi_id', id),
       ])
       setPi(piData as any)
@@ -78,6 +84,7 @@ export function ProformaInvoiceDetail() {
       setContainers(containersData as any)
       setProducts(prodRes.data ?? [])
       const volumes: Record<string, number> = {}
+      const weights: Record<string, number> = {}
       for (const row of (plItemsRes.data ?? []) as any[]) {
         const containerId = row.packing_lists?.container_id
         if (!containerId) continue
@@ -87,8 +94,18 @@ export function ProformaInvoiceDetail() {
           ? dimensionVolume
           : (productVolumePerUnit ? Number(productVolumePerUnit) * Number(row.total_units ?? 0) : 0)
         volumes[containerId] = (volumes[containerId] ?? 0) + effectiveVolume
+
+        // Same "real figure if entered, else the product's own per-unit
+        // weight x units packed" fallback as volume above.
+        const realWeight = row.gross_weight_per_ctn ? Number(row.gross_weight_per_ctn) * Number(row.carton_qty ?? 0) : 0
+        const productWeightPerUnit = row.pi_items?.products?.weight_kg
+        const effectiveWeight = realWeight > 0
+          ? realWeight
+          : (productWeightPerUnit ? Number(productWeightPerUnit) * Number(row.total_units ?? 0) : 0)
+        weights[containerId] = (weights[containerId] ?? 0) + effectiveWeight
       }
       setContainerVolumes(volumes)
+      setContainerWeights(weights)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -192,6 +209,85 @@ export function ProformaInvoiceDetail() {
     setSavingContainer(false)
   }
 
+  // Bin-packs each line item's remaining (unallocated) cartons across all of
+  // this PI's containers -- a starting layout, not a final one. Only ever
+  // adds new pl_items for whatever's still unallocated; it never touches a
+  // line someone already packed by hand.
+  async function suggestLayout() {
+    if (!pi) return
+    setSuggesting(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const allocated = await getAllocatedQuantities(pi.id)
+      const suggestionItems = items.map(it => {
+        const remainingUnits = Number(it.quantity) - (allocated[it.id] ?? 0)
+        const p = (it as any).products
+        const unitsPerCarton = p?.default_units_per_carton ? Number(p.default_units_per_carton) : null
+        const cartonVolumeM3 = (p?.carton_length_cm && p?.carton_width_cm && p?.carton_height_cm)
+          ? (Number(p.carton_length_cm) * Number(p.carton_width_cm) * Number(p.carton_height_cm)) / 1_000_000
+          : (p?.volume_m3 && unitsPerCarton ? Number(p.volume_m3) * unitsPerCarton : null)
+        const cartonWeightKg = (p?.weight_kg && unitsPerCarton) ? Number(p.weight_kg) * unitsPerCarton : null
+        return { piItemId: it.id, remainingUnits, unitsPerCarton, cartonVolumeM3, cartonWeightKg }
+      })
+      const suggestionContainers = containers.map(c => ({
+        containerId: c.id,
+        capacityM3: containerCapacityM3(c.container_type),
+        payloadKg: containerPayloadKg(c.container_type),
+        usedM3: containerVolumes[c.id] ?? 0,
+        usedKg: containerWeights[c.id] ?? 0,
+      }))
+
+      const result = suggestPackingLayout(suggestionItems, suggestionContainers)
+
+      if (result.assignments.length === 0) {
+        setNotice(result.skipped.length > 0
+          ? `Nothing to suggest — every remaining item is missing ${result.skipped[0].reason}. Set it on the Products page and try again.`
+          : 'Nothing to suggest — every line item is already fully allocated to a container.')
+        setSuggesting(false)
+        return
+      }
+
+      const plIdByContainer = new Map<string, string>()
+      for (const containerId of new Set(result.assignments.map(a => a.containerId))) {
+        plIdByContainer.set(containerId, await getOrCreatePackingList(containerId, pi.id))
+      }
+      for (const a of result.assignments) {
+        const piItem = items.find(x => x.id === a.piItemId)
+        if (!piItem) continue
+        const p = (piItem as any).products
+        await addPackingListItem(plIdByContainer.get(a.containerId)!, {
+          pi_item_id: a.piItemId,
+          carton_qty: a.cartonQty,
+          units_per_carton: a.unitsPerCarton,
+          unit_price_foreign: piItem.unit_price,
+          // Carries the product's real carton dims onto the line whenever
+          // they're the reason the suggestion could size this item at all,
+          // so total_volume_m3 reads as a real measurement, not "no size"
+          // (the per-unit volume_m3 fallback path has no dims to carry).
+          length_cm: p?.carton_length_cm ? Number(p.carton_length_cm) : null,
+          width_cm: p?.carton_width_cm ? Number(p.carton_width_cm) : null,
+          height_cm: p?.carton_height_cm ? Number(p.carton_height_cm) : null,
+        })
+      }
+
+      const notes: string[] = []
+      if (result.unplaced.length > 0) {
+        notes.push(`${result.unplaced.length} item(s) had cartons that didn't fit in the remaining container space — add another container for the rest.`)
+      }
+      if (result.skipped.length > 0) {
+        notes.push(`${result.skipped.length} item(s) skipped — missing carton size or units-per-carton on the Products page.`)
+      }
+      setNotice(notes.length > 0 ? notes.join(' ') : 'Suggested layout applied — review and adjust each container as needed.')
+
+      await load()
+      setRefreshToken(t => t + 1)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+    setSuggesting(false)
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
   }
@@ -220,6 +316,11 @@ export function ProformaInvoiceDetail() {
       {error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
           <X size={12} className="cursor-pointer" onClick={() => setError(null)} /> {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+          <X size={12} className="cursor-pointer" onClick={() => setNotice(null)} /> {notice}
         </div>
       )}
 
@@ -300,6 +401,11 @@ export function ProformaInvoiceDetail() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-medium">Containers</p>
             <div className="flex items-center gap-2">
+              <button onClick={suggestLayout} disabled={suggesting || containers.length === 0 || items.length === 0}
+                title={containers.length === 0 ? 'Add a container first' : 'Auto-split remaining items across containers'}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-600 border border-gray-200 text-xs rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors">
+                {suggesting ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Suggest layout
+              </button>
               <GenerateShipmentButton containers={containers} onGenerated={() => load()} />
               <button onClick={() => { setContainerForm({ ...EMPTY_CONTAINER }); setError(null); setContainerOpen(true) }}
                 disabled={items.length === 0}
@@ -335,7 +441,7 @@ export function ProformaInvoiceDetail() {
                   </div>
                   {expandedContainer === c.id && (
                     <div className="px-4 pb-4 border-t border-gray-50">
-                      <PackingListBuilder piId={pi.id} containerId={c.id} piItems={items} onChanged={load} />
+                      <PackingListBuilder piId={pi.id} containerId={c.id} piItems={items} onChanged={load} refreshToken={refreshToken} />
                     </div>
                   )}
                 </div>

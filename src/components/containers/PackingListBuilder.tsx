@@ -19,6 +19,10 @@ interface Props {
   containerId: string
   piItems: PiItem[]
   onChanged?: () => void
+  /** Bumped by the parent after an out-of-band write (e.g. "Suggest layout")
+   * to force this container's own lines to refetch, since its load() has no
+   * other way to know rows changed underneath it. */
+  refreshToken?: number
 }
 
 const EMPTY_LINE = { pi_item_id: '', carton_qty: '', units_per_carton: '', length_cm: '', width_cm: '', height_cm: '' }
@@ -37,7 +41,7 @@ function effectiveVolume(l: any): { m3: number; estimated: boolean } {
   return { m3: 0, estimated: false }
 }
 
-export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Props) {
+export function PackingListBuilder({ piId, containerId, piItems, onChanged, refreshToken }: Props) {
   const [packingListId, setPackingListId] = useState<string | null>(null)
   const [lines, setLines] = useState<any[]>([])
   const [allocated, setAllocated] = useState<Record<string, number>>({})
@@ -65,7 +69,7 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged }: Pr
       setError(e?.message ?? String(e))
     }
     setLoading(false)
-  }, [containerId, piId, editingLineId])
+  }, [containerId, piId, editingLineId, refreshToken])
 
   useEffect(() => { load() }, [load])
 

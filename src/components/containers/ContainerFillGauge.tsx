@@ -7,12 +7,7 @@
 // Capacities are fixed, real ISO container specs (not a live lookup --
 // these don't change).
 import { useId } from 'react'
-
-const STANDARD_CAPACITY_M3: Record<string, number> = {
-  '20GP': 33.2,
-  '40GP': 67.7,
-  '40HC': 76.3,
-}
+import { containerCapacityM3 } from '../../lib/containerSpecs'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 1 }).format(n)
 
@@ -20,7 +15,7 @@ const BODY_X = 16, BODY_Y = 16, BODY_W = 258, BODY_H = 72
 
 export function ContainerFillGauge({ containerType, packedM3 }: { containerType: string; packedM3: number }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '')
-  const capacity = STANDARD_CAPACITY_M3[containerType] ?? STANDARD_CAPACITY_M3['40HC']
+  const capacity = containerCapacityM3(containerType)
   const pct = Math.max(0, Math.min(100, (packedM3 / capacity) * 100))
   const isOverfull = packedM3 > capacity
 

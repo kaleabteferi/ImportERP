@@ -45,6 +45,8 @@ export interface PiItem {
     carton_width_cm: number | null
     carton_height_cm: number | null
     default_units_per_carton: number | null
+    volume_m3: number | null
+    weight_kg: number | null
   } | null
 }
 
@@ -134,7 +136,7 @@ export async function deleteProformaInvoice(id: string) {
 export async function listPiItems(piId: string) {
   const { data, error } = await supabase
     .from('pi_items')
-    .select('*, products(name, sku, carton_length_cm, carton_width_cm, carton_height_cm, default_units_per_carton)')
+    .select('*, products(name, sku, carton_length_cm, carton_width_cm, carton_height_cm, default_units_per_carton, volume_m3, weight_kg)')
     .eq('pi_id', piId)
     .order('line_number')
   if (error) throw new Error(error.message)
