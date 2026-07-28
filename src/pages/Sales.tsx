@@ -9,7 +9,7 @@ import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import {
   ShoppingCart, Loader2, Plus, X, Check, AlertTriangle, CheckCircle2,
-  Package, Minus, Trash2, TrendingUp, Search, Pencil, ArrowUpDown,
+  Package, Minus, Trash2, TrendingUp, Search, Pencil, ArrowUpDown, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
 
@@ -18,6 +18,7 @@ interface Product { id: string; name: string; sku: string; image_url: string | n
 interface Option { id: string; name: string }
 interface CreditAcct { id: string; customer_id: string; credit_limit: number; balance: number; due_date: string; status: string }
 interface CartLine { productId: string; quantity: number; unitPriceEtb: number }
+interface OrderLineItem { productName: string; sku: string; quantity: number; unitPriceEtb: number }
 
 interface OrderRow {
   id: string; order_number: string; invoice_number: string | null; sale_date: string; status: string
@@ -47,6 +48,9 @@ function oneName(c: OrderRow['customers']): string {
 
 export function Sales() {
   const [orders, setOrders] = useState<OrderRow[]>([])
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
+  const [orderLineItems, setOrderLineItems] = useState<Record<string, OrderLineItem[]>>({})
+  const [orderLineItemsLoading, setOrderLineItemsLoading] = useState<string | null>(null)
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
@@ -197,6 +201,30 @@ export function Sales() {
       setRowError(e?.message ?? 'Failed to delete this order.')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  // Lazy-loads what was actually sold the first time an order row is
+  // expanded -- the list view otherwise only shows order-level totals.
+  async function toggleOrderExpand(orderId: string) {
+    if (expandedOrderId === orderId) { setExpandedOrderId(null); return }
+    setExpandedOrderId(orderId)
+    if (orderLineItems[orderId]) return
+    setOrderLineItemsLoading(orderId)
+    try {
+      const { data } = await supabase
+        .from('sales_order_lines')
+        .select('quantity, unit_price_etb, products(name, sku)')
+        .eq('sales_order_id', orderId)
+      const lines: OrderLineItem[] = (data ?? []).map((l: any) => {
+        const prod = Array.isArray(l.products) ? l.products[0] : l.products
+        return { productName: prod?.name ?? 'Unknown product', sku: prod?.sku ?? '', quantity: Number(l.quantity ?? 0), unitPriceEtb: Number(l.unit_price_etb ?? 0) }
+      })
+      setOrderLineItems(prev => ({ ...prev, [orderId]: lines }))
+    } catch {
+      setOrderLineItems(prev => ({ ...prev, [orderId]: [] }))
+    } finally {
+      setOrderLineItemsLoading(null)
     }
   }
 
@@ -412,8 +440,9 @@ export function Sales() {
             <div className="text-center py-12 text-gray-400 text-sm">No orders match this filter.</div>
           ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-2.5
+          <div className="grid grid-cols-[auto_1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
+            <div></div>
             <div>Order</div>
             <div>Customer</div>
             <div>Date</div>
@@ -424,8 +453,12 @@ export function Sales() {
           </div>
           {filteredOrders.map((o, i) => {
             const editable = Number(o.paid_amount ?? 0) === 0
+            const expanded = expandedOrderId === o.id
             return (
-            <div key={o.id} className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-3 items-center text-sm ${i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}`}>
+            <div key={o.id} className={i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}>
+            <div className="grid grid-cols-[auto_1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50/70"
+              onClick={() => toggleOrderExpand(o.id)}>
+              {expanded ? <ChevronDown size={12} className="text-gray-300" /> : <ChevronRight size={12} className="text-gray-300" />}
               <div>
                 <p className="font-medium">{o.order_number}</p>
                 {o.invoice_number && <p className="text-xs text-gray-400">{o.invoice_number}</p>}
@@ -449,7 +482,7 @@ export function Sales() {
                   {o.status}
                 </span>
               </div>
-              <div className="flex items-center gap-1 justify-end">
+              <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
                 {editable ? (
                   <>
                     <button onClick={() => openEditOrder(o)} title="Edit"
@@ -463,6 +496,25 @@ export function Sales() {
                   <span className="text-[10px] text-gray-300" title="Already paid — edit the payment in Receivables instead">—</span>
                 )}
               </div>
+            </div>
+            {expanded && (
+              <div className="px-4 pb-3 pl-9 bg-gray-50/50 text-xs">
+                {orderLineItemsLoading === o.id ? (
+                  <p className="flex items-center gap-1.5 text-gray-400 py-2"><Loader2 size={11} className="animate-spin" /> Loading items…</p>
+                ) : (orderLineItems[o.id] ?? []).length === 0 ? (
+                  <p className="text-gray-400 py-2">No line items found for this order.</p>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {(orderLineItems[o.id] ?? []).map((l, li) => (
+                      <div key={li} className="flex items-center justify-between py-1.5">
+                        <span className="font-medium text-gray-700">{l.productName}{l.sku && <span className="text-gray-400 font-mono"> ({l.sku})</span>} × {l.quantity}</span>
+                        <span className="font-mono text-gray-500">{N(l.quantity * l.unitPriceEtb)} ETB</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             </div>
             )
           })}

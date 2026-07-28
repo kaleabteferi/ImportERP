@@ -7,6 +7,8 @@ export type AutoExpenseSource =
   | 'demurrage'
   | 'detention'
   | 'storage'
+  | 'port_fee'
+  | 'wh_fee'
   | 'customs_duty'
   | 'customs_excise'
   | 'customs_surtax'
@@ -18,6 +20,12 @@ export type AutoExpenseSource =
 export interface AutoExpenseInput {
   shipmentId: string
   source: AutoExpenseSource
+  /** Which container this cost belongs to, when a shipment has more than
+   * one. Omitted (or undefined) for the shipment-wide/container-less case
+   * -- e.g. demurrage on a manual, PI-less shipment, or Ali's combined
+   * forwarder invoice, which is billed once per shipment regardless of how
+   * many containers it holds. */
+  containerId?: string | null
   category: string
   description: string
   amount: number
@@ -29,28 +37,30 @@ export interface AutoExpenseInput {
   detailNote?: string
 }
 
-function autoTag(source: AutoExpenseSource) {
-  return `${AUTO_SYNC_PREFIX}${source}`
+// Untagged (no :container:<id> suffix) is reserved for the container-less
+// case, so existing pre-this-change rows keep matching exactly as before --
+// this is what makes the per-container split backward compatible.
+function autoTag(source: AutoExpenseSource, containerId?: string | null) {
+  return containerId ? `${AUTO_SYNC_PREFIX}${source}:container:${containerId}` : `${AUTO_SYNC_PREFIX}${source}`
 }
 
-export async function findAutoExpense(shipmentId: string, source: AutoExpenseSource) {
+export async function findAutoExpense(shipmentId: string, source: AutoExpenseSource, containerId?: string | null) {
   const { data } = await supabase
     .from('shipment_expenses')
     .select('id, amount, amount_etb, cost_status, is_paid, paid_at')
     .eq('shipment_id', shipmentId)
-    .like('notes', `${autoTag(source)}%`)
-    .order('created_at', { ascending: false })
+    .eq('auto_sync_key', autoTag(source, containerId))
     .maybeSingle()
   return data
 }
 
-export async function markAutoExpensesPaid(shipmentId: string, sources: AutoExpenseSource[] = ['demurrage', 'detention', 'storage']) {
-  const tagPatterns = sources.map(source => autoTag(source))
+export async function markAutoExpensesPaid(shipmentId: string, sources: AutoExpenseSource[] = ['demurrage', 'detention', 'storage'], containerId?: string | null) {
+  const tags = sources.map(source => autoTag(source, containerId))
   const { data, error } = await supabase
     .from('shipment_expenses')
-    .select('id, notes')
+    .select('id')
     .eq('shipment_id', shipmentId)
-    .or(tagPatterns.map(tag => `notes.like.${tag}%`).join(','))
+    .in('auto_sync_key', tags)
 
   if (error) throw new Error(error.message)
 
@@ -64,15 +74,26 @@ export async function markAutoExpensesPaid(shipmentId: string, sources: AutoExpe
   if (updateError) throw new Error(updateError.message)
 }
 
-export async function hasPaidAutoExpense(shipmentId: string, source: AutoExpenseSource) {
-  const record = await findAutoExpense(shipmentId, source)
+export async function hasPaidAutoExpense(shipmentId: string, source: AutoExpenseSource, containerId?: string | null) {
+  const record = await findAutoExpense(shipmentId, source, containerId)
   return Boolean(record?.is_paid)
 }
 
-/** Upsert or remove a single auto-synced expense. Zero amount removes the row. */
+/**
+ * Upsert or remove a single auto-synced expense. Zero amount removes the row.
+ *
+ * Uses a real DB-level upsert keyed on (shipment_id, auto_sync_key) --
+ * previously this SELECTed for an existing row and then INSERTed if not
+ * found, which is a check-then-act race: two near-simultaneous callers
+ * (the auto-sync effect racing a manual "Sync now" click, or rapid
+ * container-tab switching remounting TimelinePanel) could both see "not
+ * found" and both insert, producing duplicate expense rows. The unique
+ * index on shipment_expenses(shipment_id, auto_sync_key) makes this upsert
+ * atomic at the database level instead.
+ */
 export async function upsertAutoExpense(input: AutoExpenseInput): Promise<void> {
-  const tag = autoTag(input.source)
-  const existing = await findAutoExpense(input.shipmentId, input.source)
+  const tag = autoTag(input.source, input.containerId)
+  const existing = await findAutoExpense(input.shipmentId, input.source, input.containerId)
 
   if (existing?.is_paid) {
     return
@@ -86,6 +107,8 @@ export async function upsertAutoExpense(input: AutoExpenseInput): Promise<void> 
   }
 
   const payload = {
+    shipment_id:   input.shipmentId,
+    auto_sync_key: tag,
     category:      input.category,
     description:   input.description,
     amount:        input.amount,
@@ -97,20 +120,34 @@ export async function upsertAutoExpense(input: AutoExpenseInput): Promise<void> 
     receipt_ref:   null,
     notes:         input.detailNote ? `${tag}|${input.detailNote}` : tag,
     cost_status:   'PROVISIONAL' as const,
+    updated_at:    new Date().toISOString(),
   }
 
-  if (existing) {
-    const { error } = await supabase
+  const { error } = await supabase
+    .from('shipment_expenses')
+    .upsert(payload, { onConflict: 'shipment_id,auto_sync_key' })
+
+  if (!error) return
+
+  // A concurrent caller's INSERT can still land between our SELECT above and
+  // this upsert -- ON CONFLICT DO UPDATE handles that in the common case,
+  // but under REST (one HTTP request = one transaction), the loser of a
+  // true simultaneous insert can still surface as a raw 23505 duplicate-key
+  // error rather than resolving to the update. If so, the row now
+  // definitely exists (that's what the error means) -- fall back to
+  // updating it directly by its unique key instead of failing the sync.
+  if (error.code === '23505') {
+    const { shipment_id, auto_sync_key, ...rest } = payload
+    const { error: updateError } = await supabase
       .from('shipment_expenses')
-      .update({ ...payload, updated_at: new Date().toISOString() })
-      .eq('id', existing.id)
-    if (error) throw new Error(error.message)
-  } else {
-    const { error } = await supabase
-      .from('shipment_expenses')
-      .insert({ ...payload, shipment_id: input.shipmentId })
-    if (error) throw new Error(error.message)
+      .update(rest)
+      .eq('shipment_id', shipment_id)
+      .eq('auto_sync_key', auto_sync_key)
+    if (updateError) throw new Error(updateError.message)
+    return
   }
+
+  throw new Error(error.message)
 }
 
 /** Replace a batch of auto-synced customs lines (deletes old, inserts new). */
@@ -121,9 +158,9 @@ export async function replaceAutoExpenses(
 ): Promise<void> {
   const { data: existing } = await supabase
     .from('shipment_expenses')
-    .select('id, notes')
+    .select('id')
     .eq('shipment_id', shipmentId)
-    .like('notes', `${AUTO_SYNC_PREFIX}${sourcePrefix}%`)
+    .like('auto_sync_key', `${AUTO_SYNC_PREFIX}${sourcePrefix}%`)
 
   if (existing?.length) {
     await supabase
@@ -136,6 +173,7 @@ export async function replaceAutoExpenses(
     .filter(r => r.amountEtb > 0)
     .map(r => ({
       shipment_id:   shipmentId,
+      auto_sync_key: autoTag(r.source),
       category:      r.category,
       description:   r.description,
       amount:        r.amount,
@@ -158,7 +196,12 @@ export async function replaceAutoExpenses(
 export interface DemurrageCosts {
   demurrageUsd: number
   detentionUsd: number
-  storageEtb: number
+  /** @deprecated superseded by whUsd -- kept optional so callers can stop
+   * passing it without triggering the delete-on-zero branch in
+   * upsertAutoExpense against a historical/possibly-paid storage row. */
+  storageEtb?: number
+  portFeeUsd?: number
+  whUsd?: number
 }
 
 export async function syncDemurrageExpenses(
@@ -166,12 +209,14 @@ export async function syncDemurrageExpenses(
   costs: DemurrageCosts,
   fxRate: number,
   expenseDate?: string,
+  containerId?: string | null,
 ): Promise<void> {
   const date = expenseDate ?? new Date().toISOString().split('T')[0]
 
-  await Promise.all([
+  const syncs: Promise<void>[] = [
     upsertAutoExpense({
       shipmentId,
+      containerId,
       source: 'demurrage',
       category: 'OTHER',
       description: 'Demurrage (auto-calculated)',
@@ -185,6 +230,7 @@ export async function syncDemurrageExpenses(
     }),
     upsertAutoExpense({
       shipmentId,
+      containerId,
       source: 'detention',
       category: 'OTHER',
       description: 'Container detention (auto-calculated)',
@@ -196,8 +242,16 @@ export async function syncDemurrageExpenses(
       expenseDate: date,
       detailNote: 'Synced from timeline detention calculator',
     }),
-    upsertAutoExpense({
+  ]
+
+  // storageEtb is intentionally only synced when a caller still passes it --
+  // the current TimelinePanel no longer computes it (replaced by whUsd), and
+  // passing 0 here would delete any pre-existing AUTO_SYNC:storage row via
+  // upsertAutoExpense's zero-amount-removes-the-row rule.
+  if (typeof costs.storageEtb === 'number') {
+    syncs.push(upsertAutoExpense({
       shipmentId,
+      containerId,
       source: 'storage',
       category: 'DJIBOUTI_PORT',
       description: 'Warehouse storage (auto-calculated)',
@@ -208,6 +262,42 @@ export async function syncDemurrageExpenses(
       vendorName: 'Djibouti warehouse',
       expenseDate: date,
       detailNote: 'Synced from timeline storage calculator',
-    }),
-  ])
+    }))
+  }
+
+  if (typeof costs.portFeeUsd === 'number') {
+    syncs.push(upsertAutoExpense({
+      shipmentId,
+      containerId,
+      source: 'port_fee',
+      category: 'DJIBOUTI_PORT',
+      description: 'Port fee (auto-calculated)',
+      amount: costs.portFeeUsd,
+      currency: 'USD',
+      amountEtb: costs.portFeeUsd * fxRate,
+      fxRate,
+      vendorName: 'Djibouti Port Authority',
+      expenseDate: date,
+      detailNote: 'Synced from timeline port fee calculator',
+    }))
+  }
+
+  if (typeof costs.whUsd === 'number') {
+    syncs.push(upsertAutoExpense({
+      shipmentId,
+      containerId,
+      source: 'wh_fee',
+      category: 'DJIBOUTI_PORT',
+      description: 'Warehouse (WH) fee (auto-calculated)',
+      amount: costs.whUsd,
+      currency: 'USD',
+      amountEtb: costs.whUsd * fxRate,
+      fxRate,
+      vendorName: 'Ali - Djibouti Forwarder',
+      expenseDate: date,
+      detailNote: 'Synced from timeline WH fee calculator',
+    }))
+  }
+
+  await Promise.all(syncs)
 }
