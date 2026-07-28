@@ -7,6 +7,7 @@ export async function produceAssembly(
   quantity: number,
   loggedBy?: string,
   notes?: string,
+  logDate?: string,
 ) {
   const { data, error } = await supabase.rpc('produce_assembly', {
     p_warehouse_id: warehouseId,
@@ -14,6 +15,7 @@ export async function produceAssembly(
     p_quantity: quantity,
     p_logged_by: loggedBy ?? null,
     p_notes: notes ?? null,
+    p_log_date: logDate ?? new Date().toISOString().split('T')[0],
   })
   if (error) throw new Error(error.message)
   return data

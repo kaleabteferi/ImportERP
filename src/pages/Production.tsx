@@ -4,6 +4,8 @@ import { postInventoryMovement } from '../lib/inventoryReceive'
 import { fetchWarehousesList } from '../api/income'
 import { createDamageReport, fetchDamageReports } from '../api/damageReports'
 import type { DamageReport } from '../api/damageReports'
+import { produceAssembly, fetchComponentAvailability } from '../api/production'
+import type { ComponentAvailability } from '../api/production'
 import { usePageState } from '../lib/pageState'
 import { Plus, Wrench, X, Check, Loader2, BarChart3, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search } from 'lucide-react'
 
@@ -98,6 +100,10 @@ export function Production() {
   })
   const [bomQuery, setBomQuery] = useState('')
   const [damageQuery, setDamageQuery] = useState('')
+  // "How many more can I actually assemble today?" -- live component-stock
+  // preview for ASSEMBLY-stage rows in the log modal, same UX Assembly.tsx
+  // already had (and Production's own manual multi-step path lacked).
+  const [assemblyAvailability, setAssemblyAvailability] = useState<Record<string, ComponentAvailability[]>>({})
 
   async function load() {
     setLoading(true)
@@ -110,8 +116,14 @@ export function Production() {
           .select('id, order_number, product_id, target_quantity, completed_quantity, status, planned_start_date, due_date, labor_cost_etb, bom_header_id, warehouse_id, created_at, updated_at')
           .in('status', ['DRAFT', 'IN_PROGRESS'])
           .order('created_at', { ascending: false }),
+        // production_orders embedded directly (regardless of its status) --
+        // a from-scratch assembly run marks its order COMPLETED immediately,
+        // so resolving bom_header_id via the DRAFT/IN_PROGRESS-only orders
+        // query below would silently drop today's already-logged quantity
+        // for that BOM, making today's "Log production" entry look empty
+        // even though output was already recorded.
         supabase.from('production_daily_logs')
-          .select('id, log_date, quantity_produced, production_order_id, bom_header_id, product_id, warehouse_id, notes, created_at')
+          .select('id, log_date, quantity_produced, production_order_id, bom_header_id, product_id, warehouse_id, notes, created_at, production_orders(order_number, bom_header_id, warehouse_id)')
           .gte('log_date', since)
           .order('log_date', { ascending: false }),
         supabase.from('inventory_ledger')
@@ -168,14 +180,20 @@ export function Production() {
         }
       })
 
+      const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
+
       const logsRows = (logsRes.data ?? []).map((log: any) => {
-        const order = orderRows.find((o: any) => o.id === log.production_order_id)
+        const linkedOrder = one(log.production_orders)
+        // Product display info resolved via bomRows (every active BOM,
+        // unfiltered) rather than orderRows (DRAFT/IN_PROGRESS only) -- a
+        // log's linked order may already be COMPLETED.
+        const bom = linkedOrder ? bomRows.find(b => b.id === linkedOrder.bom_header_id) : null
         return {
           ...log,
-          production_orders: order
+          production_orders: linkedOrder
             ? {
-                order_number: order.order_number,
-                bom_headers: order.bom_headers,
+                order_number: linkedOrder.order_number,
+                bom_headers: { products: bom ? { id: bom.product_id, name: bom.product_name, sku: bom.sku } : null },
               }
             : undefined,
         }
@@ -194,11 +212,10 @@ export function Production() {
       setMovements(movementRows)
       setSalesToday((salesRes.data ?? []).reduce((s, r) => s + (r.total_etb ?? 0), 0))
 
-      const todayLogs = logsRows.filter((l: any) => l.log_date === today)
+      const todayLogs = (logsRes.data ?? []).filter((l: any) => l.log_date === today)
       const e: Record<string, string> = {}
       for (const l of todayLogs) {
-        const bomHeaderId = l.bom_header_id
-          ?? orderRows.find((o: any) => o.id === l.production_order_id)?.bom_header_id
+        const bomHeaderId = l.bom_header_id ?? one(l.production_orders)?.bom_header_id
         if (bomHeaderId) e[bomHeaderId] = String(l.quantity_produced)
       }
       setEntries(e)
@@ -216,6 +233,22 @@ export function Production() {
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    if (!logOpen || !selectedWarehouseId) { setAssemblyAvailability({}); return }
+    let cancelled = false
+    const assemblyBoms = bomOptions.filter(b => b.stage === 'ASSEMBLY')
+    Promise.all(assemblyBoms.map(b => fetchComponentAvailability(b.id, selectedWarehouseId).then(a => [b.id, a] as const)))
+      .then(pairs => { if (!cancelled) setAssemblyAvailability(Object.fromEntries(pairs)) })
+      .catch(() => { if (!cancelled) setAssemblyAvailability({}) })
+    return () => { cancelled = true }
+  }, [logOpen, selectedWarehouseId, bomOptions])
+
+  function maxAssemblableToday(bomId: string): number | null {
+    const availability = assemblyAvailability[bomId]
+    if (!availability || availability.length === 0) return null
+    return Math.min(...availability.map(a => a.quantityRequired > 0 ? Math.floor(a.available / a.quantityRequired) : Infinity))
+  }
 
   async function submitDamage() {
     const qty = Number(damageForm.quantity)
@@ -380,6 +413,33 @@ export function Production() {
       for (const bom of toLog) {
         const qty = parseInt(entries[bom.id] ?? '0')
         if (qty <= 0 || !bom.product_id) continue
+
+        // Assembly-stage BOMs log through the same atomic RPC Assembly.tsx
+        // uses (one DB transaction: find-or-reuse order, upsert today's
+        // log, update completed_quantity, post output, consume components)
+        // instead of the several sequential client-side steps below --
+        // safer under concurrent submits. Sticker/Other stages keep using
+        // the manual multi-step path since produce_assembly is scoped to
+        // stage='ASSEMBLY' BOMs only.
+        if (bom.stage === 'ASSEMBLY') {
+          // Resolve today's already-logged quantity via the order regardless
+          // of its status -- a from-scratch run marks its order COMPLETED
+          // immediately, so a plain DRAFT/IN_PROGRESS-only lookup would miss
+          // it and treat this edit as a fresh full amount instead of a delta.
+          const { data: existingLog } = await supabase
+            .from('production_daily_logs')
+            .select('quantity_produced, production_orders!inner(bom_header_id, warehouse_id)')
+            .eq('log_date', logDate)
+            .eq('production_orders.bom_header_id', bom.id)
+            .eq('production_orders.warehouse_id', selectedWarehouseId)
+            .maybeSingle()
+          const prevQty = existingLog?.quantity_produced ?? 0
+          const delta = qty - prevQty
+          if (delta === 0) continue
+          if (delta < 0) throw new Error(`Cannot reduce ${bom.product_name}'s logged quantity below what's already recorded — remove the excess directly from the order instead.`)
+          await produceAssembly(selectedWarehouseId, bom.product_id, delta, undefined, logNotes || undefined, logDate)
+          continue
+        }
 
         // Prefer an existing open order for this BOM at this warehouse (so
         // due-date/target tracking keeps working) — but an order is not
@@ -874,6 +934,7 @@ export function Production() {
                               ['DRAFT', 'IN_PROGRESS'].includes(o.status) && o.target_quantity > o.completed_quantity,
                             )
                             const remaining = order ? order.target_quantity - order.completed_quantity : null
+                            const maxAssemblable = stage === 'ASSEMBLY' ? maxAssemblableToday(bom.id) : null
                             return (
                               <div key={bom.id} className="bg-gray-50 rounded-xl p-3 flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-lg bg-white border border-gray-200 overflow-hidden flex items-center justify-center shrink-0">
@@ -882,6 +943,11 @@ export function Production() {
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium truncate">{bom.product_name}</p>
                                   {remaining !== null && <p className="text-xs text-blue-600">order open · max {N(remaining)}</p>}
+                                  {maxAssemblable !== null && isFinite(maxAssemblable) && (
+                                    <p className={`text-xs ${maxAssemblable > 0 ? 'text-gray-400' : 'text-red-500'}`}>
+                                      component stock allows up to {N(maxAssemblable)} today
+                                    </p>
+                                  )}
                                 </div>
                                 <input
                                   type="number" min="0" max={remaining ?? undefined}

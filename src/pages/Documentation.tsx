@@ -37,7 +37,7 @@ const QUICK_START: { step: number; title: string; detail: React.ReactNode }[] = 
   {
     step: 3,
     title: 'If you assemble products, set up a BOM',
-    detail: <>On <Link to="/boms" className="text-blue-600 hover:underline">BOMs</Link>, define what components (and how many of each) go into one unit of a finished product. This unlocks <Link to="/production" className="text-blue-600 hover:underline">Production</Link> and <Link to="/assembly" className="text-blue-600 hover:underline">Assembly</Link> logging. Skip this if you only resell imported goods as-is.</>,
+    detail: <>On <Link to="/boms" className="text-blue-600 hover:underline">BOMs</Link>, define what components (and how many of each) go into one unit of a finished product. This unlocks <Link to="/production" className="text-blue-600 hover:underline">Production</Link> logging (Assembly is one of its stages). Skip this if you only resell imported goods as-is.</>,
   },
   {
     step: 4,
@@ -73,8 +73,8 @@ const GROUPS: DocGroup[] = [
             <p>Every account has one role, set by an admin on the <Link to="/users" className="text-blue-600 hover:underline">Users &amp; Roles</Link> page. A role controls both what shows up in the sidebar and, since the RLS hardening pass, what the account can actually read or write at the database level — not just what the UI shows.</p>
             <ul className="list-disc pl-4 space-y-1 mt-2">
               <li><strong>Full access</strong> — passes every check everywhere. CEO/GM/Assistant Manager tier.</li>
-              <li><strong>Operations &amp; Marketing</strong> — Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator, Supplier Payments.</li>
-              <li><strong>Manufacturing &amp; Sales</strong> — Production, Assembly, BOMs, Inventory, Warehouse Transfers, Sales, Customers, Products.</li>
+              <li><strong>Operations &amp; Marketing</strong> — Proforma Invoices, Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator, Supplier Payments.</li>
+              <li><strong>Manufacturing &amp; Sales</strong> — Production, BOMs, Inventory, Warehouse Transfers, Sales, Customers, Products.</li>
               <li><strong>Accounting &amp; Finance</strong> — Sales, Cost Engine, Customs Estimator, Payables, Supplier Payments, Receivables, Money Tracking, Credit Accounts, Expenses, Djibouti Forwarder, shipment cost finalization.</li>
               <li><strong>HR &amp; System</strong> — Users &amp; Roles, Settings, Employees, Payroll, HR Notes.</li>
               <li><strong>Pending</strong> — a brand-new sign-up with no role yet. Sees a "waiting for approval" screen and nothing else until an HR &amp; System admin assigns a role.</li>
@@ -182,23 +182,15 @@ const GROUPS: DocGroup[] = [
         body: (
           <>
             <p>Daily production logging, organized by stage (Assembly, Sticker Application, Other). Pick a warehouse, enter today's quantity for one or more BOMs, and save — the system credits the finished product and debits the BOM's components in the same action, after confirming every component has enough stock (a log never partially succeeds and leaves phantom finished goods with nothing consumed to make them).</p>
-            <p className="mt-2">If there's an open production order for that BOM at that warehouse, the log attaches to it and advances its progress; otherwise it stands alone as a same-day log.</p>
+            <p className="mt-2">If there's an open production order for that BOM at that warehouse, the log attaches to it and advances its progress; otherwise it stands alone as a same-day log. For <em>Assembly</em>-stage BOMs specifically, the row also shows how many units current component stock actually allows you to assemble today, and the log is written as one atomic step (safe if you submit twice in quick succession) — this used to be a separate "Assembly" page; it's now just this stage on Production.</p>
           </>
-        ),
-      },
-      {
-        id: 'assembly',
-        title: 'Assembly',
-        roles: 'Manufacturing & Sales',
-        body: (
-          <p>A faster, single-product version of production logging specifically for turning SKD/CKD components into a finished good — shows exactly how many units you can assemble right now given current component stock, and only offers products with an active <em>Assembly</em>-stage BOM (Sticker/Other-stage BOMs live on the Production page instead). Uses the same order-matching and component-check logic as Production, so logging the same work through either page can't double-count it.</p>
         ),
       },
       {
         id: 'boms',
         title: 'BOMs (Bills of Materials)',
         roles: 'Manufacturing & Sales',
-        body: <p>Defines what components (and how many of each) go into one unit of a finished product, tagged with a stage (Assembly / Sticker / Other). Production and Assembly both read from here to know what to consume when you log output.</p>,
+        body: <p>Defines what components (and how many of each) go into one unit of a finished product, tagged with a stage (Assembly / Sticker / Other). Production reads from here to know what to consume when you log output.</p>,
       },
     ],
   },

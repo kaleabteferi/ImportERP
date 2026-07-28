@@ -16,6 +16,8 @@ import { Layout }         from './components/layout/Layout'
 import { Dashboard }      from './pages/Dashboard'
 import { Shipments }      from './pages/Shipments'
 import { ShipmentDetail } from './pages/ShipmentDetail'
+import { ProformaInvoices } from './pages/ProformaInvoices'
+import { ProformaInvoiceDetail } from './pages/ProformaInvoiceDetail'
 import { Rfqs }           from './pages/Rfqs'
 import { Suppliers }      from './pages/Suppliers'
 import { Products }       from './pages/Products'
@@ -34,7 +36,6 @@ import { Expenses } from './pages/Expenses'
 import { DailyActivity } from './pages/DailyActivity'
 import { Customers } from './pages/Customers'
 import { Sales } from './pages/Sales'
-import { Assembly } from './pages/Assembly'
 import { Boms } from './pages/Boms'
 import { WarehouseTransfers } from './pages/WarehouseTransfers'
 import { DjiboutiForwarder } from './pages/DjiboutiForwarder'
@@ -83,6 +84,12 @@ export default function App() {
               <Route path="calculator"      element={<Calculator />}     />
               <Route path="documentation"   element={<Documentation />}  />
 
+              <Route path="proforma-invoices" element={
+                <RequireRole allow={['operations_marketing']}><ProformaInvoices /></RequireRole>
+              } />
+              <Route path="proforma-invoices/:id" element={
+                <RequireRole allow={['operations_marketing']}><ProformaInvoiceDetail /></RequireRole>
+              } />
               <Route path="shipments" element={
                 <RequireRole allow={['operations_marketing']}><Shipments /></RequireRole>
               } />
@@ -113,9 +120,6 @@ export default function App() {
 
               <Route path="production" element={
                 <RequireRole allow={['manufacturing_sales']}><ModeRoute desktop={<Production />} mobile={<MobileProduction />} /></RequireRole>
-              } />
-              <Route path="assembly" element={
-                <RequireRole allow={['manufacturing_sales']}><Assembly /></RequireRole>
               } />
               <Route path="boms" element={
                 <RequireRole allow={['manufacturing_sales']}><Boms /></RequireRole>

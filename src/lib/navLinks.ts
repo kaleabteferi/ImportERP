@@ -7,8 +7,8 @@
 import {
   LayoutDashboard, Ship, Building2,
   Wrench, Package, Calculator, BarChart3,
-  Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, Hammer, ListTree, Truck, Anchor,
-  ShoppingCart, Sigma, FileSearch, ArrowRightLeft,
+  Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, ListTree, Truck, Anchor,
+  ShoppingCart, Sigma, FileSearch, ArrowRightLeft, FileText,
   UserCog, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion,
   Settings as SettingsIcon,
 } from 'lucide-react'
@@ -27,6 +27,7 @@ export const NAV_LINKS: NavGroup[] = [
     { to: '/documentation', icon: FileQuestion,     label: 'Documentation',  allow: [] },
   ]},
   { section: 'Import', items: [
+    { to: '/proforma-invoices', icon: FileText, label: 'Proforma Invoices', allow: ['operations_marketing'] },
     { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] },
     { to: '/rfqs',       icon: FileSearch, label: 'Supplier RFQs', allow: ['operations_marketing', 'accounting_finance'] },
     { to: '/djibouti',   icon: Anchor,     label: 'Djibouti Forwarder', allow: ['operations_marketing', 'accounting_finance'] },
@@ -36,7 +37,6 @@ export const NAV_LINKS: NavGroup[] = [
   ]},
   { section: 'Operations', items: [
     { to: '/production',  icon: Wrench,      label: 'Production', allow: ['manufacturing_sales'] },
-    { to: '/assembly',    icon: Hammer,      label: 'Assembly',   allow: ['manufacturing_sales'] },
     { to: '/boms',        icon: ListTree,    label: 'BOMs',       allow: ['manufacturing_sales'] },
     { to: '/inventory',   icon: Package,     label: 'Inventory',  allow: ['manufacturing_sales', 'operations_marketing'] },
     { to: '/warehouse-transfers', icon: Truck, label: 'Warehouse Transfers', allow: ['manufacturing_sales', 'operations_marketing'] },
