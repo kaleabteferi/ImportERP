@@ -1,5 +1,5 @@
 // src/pages/ProformaInvoiceDetail.tsx
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2 } from 'lucide-react'
@@ -55,6 +55,13 @@ export function ProformaInvoiceDetail() {
   const [containerVolumes, setContainerVolumes] = useState<Record<string, number>>({})
   const [containerWeights, setContainerWeights] = useState<Record<string, number>>({})
   const [suggesting, setSuggesting] = useState(false)
+  // Synchronous re-entrancy lock for suggestLayout -- setSuggesting alone
+  // isn't enough because the disabled-button re-render lags one tick behind
+  // the click, so a manual click landing in that gap (or a fast double
+  // click) can still race an in-flight auto-triggered run and corrupt the
+  // packing (confirmed: this exact race scrambled a real multi-container
+  // order's allocation). A ref updates immediately, before any await.
+  const suggestingRef = useRef(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const [suggestionSummary, setSuggestionSummary] = useState<{
@@ -255,7 +262,8 @@ export function ProformaInvoiceDetail() {
   // amount of extra containers fixes that; it's a data problem to go check.
   async function suggestLayout(auto = false) {
     if (!pi) return
-    if (auto && suggesting) return
+    if (suggestingRef.current) return
+    suggestingRef.current = true
     setSuggesting(true)
     setError(null)
     setNotice(null)
@@ -333,7 +341,6 @@ export function ProformaInvoiceDetail() {
           // nothing to do stays silent instead of nagging every visit.
           setNotice('Nothing to suggest — every line item is already fully allocated to a container.')
         }
-        setSuggesting(false)
         return
       }
 
@@ -396,8 +403,10 @@ export function ProformaInvoiceDetail() {
       setRefreshToken(t => t + 1)
     } catch (e: any) {
       setError(e?.message ?? String(e))
+    } finally {
+      setSuggesting(false)
+      suggestingRef.current = false
     }
-    setSuggesting(false)
   }
 
   if (loading) {
