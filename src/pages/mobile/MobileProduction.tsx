@@ -90,7 +90,7 @@ export function MobileProduction() {
       </div>
 
       <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
-        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white mb-3">
+        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white mb-3">
         <option value="">Choose warehouse…</option>
         {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
       </select>
@@ -105,7 +105,7 @@ export function MobileProduction() {
       ) : (
         <div className="space-y-2 mb-6">
           {boms.map(b => (
-            <div key={b.id} className="bg-white border border-gray-200 rounded-2xl p-3.5">
+            <div key={b.id} className="bg-white shadow-[var(--shadow-card-sm)] rounded-card p-3.5">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0"><Package size={14} className="text-gray-400" /></div>
                 <div className="min-w-0">
@@ -129,7 +129,7 @@ export function MobileProduction() {
       {recent.length > 0 && (
         <div>
           <p className="text-xs font-medium text-gray-500 mb-2">Recent activity</p>
-          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+          <div className="bg-white shadow-[var(--shadow-card-sm)] rounded-card overflow-hidden">
             {recent.map((r, i) => (
               <div key={r.id} className={`flex items-center justify-between px-4 py-2.5 text-xs ${i < recent.length - 1 ? 'border-b border-gray-50' : ''}`}>
                 <span className="text-gray-600">{r.productName}</span>

@@ -11,6 +11,7 @@ import {
   Package, Users, RefreshCw,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const pctChange = (current: number, prev: number) =>
@@ -34,8 +35,24 @@ function timeAgo(d: Date | null) {
 const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
 const PERIOD_PREV_LABEL: Record<Period, string> = { day: 'yesterday', week: 'last week', month: 'last month' }
 
-function KpiCard({ label, value, sub, trend, icon: Icon, tone, to }: {
-  label: string; value: string; sub?: string; trend?: number; icon: LucideIcon; tone?: 'warn' | 'good'; to?: string
+function CardSparkline({ points, good }: { points: DayPoint[]; good: boolean }) {
+  const max = Math.max(1, ...points.map(p => p.value))
+  return (
+    <div className="flex items-end gap-[2px] h-6 mt-2">
+      {points.map(p => (
+        <div key={p.date}
+          className={`flex-1 rounded-t ${good ? 'bg-green-400/70' : 'bg-red-400/70'}`}
+          style={{ height: `${Math.max(8, (p.value / max) * 100)}%` }}
+          title={`${p.date}: ${p.value}`}
+        />
+      ))}
+    </div>
+  )
+}
+
+function KpiCard({ label, value, sub, trend, icon: Icon, tone, to, index = 0, sparkline }: {
+  label: string; value: string; sub?: string; trend?: number; icon: LucideIcon; tone?: 'warn' | 'good'; to?: string; index?: number
+  sparkline?: DayPoint[]
 }) {
   const body = (
     <>
@@ -55,13 +72,15 @@ function KpiCard({ label, value, sub, trend, icon: Icon, tone, to }: {
       ) : sub ? (
         <p className="text-xs mt-1 text-gray-400">{sub}</p>
       ) : null}
+      {sparkline && sparkline.length > 1 && <CardSparkline points={sparkline} good={(trend ?? 0) >= 0} />}
     </>
   )
-  const cls = 'group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150'
+  const cls = 'stagger-row group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)]'
+  const style = { '--stagger-index': index } as React.CSSProperties
   return to ? (
-    <Link to={to} className={`${cls} hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400`}>{body}</Link>
+    <Link to={to} style={style} className={`${cls} hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent`}>{body}</Link>
   ) : (
-    <div className={cls}>{body}</div>
+    <div className={cls} style={style}>{body}</div>
   )
 }
 
@@ -76,7 +95,7 @@ function MiniTrend({ points, formatValue }: { points: DayPoint[]; formatValue: (
         {points.map(p => (
           <div key={p.date} className="flex-1 flex flex-col items-center justify-end gap-1">
             <div
-              className="w-full rounded-t bg-indigo-500/80"
+              className="w-full rounded-t bg-gradient-to-t from-indigo-600 to-indigo-400"
               style={{ height: `${Math.max(4, (p.value / max) * 100)}%` }}
               title={`${p.date}: ${formatValue(p.value)}`}
             />
@@ -97,7 +116,7 @@ function QuestionCard({ question, children, viewAllTo, viewAllLabel, defaultOpen
 }) {
   const [open, setOpen] = useState(!!defaultOpen)
   return (
-    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+    <div className="bg-white dark:border dark:border-gray-700 rounded-card overflow-hidden shadow-[var(--shadow-card-sm)]">
       <button
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors duration-150"
@@ -150,29 +169,29 @@ export function Dashboard() {
     <div className="p-5 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5 items-start">
     <div className="space-y-5 min-w-0">
       {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-medium">{greeting()}, {firstName}</h1>
-          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1.5">
-            {new Date().toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' })}
-            <span className="text-gray-300">·</span>
-            <RefreshCw size={10} className={d.loading ? 'animate-spin' : ''} />
-            Updated {timeAgo(d.lastUpdated)}
-          </p>
-        </div>
-        <div className="flex gap-1">
-          {(['day', 'week', 'month'] as Period[]).map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors
-                ${period === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-            >
-              {PERIOD_LABEL[p]}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title={`${greeting()}, ${firstName}`}
+        subtitle={<span className="flex items-center gap-1.5">
+          {new Date().toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' })}
+          <span className="text-gray-300">·</span>
+          <RefreshCw size={10} className={d.loading ? 'animate-spin' : ''} />
+          Updated {timeAgo(d.lastUpdated)}
+        </span>}
+        actions={
+          <div className="flex gap-1">
+            {(['day', 'week', 'month'] as Period[]).map(p => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors
+                  ${period === p ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              >
+                {PERIOD_LABEL[p]}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       <GlobalSearchBar />
 
@@ -182,7 +201,7 @@ export function Dashboard() {
 
       {/* Top advice */}
       {d.topAdvice && (
-        <div className="bg-indigo-600 text-white rounded-2xl p-5">
+        <div className="bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 text-white rounded-card p-5 shadow-[var(--shadow-card-md)]">
           <div className="flex items-center gap-2 mb-2 text-indigo-200 text-xs uppercase tracking-wide font-medium">
             <Sparkles size={13} /> {PERIOD_LABEL[period]}'s advice
           </div>
@@ -197,36 +216,36 @@ export function Dashboard() {
 
       {/* Tier 1 — headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp} to="/sales"
-          value={`${N(d.revenueEtb)} ETB`} trend={revenueChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
-        <KpiCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package} to="/production"
-          value={`${N(d.producedUnits)} units`} trend={productionChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} />
-        <KpiCard label="Net cash" icon={Wallet} to="/money-tracking"
+        <KpiCard index={0} label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp} to="/sales"
+          value={`${N(d.revenueEtb)} ETB`} trend={revenueChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} sparkline={d.revenueTrend} />
+        <KpiCard index={1} label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package} to="/production"
+          value={`${N(d.producedUnits)} units`} trend={productionChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} sparkline={d.productionTrend} />
+        <KpiCard index={2} label="Net cash" icon={Wallet} to="/money-tracking"
           value={`${netCashEtb >= 0 ? '+' : ''}${N(netCashEtb)} ETB`}
           sub={`${N(d.cashInEtb)} in · ${N(d.cashOutEtb)} out`}
           tone={netCashEtb >= 0 ? 'good' : 'warn'} />
-        <KpiCard label="Days of stock" icon={Package} to="/inventory"
+        <KpiCard index={3} label="Days of stock" icon={Package} to="/inventory"
           value={d.daysOfStock !== null ? `${d.daysOfStock.toFixed(0)} days` : '—'}
           sub={`${N(d.inventoryValueEtb)} ETB on hand`}
           tone={d.daysOfStock !== null && d.daysOfStock < 7 ? 'warn' : undefined} />
-        <KpiCard label="Customers owe you" icon={CreditCard} to="/receivables"
+        <KpiCard index={4} label="Customers owe you" icon={CreditCard} to="/receivables"
           value={`${N(d.receivablesEtb)} ETB`}
           tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
-        <KpiCard label="You owe suppliers" icon={Landmark} to="/supplier-payments"
+        <KpiCard index={5} label="You owe suppliers" icon={Landmark} to="/supplier-payments"
           value={`${N(d.payablesEtb)} ETB`}
           sub={[d.payablesUsd > 0 ? `$${N(d.payablesUsd)} USD` : null, d.payablesCny > 0 ? `¥${N(d.payablesCny)} CNY` : null].filter(Boolean).join(' · ') || undefined}
           tone={d.payablesEtb > 0 || d.payablesUsd > 0 || d.payablesCny > 0 ? 'warn' : undefined} />
-        <KpiCard label="Active customers" icon={Users} to="/customers"
+        <KpiCard index={6} label="Active customers" icon={Users} to="/customers"
           value={String(d.activeCustomers)}
           sub={`${PERIOD_LABEL[period].toLowerCase()}`} />
-        <KpiCard label="Frequent customers" icon={Users} to="/customers"
+        <KpiCard index={7} label="Frequent customers" icon={Users} to="/customers"
           value={String(d.frequentCustomers)}
           sub="2+ orders in 30 days" />
       </div>
 
       {/* Cash flow — what actually made up "Net cash" above */}
       {(d.cashInBreakdown.length > 0 || d.cashOutBreakdown.length > 0) && (
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-white dark:border dark:border-gray-700 rounded-card p-4 shadow-[var(--shadow-card-sm)]">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-medium text-gray-500">Cash flow · {PERIOD_LABEL[period].toLowerCase()}</p>
             <Link to="/money-tracking" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
@@ -270,14 +289,14 @@ export function Dashboard() {
 
       {/* Tier 2 — trends */}
       <div className="grid grid-cols-2 gap-3">
-        <Link to="/sales" className="group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150 hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <Link to="/sales" className="group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)] hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-medium text-gray-500">Revenue trend</p>
             <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />
           </div>
           <MiniTrend points={d.revenueTrend} formatValue={n => `${N(n)} ETB`} />
         </Link>
-        <Link to="/production" className="group bg-white border border-gray-200 rounded-xl p-4 block transition-all duration-150 hover:border-blue-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <Link to="/production" className="group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)] hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-medium text-gray-500">Production trend</p>
             <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />

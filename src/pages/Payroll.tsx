@@ -8,6 +8,7 @@ import type { PayrollPeriod, PayrollEntry, PayrollEntryDeduction } from '../api/
 import { fetchEmployees } from '../api/employees'
 import type { Employee } from '../api/employees'
 import { fetchAccounts } from '../api/accounts'
+import type { Account } from '../api/accounts'
 import { recordCompanyExpense } from '../api/companyExpenses'
 import { OT_LABELS, OT_MULTIPLIERS } from '../lib/payrollEngine'
 import type { OvertimeType } from '../lib/payrollEngine'
@@ -15,6 +16,12 @@ import {
   Wallet, Loader2, Plus, X, Check, Lock, ChevronLeft, Pencil, Trash2,
   Printer, Info, Users, AlertTriangle,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -39,7 +46,7 @@ function NewRunForm({ employees, onCancel, onCreated }: { employees: Employee[];
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <div className="bg-white border border-gray-200 rounded-card p-4 mb-4 space-y-2.5">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <p className="text-xs text-gray-500">Creates a draft entry for every active employee ({employees.filter(e => e.is_active).length}), pre-calculated with no overtime or extra deductions — adjust each one from there.</p>
       <div className="flex gap-2">
@@ -213,14 +220,14 @@ function BulkFactoryForm({ entries, employeeById, onCancel, onSaved }: {
 
   if (factoryEntries.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 text-xs text-gray-400">
+      <div className="bg-white border border-gray-200 rounded-card p-4 mb-4 text-xs text-gray-400">
         No daily-wage or casual employees in this pay run — permanent staff don't have days-worked or hourly overtime, so there's nothing to bulk-enter here. Use the per-row edit below instead.
       </div>
     )
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
+    <div className="bg-white border border-gray-200 rounded-card p-4 mb-4 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <p className="text-sm font-medium flex items-center gap-1.5"><Users size={14} className="text-blue-600" /> Bulk factory entry — {factoryEntries.length} daily-wage/casual employees</p>
@@ -275,7 +282,7 @@ function BulkFactoryForm({ entries, employeeById, onCancel, onSaved }: {
 function Payslip({ entry, period, employee, onClose }: { entry: PayrollEntry; period: PayrollPeriod; employee: Employee | undefined; onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+      <div className="bg-white rounded-card w-full max-w-md shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 print:hidden">
           <h2 className="text-sm font-medium">Payslip</h2>
           <div className="flex gap-2">
@@ -319,7 +326,7 @@ export function Payroll() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [payslipEntry, setPayslipEntry] = useState<PayrollEntry | null>(null)
   const [finalizing, setFinalizing] = useState(false)
-  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [recordExpenseAccountId, setRecordExpenseAccountId] = useState('')
   const [showBulkFactory, setShowBulkFactory] = useState(false)
 
@@ -399,31 +406,23 @@ export function Payroll() {
         <button onClick={() => setActivePeriodId(null)} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
           <ChevronLeft size={13} /> Back to pay runs
         </button>
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <div>
-            <h1 className="text-lg font-medium">{MONTH_NAMES[activePeriod.period_month - 1]} {activePeriod.period_year}</h1>
-            <p className="text-xs text-gray-400 mt-0.5">{entries.length} employees · {activePeriod.status}</p>
-          </div>
-          {activePeriod.status === 'draft' ? (
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowBulkFactory(v => !v)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-                {showBulkFactory ? <X size={12} /> : <Users size={12} />} Bulk factory entry
-              </button>
+        <PageHeader
+          title={`${MONTH_NAMES[activePeriod.period_month - 1]} ${activePeriod.period_year}`}
+          subtitle={`${entries.length} employees · ${activePeriod.status}`}
+          actions={activePeriod.status === 'draft' ? (
+            <>
+              <Button variant="secondary" icon={showBulkFactory ? <X size={12} /> : <Users size={12} />} onClick={() => setShowBulkFactory(v => !v)}>Bulk factory entry</Button>
               <select value={recordExpenseAccountId} onChange={e => setRecordExpenseAccountId(e.target.value)}
                 className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
                 <option value="">Don't record as an expense</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>Record net pay from {a.name}</option>)}
+                {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>Record net pay from {a.name}</option>)}
               </select>
-              <button onClick={handleFinalize} disabled={finalizing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white disabled:opacity-50">
-                {finalizing ? <Loader2 size={12} className="animate-spin" /> : <Lock size={12} />} {finalizing ? 'Finalizing…' : 'Finalize pay run'}
-              </button>
-            </div>
+              <Button loading={finalizing} icon={<Lock size={12} />} className="!bg-green-600 !text-white hover:!brightness-95" onClick={handleFinalize}>Finalize pay run</Button>
+            </>
           ) : (
-            <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-50 text-green-700"><Lock size={12} /> Finalized</span>
+            <Badge variant="success" icon={<Lock size={10} />}>Finalized</Badge>
           )}
-        </div>
+        />
 
         {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -434,16 +433,16 @@ export function Payroll() {
         )}
 
         <div className="grid grid-cols-4 gap-3 mb-5">
-          <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Gross pay</p><p className="text-lg font-medium font-mono">{N(totals.gross)}</p></div>
-          <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Income tax</p><p className="text-lg font-medium font-mono text-amber-700">{N(totals.tax)}</p></div>
-          <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Pension (both sides)</p><p className="text-lg font-medium font-mono text-amber-700">{N(totals.pension)}</p></div>
-          <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Net pay</p><p className="text-lg font-medium font-mono text-green-700">{N(totals.net)}</p></div>
+          <StatCard label="Gross pay" value={N(totals.gross)} />
+          <StatCard label="Income tax" value={<span className="text-amber-700">{N(totals.tax)}</span>} />
+          <StatCard label="Pension (both sides)" value={<span className="text-amber-700">{N(totals.pension)}</span>} />
+          <StatCard label="Net pay" value={<span className="text-green-700">{N(totals.net)}</span>} />
         </div>
 
         {entriesLoading ? (
           <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1fr_auto] gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
               <div>Employee</div><div className="text-right">Gross</div><div className="text-right">Pension</div><div className="text-right">Tax</div><div className="text-right">Other ded.</div><div className="text-right">Net</div><div></div>
             </div>
@@ -477,7 +476,7 @@ export function Payroll() {
                 </div>
               )
             })}
-          </div>
+          </Card>
         )}
 
         {payslipEntry && <Payslip entry={payslipEntry} period={activePeriod} employee={employeeById.get(payslipEntry.employee_id)} onClose={() => setPayslipEntry(null)} />}
@@ -487,15 +486,12 @@ export function Payroll() {
 
   return (
     <div className="p-5 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Wallet size={18} /> Payroll</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Monthly pay runs — PAYE, pension, and overtime calculated per <Link to="/hr-notes" className="text-blue-600 hover:underline">HR Notes</Link></p>
-        </div>
-        <button onClick={() => setShowNewForm(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
-          {showNewForm ? <X size={12} /> : <Plus size={12} />} New pay run
-        </button>
-      </div>
+      <PageHeader
+        icon={<Wallet size={18} />}
+        title="Payroll"
+        subtitle={<>Monthly pay runs — PAYE, pension, and overtime calculated per <Link to="/hr-notes" className="text-blue-600 hover:underline">HR Notes</Link></>}
+        actions={<Button icon={showNewForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowNewForm(v => !v)}>New pay run</Button>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -517,20 +513,23 @@ export function Payroll() {
           <p className="text-xs text-gray-400">Create one above to calculate this month's pay.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {periods.map((p, i) => (
-            <div key={p.id} className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 ${i < periods.length - 1 ? 'border-b border-gray-50' : ''}`}
-              onClick={() => setActivePeriodId(p.id)}>
-              <div className="flex-1">
-                <p className="text-sm font-medium">{MONTH_NAMES[p.period_month - 1]} {p.period_year}</p>
+        <Card>
+          {periods.map((p, i) => {
+            const row = (
+              <div className={`stagger-row flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 ${i < periods.length - 1 ? 'border-b border-gray-50' : ''}`}
+                style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
+                onClick={() => setActivePeriodId(p.id)}>
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{MONTH_NAMES[p.period_month - 1]} {p.period_year}</p>
+                </div>
+                <Badge variant={p.status === 'finalized' ? 'success' : 'neutral'}>{p.status}</Badge>
               </div>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.status === 'finalized' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{p.status}</span>
-              {p.status === 'draft' && (
-                <button onClick={e => { e.stopPropagation(); handleDeletePeriod(p.id) }} className="p-1.5 text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
-              )}
-            </div>
-          ))}
-        </div>
+            )
+            return p.status === 'draft' ? (
+              <SwipeToDelete key={p.id} onDelete={() => handleDeletePeriod(p.id)}>{row}</SwipeToDelete>
+            ) : <div key={p.id}>{row}</div>
+          })}
+        </Card>
       )}
     </div>
   )

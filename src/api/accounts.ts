@@ -66,7 +66,7 @@ export async function fetchAccountBalances(accounts: Account[]): Promise<Record<
     supabase.from('sales_payments').select('amount_etb, account_id').not('account_id', 'is', null),
     supabase.from('credit_transactions').select('amount, account_id').eq('type', 'repayment').not('account_id', 'is', null),
     supabase.from('company_expenses').select('amount, currency, account_id').not('account_id', 'is', null),
-    supabase.from('shipment_expenses').select('amount, currency, account_id').eq('is_paid', true).not('account_id', 'is', null),
+    supabase.from('shipment_expenses').select('amount, currency, account_id, payment_method, hawala_etb_amount').eq('is_paid', true).not('account_id', 'is', null),
     supabase.from('supplier_payments').select('amount, method, etb_amount, account_id, supplier_payables(currency)').not('account_id', 'is', null),
   ])
 
@@ -87,8 +87,16 @@ export async function fetchAccountBalances(accounts: Account[]): Promise<Record<
   for (const r of (expensesRes.data ?? []) as any[]) {
     if (currencyByAccount.get(r.account_id) === r.currency) add(r.account_id, -Number(r.amount ?? 0))
   }
+  // A hawala-paid shipment expense debits the ETB account that paid the
+  // dealer, same as a hawala supplier payment — the expense's own currency
+  // (e.g. USD) never actually left that account.
   for (const r of (shipExpRes.data ?? []) as any[]) {
-    if (currencyByAccount.get(r.account_id) === r.currency) add(r.account_id, -Number(r.amount ?? 0))
+    const acctCurrency = currencyByAccount.get(r.account_id)
+    if (r.payment_method === 'hawala' && r.hawala_etb_amount != null) {
+      if (acctCurrency === 'ETB') add(r.account_id, -Number(r.hawala_etb_amount))
+    } else if (acctCurrency === r.currency) {
+      add(r.account_id, -Number(r.amount ?? 0))
+    }
   }
   // A hawala supplier payment debits the account in ETB (etb_amount) — the
   // account paid the dealer, not the supplier directly, so `amount` (in the

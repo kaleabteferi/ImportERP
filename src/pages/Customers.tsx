@@ -7,6 +7,10 @@ import { Users, Loader2, Plus, X, Search, ChevronDown, ChevronRight, Flame, Cred
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
 import { useSort } from '../lib/useSort'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 interface Customer {
   id: string; name: string; type: string | null; phone: string | null
@@ -69,7 +73,7 @@ function NewCustomerForm({ onDone, onCancel }: { onDone: () => void; onCancel: (
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Customer name"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
@@ -94,13 +98,10 @@ function NewCustomerForm({ onDone, onCancel }: { onDone: () => void; onCancel: (
         </div>
       )}
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : 'Add customer'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit}>Add customer</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -134,11 +135,8 @@ function OpenCreditForm({ customerId, onDone, onCancel }: { customerId: string; 
           className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       </div>
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : 'Open credit account'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit}>Open credit account</Button>
       </div>
     </div>
   )
@@ -286,22 +284,15 @@ export function Customers() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Users size={18} /> Customers</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{rows.length} customers · {N(totalOutstanding)} ETB outstanding</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowImport(true)}
-            className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1">
-            <ClipboardPaste size={12} /> Bulk import
-          </button>
-          <button onClick={() => setShowForm(v => !v)}
-            className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white flex items-center gap-1">
-            {showForm ? <X size={12} /> : <Plus size={12} />} New customer
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Users size={18} />}
+        title="Customers"
+        subtitle={`${rows.length} customers · ${N(totalOutstanding)} ETB outstanding`}
+        actions={<>
+          <Button variant="secondary" icon={<ClipboardPaste size={12} />} onClick={() => setShowImport(true)}>Bulk import</Button>
+          <Button icon={showForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowForm(v => !v)}>New customer</Button>
+        </>}
+      />
 
       {showForm && <NewCustomerForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); load() }} />}
 
@@ -344,9 +335,9 @@ export function Customers() {
       ) : sorted.length === 0 ? (
         <div className="text-center py-16 text-sm text-gray-400">No customers yet.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {sorted.map((c, i) => (
-            <div key={c.id} className={i < sorted.length - 1 ? 'border-b border-gray-50' : ''}>
+            <div key={c.id} className={`stagger-row ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''}`} style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
               <button
                 onClick={() => setOpenId(openId === c.id ? null : c.id)}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left"
@@ -356,9 +347,7 @@ export function Customers() {
                   <div className="flex items-center gap-1.5">
                     <p className="text-sm font-medium">{c.name}</p>
                     {c.ordersLast30d >= 2 && (
-                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-600">
-                        <Flame size={9} /> Frequent
-                      </span>
+                      <Badge variant="warning" icon={<Flame size={9} />}>Frequent</Badge>
                     )}
                   </div>
                   <p className="text-xs text-gray-400">
@@ -374,7 +363,7 @@ export function Customers() {
               {openId === c.id && <CustomerDetail customerId={c.id} />}
             </div>
           ))}
-        </div>
+        </Card>
       )}
     </div>
   )

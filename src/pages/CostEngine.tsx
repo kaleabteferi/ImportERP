@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Calculator, Loader2, Lock, AlertTriangle, ArrowRight } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
 
 interface ShipmentCostRow {
   id: string
@@ -91,26 +95,16 @@ export function CostEngine() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2">
-          <Calculator size={18} /> Cost Engine
-        </h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Landed cost overview across all shipments · Customs rate {fxRate} ETB/USD
-        </p>
-      </div>
+      <PageHeader
+        icon={<Calculator size={18} />}
+        title="Cost Engine"
+        subtitle={`Landed cost overview across all shipments · Customs rate ${fxRate} ETB/USD`}
+      />
 
       <div className="grid grid-cols-3 gap-3 mb-5">
-        {[
-          { label: 'Needs calculation', val: needsCalc.length, color: 'text-amber-700' },
-          { label: 'Ready to finalize', val: needsFinalize.length, color: 'text-blue-700' },
-          { label: 'Costs locked', val: ready.length, color: 'text-green-700' },
-        ].map(s => (
-          <div key={s.label} className="bg-gray-50 rounded-xl px-4 py-3">
-            <p className="text-xs text-gray-400">{s.label}</p>
-            <p className={`text-xl font-medium font-mono ${s.color}`}>{s.val}</p>
-          </div>
-        ))}
+        <StatCard label="Needs calculation" value={<span className="text-amber-700">{needsCalc.length}</span>} />
+        <StatCard label="Ready to finalize" value={<span className="text-blue-700">{needsFinalize.length}</span>} />
+        <StatCard label="Costs locked" value={<span className="text-green-700">{ready.length}</span>} />
       </div>
 
       {loading ? (
@@ -118,7 +112,7 @@ export function CostEngine() {
           <Loader2 size={18} className="animate-spin" /> Loading…
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100 text-xs font-medium
                           text-gray-400 uppercase tracking-wide">
@@ -132,9 +126,10 @@ export function CostEngine() {
           {rows.map((r, i) => (
             <div
               key={r.id}
-              className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3
+              className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3
                           items-center text-sm
                           ${i < rows.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
             >
               <div>
                 <Link to={`/shipments/${r.id}`} className="font-medium text-blue-700 hover:underline">
@@ -151,11 +146,9 @@ export function CostEngine() {
               <div className="text-right">
                 {r.has_landed_costs ? (
                   r.provisional_count > 0 ? (
-                    <span className="text-xs text-amber-700 flex items-center justify-end gap-1">
-                      <AlertTriangle size={11} /> Provisional
-                    </span>
+                    <Badge variant="warning" icon={<AlertTriangle size={11} />}>Provisional</Badge>
                   ) : (
-                    <span className="text-xs text-green-700">Final</span>
+                    <Badge variant="success">Final</Badge>
                   )
                 ) : (
                   <span className="text-xs text-gray-300">—</span>
@@ -164,7 +157,7 @@ export function CostEngine() {
               <div className="flex items-center gap-1">
                 <Link
                   to={`/shipments/${r.id}`}
-                  className="text-xs px-2 py-1 border border-gray-200 rounded-lg
+                  className="text-xs px-2 py-1 border border-gray-200 rounded-card
                              hover:bg-gray-50 text-gray-600"
                 >
                   Open
@@ -173,7 +166,7 @@ export function CostEngine() {
                   <Link
                     to={`/shipments/${r.id}/finalize`}
                     className="text-xs px-2 py-1 bg-amber-50 border border-amber-200
-                               rounded-lg text-amber-700 flex items-center gap-1"
+                               rounded-card text-amber-700 flex items-center gap-1"
                   >
                     <Lock size={10} /> Finalize
                   </Link>
@@ -181,7 +174,7 @@ export function CostEngine() {
               </div>
             </div>
           ))}
-        </div>
+        </Card>
       )}
 
       <div className="mt-4 flex items-start gap-2 text-xs text-gray-400">

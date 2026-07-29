@@ -6,12 +6,15 @@ import { fetchWarehousesList } from '../../api/income'
 import { recordQuickIncome } from '../../api/income'
 import { recordCompanyExpense } from '../../api/companyExpenses'
 import { fetchAccounts } from '../../api/accounts'
+import type { Account } from '../../api/accounts'
 import { recordCreditTransaction, openCreditAccount } from '../../api/credit'
 import { logProductionQuick } from '../../lib/productionLogging'
 import { SearchableSelect } from '../SearchableSelect'
 import { HawalaFields, emptyHawalaValue } from '../HawalaFields'
+import { Card } from '../ui/Card'
+import { Modal } from '../ui/Modal'
 import {
-  ShoppingCart, Banknote, Receipt, Wrench, X, Loader2, Check, Plus, Minus, Package, Trash2, Search,
+  ShoppingCart, Banknote, Receipt, Wrench, Loader2, Check, Plus, Minus, Package, Trash2, Search,
 } from 'lucide-react'
 
 interface Option { id: string; name: string }
@@ -25,16 +28,15 @@ function ModalShell({ title, icon: Icon, color, onClose, children, footer }: {
   children: React.ReactNode; footer: React.ReactNode
 }) {
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col shadow-xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
-          <h2 className="text-sm font-medium flex items-center gap-2"><Icon size={16} className={color} /> {title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-        </div>
-        <div className="px-5 py-4 space-y-3 overflow-y-auto">{children}</div>
-        <div className="px-5 py-4 border-t border-gray-100 shrink-0">{footer}</div>
-      </div>
-    </div>
+    <Modal
+      open
+      onClose={onClose}
+      maxWidth="max-w-md"
+      title={<span className="flex items-center gap-2"><Icon size={16} className={color} /> {title}</span>}
+      footer={footer}
+    >
+      {children}
+    </Modal>
   )
 }
 
@@ -42,7 +44,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
   const [customers, setCustomers] = useState<Option[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [products, setProducts] = useState<Product[]>([])
-  const [accounts, setAccounts] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [customerId, setCustomerId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
@@ -138,7 +140,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
 
   return (
     <ModalShell title="Record a sale" icon={ShoppingCart} color="text-blue-600" onClose={onClose} footer={
-      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-full bg-blue-600 text-white text-sm font-medium shadow-[var(--shadow-card-sm)] hover:brightness-95 transition disabled:opacity-50 flex items-center justify-center gap-2">
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {saving ? 'Saving…' : `Record sale · ${N(cartTotal)} ETB`}
       </button>
     }>
@@ -187,7 +189,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
       ))}
       <div className="flex gap-1.5">
         {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
-          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
+          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-full border capitalize transition-colors ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
         ))}
       </div>
       {method === 'credit' ? (
@@ -200,7 +202,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
       ) : (
         <select value={accountId} onChange={e => setAccountId(e.target.value)} className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white">
           <option value="">Which account received it?</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
       {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
@@ -211,7 +213,7 @@ function QuickSaleModal({ onClose, onDone }: { onClose: () => void; onDone: () =
 function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [customers, setCustomers] = useState<Option[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
-  const [accounts, setAccounts] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [customerId, setCustomerId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [amount, setAmount] = useState('')
@@ -263,7 +265,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
 
   return (
     <ModalShell title="Record a payment" icon={Banknote} color="text-green-600" onClose={onClose} footer={
-      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-full bg-green-600 text-white text-sm font-medium shadow-[var(--shadow-card-sm)] hover:brightness-95 transition disabled:opacity-50 flex items-center justify-center gap-2">
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {saving ? 'Saving…' : 'Record payment'}
       </button>
     }>
@@ -279,7 +281,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
       <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (ETB)" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
       <div className="flex gap-1.5">
         {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
-          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-green-600 text-white border-green-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
+          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-full border capitalize transition-colors ${method === m ? 'bg-green-600 text-white border-green-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
         ))}
       </div>
       {method === 'credit' ? (
@@ -290,7 +292,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
       ) : (
         <select value={accountId} onChange={e => setAccountId(e.target.value)} className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white">
           <option value="">Which account received it?</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
       {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
@@ -299,7 +301,7 @@ function QuickPaymentModal({ onClose, onDone }: { onClose: () => void; onDone: (
 }
 
 function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const [accounts, setAccounts] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [accountId, setAccountId] = useState('')
@@ -332,7 +334,7 @@ function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: (
 
   return (
     <ModalShell title="Record an expense" icon={Receipt} color="text-red-600" onClose={onClose} footer={
-      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-full bg-red-600 text-white text-sm font-medium shadow-[var(--shadow-card-sm)] hover:brightness-95 transition disabled:opacity-50 flex items-center justify-center gap-2">
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {saving ? 'Saving…' : 'Record expense'}
       </button>
     }>
@@ -341,12 +343,12 @@ function QuickExpenseModal({ onClose, onDone }: { onClose: () => void; onDone: (
       <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (ETB)" className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg" />
       <div className="flex gap-1.5">
         {(['cash', 'bank_transfer', 'mobile_money', 'hawala'] as const).map(m => (
-          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-lg border capitalize ${method === m ? 'bg-red-600 text-white border-red-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
+          <button key={m} onClick={() => setMethod(m)} className={`flex-1 py-1.5 text-[10px] rounded-full border capitalize transition-colors ${method === m ? 'bg-red-600 text-white border-red-600' : 'bg-white border-gray-200 text-gray-600'}`}>{m.replace('_', ' ')}</button>
         ))}
       </div>
       <select value={accountId} onChange={e => setAccountId(e.target.value)} className="w-full px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white">
         <option value="">Which account paid it?</option>
-        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
       </select>
       {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
     </ModalShell>
@@ -394,7 +396,7 @@ function QuickProductionModal({ onClose, onDone }: { onClose: () => void; onDone
 
   return (
     <ModalShell title="Record factory performance" icon={Wrench} color="text-amber-600" onClose={onClose} footer={
-      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-xl bg-amber-600 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+      <button onClick={submit} disabled={saving} className="w-full py-2.5 rounded-full bg-amber-600 text-white text-sm font-medium shadow-[var(--shadow-card-sm)] hover:brightness-95 transition disabled:opacity-50 flex items-center justify-center gap-2">
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {saving ? 'Saving…' : 'Log production'}
       </button>
     }>
@@ -433,13 +435,13 @@ export function QuickActions({ onChanged }: { onChanged: () => void }) {
   ]
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
+    <Card padded>
       <p className="text-xs font-medium text-gray-500 mb-3">Quick actions</p>
-      {success && <p className="text-xs text-green-700 bg-green-50 rounded-lg px-2.5 py-2 mb-3">{success}</p>}
+      {success && <p className="text-xs text-green-700 bg-green-50 rounded-card px-2.5 py-2 mb-3">{success}</p>}
       <div className="space-y-2">
         {actions.map(a => (
           <button key={a.key} onClick={() => setActive(a.key)}
-            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-white text-xs font-medium ${a.color} hover:opacity-90 transition-opacity`}>
+            className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-full text-white text-xs font-medium shadow-[var(--shadow-card-sm)] ${a.color} hover:brightness-95 transition`}>
             <a.icon size={14} /> {a.label}
           </button>
         ))}
@@ -449,6 +451,6 @@ export function QuickActions({ onChanged }: { onChanged: () => void }) {
       {active === 'payment' && <QuickPaymentModal onClose={() => setActive(null)} onDone={() => done('Payment recorded.')} />}
       {active === 'expense' && <QuickExpenseModal onClose={() => setActive(null)} onDone={() => done('Expense recorded.')} />}
       {active === 'production' && <QuickProductionModal onClose={() => setActive(null)} onDone={() => done('Production logged.')} />}
-    </div>
+    </Card>
   )
 }

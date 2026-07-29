@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
 import {
   getProformaInvoice, listPiItems, addPiItem, updatePiItem, deletePiItem, fetchLastPiItemForProduct,
 } from '../api/proformaInvoices'
@@ -424,15 +425,15 @@ export function ProformaInvoiceDetail() {
         <ArrowLeft size={12} /> Proforma invoices
       </Link>
 
-      <div className="mb-5">
-        <h1 className="text-lg font-medium">{pi.pi_number}</h1>
-        <p className="text-xs text-gray-400 mt-0.5">
+      <PageHeader
+        title={pi.pi_number}
+        subtitle={<>
           {pi.suppliers?.name ?? '—'} · {pi.incoterm} · {pi.port_of_loading ?? '—'} → {pi.port_of_discharge ?? '—'}
           {routed
             ? <> · routed via {pi.buyer_company?.name} → {pi.final_company?.name}{pi.markup_pct ? ` (+${pi.markup_pct}%)` : ''}</>
             : <> · {pi.final_company?.name ?? 'no company set'}</>}
-        </p>
-      </div>
+        </>}
+      />
 
       {error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -445,7 +446,7 @@ export function ProformaInvoiceDetail() {
         </div>
       )}
       {suggestionSummary && (
-        <div className="mb-4 bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="mb-4 bg-white border border-gray-200 rounded-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
             <p className="text-xs font-medium text-gray-600">
               Suggested layout — {suggestionSummary.containers.length} container(s) updated
@@ -486,11 +487,11 @@ export function ProformaInvoiceDetail() {
 
       <div className="flex items-center gap-1.5 mb-5 border-b border-gray-100 pb-3">
         <button onClick={() => setTab('items')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${tab === 'items' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+          className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full border transition-colors ${tab === 'items' ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
           <Package size={12} /> Line items ({items.length})
         </button>
         <button onClick={() => { setTab('containers'); suggestLayout(true) }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${tab === 'containers' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+          className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full border transition-colors ${tab === 'containers' ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
           <Boxes size={12} /> Containers ({containers.length})
         </button>
       </div>
@@ -500,23 +501,23 @@ export function ProformaInvoiceDetail() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-medium">Line items</p>
             <button onClick={openAddItem}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 transition-colors">
               <Plus size={13} /> Add item
             </button>
           </div>
 
           {items.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Package size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No line items yet</p>
               <p className="text-xs text-gray-400 mb-4">Add each product from the supplier's proforma invoice before splitting into containers.</p>
               <button onClick={openAddItem}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 transition-colors">
                 <Plus size={13} /> Add first item
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden overflow-x-auto">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
@@ -570,14 +571,14 @@ export function ProformaInvoiceDetail() {
               <button onClick={() => { setContainerForm({ ...EMPTY_CONTAINER }); setEditingContainerId(null); setError(null); setContainerOpen(true) }}
                 disabled={items.length === 0}
                 title={items.length === 0 ? 'Add line items first' : undefined}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors">
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-40 transition-colors">
                 <Plus size={13} /> New container
               </button>
             </div>
           </div>
 
           {containers.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Boxes size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No containers yet</p>
               <p className="text-xs text-gray-400">Split this order's line items across one or more containers — they'll all share one shipment, each still tracked independently.</p>
@@ -585,7 +586,7 @@ export function ProformaInvoiceDetail() {
           ) : (
             <div className="space-y-3">
               {containers.map(c => (
-                <div key={c.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div key={c.id} className="bg-white border border-gray-200 rounded-card overflow-hidden">
                   <div className="flex items-center justify-between px-4 pt-3 cursor-pointer"
                     onClick={() => setExpandedContainer(v => v === c.id ? null : c.id)}>
                     <div>
@@ -618,7 +619,7 @@ export function ProformaInvoiceDetail() {
       {/* Add/edit item modal */}
       {itemOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setItemOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl">
+          <div className="bg-white rounded-card w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="text-sm font-medium">{editingItemId ? 'Edit line item' : 'Add line item'}</h2>
               <button onClick={() => setItemOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
@@ -723,7 +724,7 @@ export function ProformaInvoiceDetail() {
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
               <button onClick={() => setItemOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={saveItem} disabled={savingItem}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
+                className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
                 {savingItem ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingItemId ? 'Save changes' : 'Add item'}</>}
               </button>
             </div>
@@ -734,7 +735,7 @@ export function ProformaInvoiceDetail() {
       {/* New container modal */}
       {containerOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setContainerOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+          <div className="bg-white rounded-card w-full max-w-md shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="text-sm font-medium">{editingContainerId ? 'Edit container' : 'New container'}</h2>
               <button onClick={() => setContainerOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
@@ -770,7 +771,7 @@ export function ProformaInvoiceDetail() {
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
               <button onClick={() => setContainerOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
               <button onClick={saveContainer} disabled={savingContainer}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
+                className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
                 {savingContainer ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingContainerId ? 'Save changes' : 'Create'}</>}
               </button>
             </div>

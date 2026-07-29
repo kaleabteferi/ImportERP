@@ -2,11 +2,16 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Plus, FileText, X, Check, Loader2, Search, AlertOctagon } from 'lucide-react'
+import { Plus, FileText, Check, Loader2, Search, AlertOctagon } from 'lucide-react'
 import { usePageState } from '../lib/pageState'
 import { nextPiNumber, createProformaInvoice } from '../api/proformaInvoices'
 import { listOpenShortageNotes, resolveShortageNote } from '../api/shortageNotes'
 import type { ShortageNote } from '../api/shortageNotes'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 interface Row {
   id: string
@@ -23,10 +28,15 @@ interface Row {
 interface Supplier { id: string; name: string }
 interface Company { id: string; name: string }
 
-const STATUS: Record<string, { label: string; cls: string }> = {
-  DRAFT:     { label: 'Draft',     cls: 'bg-gray-100 text-gray-600' },
-  CONFIRMED: { label: 'Confirmed', cls: 'bg-blue-50 text-blue-700' },
-  COMPLETED: { label: 'Completed', cls: 'bg-green-50 text-green-700' },
+const STATUS: Record<string, { label: string; variant: 'neutral' | 'info' | 'success' }> = {
+  DRAFT:     { label: 'Draft',     variant: 'neutral' },
+  CONFIRMED: { label: 'Confirmed', variant: 'info' },
+  COMPLETED: { label: 'Completed', variant: 'success' },
+}
+// A ledger feel distinct from the app's usual stacked-card lists — a
+// status-colored rail down the left of each row.
+const STATUS_RAIL: Record<string, string> = {
+  DRAFT: 'border-l-gray-300', CONFIRMED: 'border-l-blue-400', COMPLETED: 'border-l-green-400',
 }
 
 const EMPTY_FORM = {
@@ -110,20 +120,15 @@ export function ProformaInvoices() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Proforma Invoices</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {rows.length} order{rows.length === 1 ? '' : 's'} · split each into containers below
-          </p>
-        </div>
-        <button
-          onClick={() => { setOpen(true); setError(null); setForm({ ...EMPTY_FORM }); setShortages([]) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> New proforma invoice
-        </button>
-      </div>
+      <PageHeader
+        title="Proforma Invoices"
+        subtitle={`${rows.length} order${rows.length === 1 ? '' : 's'} · split each into containers below`}
+        actions={
+          <Button icon={<Plus size={13} />} onClick={() => { setOpen(true); setError(null); setForm({ ...EMPTY_FORM }); setShortages([]) }}>
+            New proforma invoice
+          </Button>
+        }
+      />
 
       {!loading && rows.length > 0 && (
         <div className="mb-4 relative w-64">
@@ -147,15 +152,14 @@ export function ProformaInvoices() {
           <p className="text-xs text-gray-400 mb-4">
             Start here before creating containers/shipments — a PI can now split across multiple containers.
           </p>
-          <button onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
-            <Plus size={13} /> New proforma invoice
-          </button>
+          <Button icon={<Plus size={13} />} onClick={() => setOpen(true)} className="mx-auto">
+            New proforma invoice
+          </Button>
         </div>
       )}
 
       {!loading && filtered.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           <div className="grid grid-cols-[1.3fr_1fr_1fr_1fr_0.8fr_auto] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <div>PI number</div>
             <div>Supplier</div>
@@ -168,7 +172,8 @@ export function ProformaInvoices() {
             <Link
               key={r.id}
               to={`/proforma-invoices/${r.id}`}
-              className={`grid grid-cols-[1.3fr_1fr_1fr_1fr_0.8fr_auto] gap-3 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}
+              className={`stagger-row grid grid-cols-[1.3fr_1fr_1fr_1fr_0.8fr_auto] gap-3 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors border-l-[3px] ${STATUS_RAIL[r.status] ?? 'border-l-gray-200'} ${i % 2 === 1 ? 'bg-gray-50/40' : ''} ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
             >
               <div className="text-sm font-medium">{r.pi_number}</div>
               <div className="text-xs text-gray-500">{r.suppliers?.name ?? '—'}</div>
@@ -180,27 +185,26 @@ export function ProformaInvoices() {
               <div className="text-xs text-gray-500">{r.issue_date}</div>
               <div className="text-xs text-gray-500">{r.containers?.length ?? 0}</div>
               <div>
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${STATUS[r.status]?.cls ?? STATUS.DRAFT.cls}`}>
+                <Badge variant={STATUS[r.status]?.variant ?? 'neutral'}>
                   {STATUS[r.status]?.label ?? r.status}
-                </span>
+                </Badge>
               </div>
             </Link>
           ))}
-        </div>
+        </Card>
       )}
 
-      {open && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New proforma invoice</h2>
-              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-4">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="New proforma invoice"
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button loading={saving} icon={<Check size={12} />} onClick={save} className="min-w-[130px]">
+            Create & continue
+          </Button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Supplier <span className="text-red-400">*</span></label>
                 <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
@@ -315,18 +319,7 @@ export function ProformaInvoices() {
               {error && (
                 <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
               )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={save} disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[130px] justify-center">
-                {saving ? <><Loader2 size={12} className="animate-spin" /> Creating…</> : <><Check size={12} /> Create & continue</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

@@ -1,36 +1,40 @@
 import { BookOpen, AlertTriangle, CheckCircle2, HelpCircle, XCircle } from 'lucide-react'
 import { PAYE_BRACKETS, PENSION_EMPLOYEE_RATE, PENSION_EMPLOYER_RATE, OT_MULTIPLIERS, OT_LABELS, MONTHLY_HOURS_DIVISOR } from '../lib/payrollEngine'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET').format(n)
 
 function ConfidenceBadge({ level }: { level: 'high' | 'medium' | 'unconfirmed' }) {
   const map = {
-    high: { icon: CheckCircle2, cls: 'bg-green-50 text-green-700', label: 'Confirmed' },
-    medium: { icon: HelpCircle, cls: 'bg-amber-50 text-amber-700', label: 'Medium confidence' },
-    unconfirmed: { icon: XCircle, cls: 'bg-red-50 text-red-700', label: 'Unconfirmed — verify' },
+    high: { icon: CheckCircle2, variant: 'success' as const, label: 'Confirmed' },
+    medium: { icon: HelpCircle, variant: 'warning' as const, label: 'Medium confidence' },
+    unconfirmed: { icon: XCircle, variant: 'danger' as const, label: 'Unconfirmed — verify' },
   } as const
-  const { icon: Icon, cls, label } = map[level]
-  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}><Icon size={11} /> {label}</span>
+  const { icon: Icon, variant, label } = map[level]
+  return <Badge variant={variant} icon={<Icon size={11} />}>{label}</Badge>
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
+    <Card padded>
       <h2 className="text-sm font-medium mb-3">{title}</h2>
       <div className="space-y-3 text-sm text-gray-700">{children}</div>
-    </div>
+    </Card>
   )
 }
 
 export function HrNotes() {
   return (
     <div className="p-5 max-w-3xl mx-auto space-y-4">
-      <div className="mb-2">
-        <h1 className="text-lg font-medium flex items-center gap-2"><BookOpen size={18} /> HR Notes — Ethiopian payroll rules</h1>
-        <p className="text-xs text-gray-400 mt-0.5">What this app's payroll calculations are actually based on, and how sure we are about each figure</p>
-      </div>
+      <PageHeader
+        icon={<BookOpen size={18} />}
+        title="HR Notes — Ethiopian payroll rules"
+        subtitle="What this app's payroll calculations are actually based on, and how sure we are about each figure"
+      />
 
-      <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+      <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-card text-xs text-amber-800">
         <AlertTriangle size={15} className="shrink-0 mt-0.5" />
         <p>
           This page documents the specific rates and rules the Payroll feature calculates with, researched against

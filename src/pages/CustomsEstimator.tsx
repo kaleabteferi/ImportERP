@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { Calculator, Info, AlertTriangle } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
 
@@ -111,14 +113,11 @@ export function CustomsEstimator() {
 
   return (
     <div className="p-5 max-w-3xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2">
-          <Calculator size={18} /> Customs Cost Estimator
-        </h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Estimate duty, VAT, surtax, and withholding tax before a shipment clears customs
-        </p>
-      </div>
+      <PageHeader
+        icon={<Calculator size={18} />}
+        title="Customs Cost Estimator"
+        subtitle="Estimate duty, VAT, surtax, and withholding tax before a shipment clears customs"
+      />
 
       <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200
                       rounded-xl text-xs text-amber-800 mb-4">
@@ -134,7 +133,7 @@ export function CustomsEstimator() {
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
+      <Card className="mb-4">
         <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Shipment value</p>
         </div>
@@ -191,7 +190,7 @@ export function CustomsEstimator() {
             </div>
             <div className="space-y-1.5">
               {uplift.map((row, i) => (
-                <div key={i} className="flex items-center gap-2">
+                <div key={i} className="stagger-row flex items-center gap-2" style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                   <input value={row.label} onChange={e => updateUplift(i, { label: e.target.value })}
                     className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg bg-white" placeholder="Label" />
                   <input type="number" min="0" step="0.5" value={row.pct} onChange={e => updateUplift(i, { pct: parseFloat(e.target.value) || 0 })}
@@ -202,9 +201,9 @@ export function CustomsEstimator() {
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
+      <Card className="mb-4">
         <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Tax rates</p>
         </div>
@@ -234,9 +233,9 @@ export function CustomsEstimator() {
             standard statutory rates.
           </p>
         </div>
-      </div>
+      </Card>
 
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <Card>
         <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Estimated breakdown</p>
         </div>
@@ -268,7 +267,7 @@ export function CustomsEstimator() {
             )}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

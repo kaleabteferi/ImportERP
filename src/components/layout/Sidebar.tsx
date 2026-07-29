@@ -21,22 +21,23 @@ export function Sidebar() {
     .filter(group => group.items.length > 0)
   return (
     <aside style={{
-      width: '200px', height: '100vh', background: 'var(--color-background-primary)',
-      borderRight: '0.5px solid var(--color-border-tertiary)',
+      width: '208px', height: '100vh', background: 'var(--color-panel-dark)',
+      color: 'var(--color-panel-dark-foreground)',
+      borderRight: '1px solid rgba(255,255,255,0.06)',
       display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto'
     }}>
-      <div style={{ padding: '16px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
-        <div style={{ fontSize: '13px', fontWeight: 500 }}>ImportERP</div>
-        <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+      <div style={{ padding: '18px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '-0.01em' }}>ImportERP</div>
+        <div style={{ fontSize: '11px', color: 'rgba(245,246,242,0.45)', marginTop: '2px' }}>
           Addis Ababa · ETB/USD
         </div>
       </div>
-      <nav style={{ padding: '8px', flex: 1 }}>
-        {visibleLinks.map(group => (
-          <div key={group.section}>
+      <nav style={{ padding: '10px', flex: 1 }}>
+        {visibleLinks.map((group, gi) => (
+          <div key={group.section} className="stagger-row" style={{ '--stagger-index': gi } as React.CSSProperties}>
             <div style={{
-              fontSize: '10px', color: 'var(--color-text-tertiary)',
-              padding: '10px 8px 4px', textTransform: 'uppercase', letterSpacing: '.05em'
+              fontSize: '10px', color: 'rgba(245,246,242,0.35)',
+              padding: '12px 8px 5px', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600,
             }}>
               {group.section}
             </div>
@@ -46,12 +47,13 @@ export function Sidebar() {
                 to={link.to}
                 end={link.to === '/'}
                 style={({ isActive }) => ({
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '7px 8px', borderRadius: '6px', marginBottom: '1px',
+                  display: 'flex', alignItems: 'center', gap: '9px',
+                  padding: '7px 10px', borderRadius: '9999px', marginBottom: '2px',
                   fontSize: '12px', textDecoration: 'none',
-                  background: isActive ? 'var(--color-background-info)' : 'transparent',
-                  color: isActive ? 'var(--color-text-info)' : 'var(--color-text-secondary)',
-                  fontWeight: isActive ? 500 : 400,
+                  background: isActive ? 'var(--color-accent)' : 'transparent',
+                  color: isActive ? 'var(--color-accent-foreground)' : 'rgba(245,246,242,0.75)',
+                  fontWeight: isActive ? 600 : 400,
+                  transition: 'background-color 150ms ease, color 150ms ease',
                 })}
               >
                 <link.icon size={15} strokeWidth={1.5} />
@@ -61,17 +63,17 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <div style={{ padding: '10px 12px', borderTop: '0.5px solid var(--color-border-tertiary)' }}>
-        <div style={{ fontSize: '12px', fontWeight: 500 }}>{profile?.full_name ?? 'Unnamed'}</div>
-        <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginBottom: '8px' }}>
+      <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ fontSize: '12px', fontWeight: 600 }}>{profile?.full_name ?? 'Unnamed'}</div>
+        <div style={{ fontSize: '10px', color: 'rgba(245,246,242,0.4)', marginBottom: '9px' }}>
           {role ? ROLE_LABELS[role] : profile?.role}
         </div>
         <button
           onClick={() => setShowChangePin(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
-            color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            marginBottom: '8px',
+            color: 'rgba(245,246,242,0.55)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            marginBottom: '8px', transition: 'color 150ms ease',
           }}
         >
           <KeyRound size={13} strokeWidth={1.5} /> Change PIN
@@ -80,7 +82,8 @@ export function Sidebar() {
           onClick={signOut}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
-            color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            color: 'rgba(245,246,242,0.55)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            transition: 'color 150ms ease',
           }}
         >
           <LogOut size={13} strokeWidth={1.5} /> Sign out

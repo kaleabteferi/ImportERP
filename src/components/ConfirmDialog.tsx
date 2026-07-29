@@ -1,4 +1,5 @@
 import { AlertTriangle, X } from 'lucide-react'
+import { Button } from './ui/Button'
 
 interface Props {
   open: boolean
@@ -17,7 +18,7 @@ export function ConfirmDialog({ open, title, message, danger, onConfirm, onClose
                  justify-center p-4"
       onClick={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-5">
+      <div className="bg-white rounded-card w-full max-w-sm shadow-xl p-5">
         <div className="flex items-start gap-3 mb-4">
           {danger && (
             <div className="w-9 h-9 rounded-full bg-red-100 flex items-center
@@ -34,23 +35,10 @@ export function ConfirmDialog({ open, title, message, danger, onConfirm, onClose
           </button>
         </div>
         <div className="flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs border border-gray-200 rounded-lg
-                       hover:bg-gray-50 transition-colors text-gray-600"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => { onConfirm(); onClose() }}
-            className={`px-4 py-2 text-xs text-white rounded-lg
-                        transition-colors
-              ${danger
-                ? 'bg-red-600 hover:bg-red-700'
-                : 'bg-blue-600 hover:bg-blue-700'}`}
-          >
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={() => { onConfirm(); onClose() }}>
             {danger ? 'Yes, delete' : 'Confirm'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

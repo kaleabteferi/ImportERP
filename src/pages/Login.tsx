@@ -30,8 +30,8 @@ export function Login() {
   if (signedUp) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="max-w-sm w-full bg-white border border-gray-200 rounded-xl p-6 text-center">
-          <Lock size={24} className="mx-auto text-blue-600 mb-3" />
+        <div className="max-w-sm w-full bg-white border border-gray-200 rounded-card p-6 text-center">
+          <Lock size={24} className="mx-auto text-accent-foreground mb-3" />
           <p className="text-sm font-medium mb-1">Account created</p>
           <p className="text-xs text-gray-500">
             An admin needs to assign your role before you can access the system. Check back once they've done so.
@@ -43,9 +43,9 @@ export function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-sm w-full bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+      <div className="max-w-sm w-full bg-white border border-gray-200 rounded-card p-6 space-y-3">
         <div className="text-center mb-2">
-          <Lock size={20} className="mx-auto text-blue-600 mb-2" />
+          <Lock size={20} className="mx-auto text-accent-foreground mb-2" />
           <h1 className="text-base font-medium">{mode === 'signin' ? 'Sign in' : 'Create account'}</h1>
         </div>
         {error && <p className="text-xs text-red-600 text-center">{error}</p>}
@@ -59,7 +59,7 @@ export function Login() {
           onKeyDown={e => e.key === 'Enter' && submit()}
           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg" />
         <button onClick={submit} disabled={loading}
-          className="w-full px-3 py-2 text-sm rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+          className="w-full px-3 py-2 text-sm rounded-full bg-accent text-accent-foreground font-medium disabled:opacity-50 flex items-center justify-center gap-2">
           {loading && <Loader2 size={14} className="animate-spin" />}
           {mode === 'signin' ? 'Sign in' : 'Sign up'}
         </button>

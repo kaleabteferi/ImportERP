@@ -19,6 +19,11 @@ import {
   Wallet, ChevronLeft,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 type Direction = 'in' | 'out'
 interface Txn {
@@ -98,7 +103,7 @@ function expenseReasonLabel(category: string): string {
 }
 
 function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone, onCancel }: {
-  customers: Option[]; warehouses: Option[]; creditAccounts: CreditAccount[]; accounts: Option[]
+  customers: Option[]; warehouses: Option[]; creditAccounts: CreditAccount[]; accounts: Account[]
   onDone: () => void; onCancel: () => void
 }) {
   // "Is this money against something already registered (a credit balance
@@ -122,6 +127,13 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
   const [error, setError] = useState<string | null>(null)
 
   const customerCreditAccounts = creditAccounts.filter(c => c.customer_id === customerId)
+  // Sales/credit-repayment amounts are always ETB (sales_payments.amount_etb,
+  // credit_transactions.amount) — picking a non-ETB account would silently
+  // never count toward that account's balance.
+  const eligibleAccounts = useMemo(() => accounts.filter(a => a.currency === 'ETB'), [accounts])
+  useEffect(() => {
+    if (accountId && !eligibleAccounts.some(a => a.id === accountId)) setAccountId('')
+  }, [eligibleAccounts, accountId])
 
   useEffect(() => {
     if (mode !== 'credit_repayment' || !creditAccountId) { setOutstandingOrders([]); return }
@@ -183,7 +195,7 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-green-700">Add income</p>
         <div className="flex gap-1">
@@ -264,8 +276,8 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
       {(mode === 'credit_repayment' || method !== 'credit') && (
         <select value={accountId} onChange={e => setAccountId(e.target.value)}
           className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-          <option value="">Which account received it? *</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          <option value="">{eligibleAccounts.length > 0 ? 'Which ETB account received it? *' : 'No ETB account set up yet'}</option>
+          {eligibleAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
 
@@ -277,13 +289,12 @@ function AddIncomeForm({ customers, warehouses, creditAccounts, accounts, onDone
         <ShieldAlert size={12} className="text-amber-500" /> Flag as sensitive
       </label>
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : mode === 'credit_repayment' ? 'Record repayment' : 'Record income'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} className="!bg-green-600 !text-white hover:!brightness-95" onClick={submit}>
+          {mode === 'credit_repayment' ? 'Record repayment' : 'Record income'}
+        </Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -301,7 +312,7 @@ interface ShipmentCostPayable {
 }
 
 function AddExpenseForm({ companies, employees, accounts, suppliers, onDone, onCancel }: {
-  companies: Option[]; employees: Option[]; accounts: Option[]; suppliers: Option[]; onDone: () => void; onCancel: () => void
+  companies: Option[]; employees: Option[]; accounts: Account[]; suppliers: Option[]; onDone: () => void; onCancel: () => void
 }) {
   // "Is this a brand-new expense, paying down a payable we've already
   // registered for a supplier (goods debt), or settling one of the real
@@ -340,6 +351,24 @@ function AddExpenseForm({ companies, employees, accounts, suppliers, onDone, onC
     .map(([id, number]) => ({ id, number })).sort((a, b) => b.number.localeCompare(a.number))
   const shipmentCostsForSelected = shipmentCosts.filter(c => c.shipmentId === costShipmentId)
   const selectedShipmentCost = shipmentCostsForSelected.find(c => c.id === shipmentCostId) ?? null
+
+  // Only offer accounts whose currency matches what actually leaves them —
+  // a hawala payment debits the ETB account that paid the dealer, anything
+  // else debits an account in the expense/payable's own currency. A
+  // mismatched pick would silently never count toward that account's
+  // balance (see fetchAccountBalances / MoneyTracking's own aggregation).
+  const requiredCurrency = isHawala
+    ? 'ETB'
+    : mode === 'pay_payable' ? (selectedPayable?.currency ?? null)
+    : mode === 'pay_shipment_cost' ? (selectedShipmentCost?.currency ?? null)
+    : currency
+  const eligibleAccounts = useMemo(
+    () => requiredCurrency ? accounts.filter(a => a.currency === requiredCurrency) : accounts,
+    [accounts, requiredCurrency],
+  )
+  useEffect(() => {
+    if (accountId && !eligibleAccounts.some(a => a.id === accountId)) setAccountId('')
+  }, [eligibleAccounts, accountId])
 
   useEffect(() => {
     if (mode !== 'pay_payable') return
@@ -461,7 +490,7 @@ function AddExpenseForm({ companies, employees, accounts, suppliers, onDone, onC
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-red-700">Add expense</p>
         <div className="flex gap-1">
@@ -577,8 +606,10 @@ function AddExpenseForm({ companies, employees, accounts, suppliers, onDone, onC
       {method !== 'credit' && (
         <select value={accountId} onChange={e => setAccountId(e.target.value)}
           className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-          <option value="">Which account paid it? *</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          <option value="">
+            {eligibleAccounts.length > 0 ? `Which ${requiredCurrency ?? ''} account paid it? *` : `No ${requiredCurrency ?? ''} account set up yet`}
+          </option>
+          {eligibleAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
       {isHawala && <HawalaFields value={hawala} onChange={setHawala} targetCurrency={currency} />}
@@ -589,13 +620,12 @@ function AddExpenseForm({ companies, employees, accounts, suppliers, onDone, onC
         <ShieldAlert size={12} className="text-amber-500" /> Flag as sensitive
       </label>
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-red-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : mode === 'pay_payable' || mode === 'pay_shipment_cost' ? 'Record payment' : 'Record expense'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} className="!bg-red-600 !text-white hover:!brightness-95" onClick={submit}>
+          {mode === 'pay_payable' || mode === 'pay_shipment_cost' ? 'Record payment' : 'Record expense'}
+        </Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -796,7 +826,7 @@ export function MoneyTracking() {
           // the native `amount`/`currency`, not `amount_etb` — a shipment
           // expense paid in USD should show and count as USD, the same way
           // a supplier payment already does, not get silently ETB-converted.
-          supabase.from('shipment_expenses').select('id, description, amount, amount_etb, currency, payment_method, sensitive_flag, notes, expense_date, vendor_name, account_id, paid_at, category').eq('is_paid', true).order('paid_at', { ascending: false }).limit(200),
+          supabase.from('shipment_expenses').select('id, description, amount, amount_etb, currency, payment_method, hawala_etb_amount, sensitive_flag, notes, expense_date, vendor_name, account_id, paid_at, category').eq('is_paid', true).order('paid_at', { ascending: false }).limit(200),
           fetchCreditAccounts(),
           fetchCustomers(),
           fetchWarehousesList(),
@@ -865,9 +895,17 @@ export function MoneyTracking() {
       const shipExpTxns: Txn[] = (shipExpRes.data ?? []).map((r: any) => {
         const amt = Number(r.amount ?? 0)
         const currency = r.currency ?? 'ETB'
+        // Same hawala carve-out as supplier payments: a hawala-paid expense
+        // debits the ETB account that paid the dealer, not the expense's own
+        // (often foreign) currency.
+        const isHawala = r.payment_method === 'hawala' && r.hawala_etb_amount != null
+        const acctCurrency = accountCurrencyById.get(r.account_id)
+        const accountAmount = isHawala
+          ? (acctCurrency === 'ETB' ? Number(r.hawala_etb_amount) : null)
+          : (acctCurrency === currency ? amt : null)
         return {
           id: `shipexp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: amt, currency, method: r.payment_method ?? 'cash', date: r.paid_at ?? r.expense_date, sensitive: !!r.sensitive_flag, notes: r.notes ?? null, source: 'shipment_expense', accountName: accountNameById.get(r.account_id) ?? null,
-          accountId: r.account_id ?? null, accountAmount: accountCurrencyById.get(r.account_id) === currency ? amt : null,
+          accountId: r.account_id ?? null, accountAmount,
           detail: r.vendor_name ? r.description : null, category: r.category ?? null,
         } as Txn
       })
@@ -1039,22 +1077,17 @@ export function MoneyTracking() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Banknote size={18} /> Money tracking</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Every payment in and out — who, how much, how, and why</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setActiveForm(activeForm === 'income' ? null : 'income')}
-            className="px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white flex items-center gap-1">
-            {activeForm === 'income' ? <X size={12} /> : <Plus size={12} />} Add income
-          </button>
-          <button onClick={() => setActiveForm(activeForm === 'expense' ? null : 'expense')}
-            className="px-3 py-1.5 text-xs rounded-lg bg-red-600 text-white flex items-center gap-1">
-            {activeForm === 'expense' ? <X size={12} /> : <Plus size={12} />} Add expense
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Banknote size={18} />}
+        title="Money tracking"
+        subtitle="Every payment in and out — who, how much, how, and why"
+        actions={<>
+          <Button className="!bg-green-600 !text-white hover:!brightness-95" icon={activeForm === 'income' ? <X size={12} /> : <Plus size={12} />}
+            onClick={() => setActiveForm(activeForm === 'income' ? null : 'income')}>Add income</Button>
+          <Button className="!bg-red-600 !text-white hover:!brightness-95" icon={activeForm === 'expense' ? <X size={12} /> : <Plus size={12} />}
+            onClick={() => setActiveForm(activeForm === 'expense' ? null : 'expense')}>Add expense</Button>
+        </>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -1074,24 +1107,11 @@ export function MoneyTracking() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <div className="bg-gray-50 rounded-xl px-4 py-3">
-              <p className="text-xs text-gray-400">Received (ETB)</p>
-              <p className="text-xl font-medium font-mono text-green-700">{N(totals.inEtb)}</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl px-4 py-3">
-              <p className="text-xs text-gray-400">Paid out</p>
-              <p className="text-xl font-medium font-mono text-red-700">
-                {N(totals.outEtb)} ETB{totals.outUsd > 0 && ` · $${N(totals.outUsd)}`}{totals.outCny > 0 && ` · ¥${N(totals.outCny)}`}
-              </p>
-            </div>
-            <div className="bg-gray-50 rounded-xl px-4 py-3">
-              <p className="text-xs text-gray-400">Credit outstanding</p>
-              <p className="text-xl font-medium font-mono text-amber-700">{N(totals.outstandingCredit)}</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl px-4 py-3">
-              <p className="text-xs text-gray-400">Sensitive flagged</p>
-              <p className="text-xl font-medium font-mono text-amber-700">{totals.sensitiveCount}</p>
-            </div>
+            <StatCard label="Received (ETB)" value={<span className="text-green-700">{N(totals.inEtb)}</span>} />
+            <StatCard label="Paid out" value={<span className="text-red-700">{N(totals.outEtb)} ETB</span>}
+              hint={[totals.outUsd > 0 ? `$${N(totals.outUsd)}` : null, totals.outCny > 0 ? `¥${N(totals.outCny)}` : null].filter(Boolean).join(' · ') || undefined} />
+            <StatCard label="Credit outstanding" value={<span className="text-amber-700">{N(totals.outstandingCredit)}</span>} />
+            <StatCard label="Sensitive flagged" value={<span className="text-amber-700">{totals.sensitiveCount}</span>} />
           </div>
 
           {accounts.length > 0 && (
@@ -1103,8 +1123,8 @@ export function MoneyTracking() {
                   const selected = selectedAccountId === a.id
                   return (
                     <button key={a.id} onClick={() => setSelectedAccountId(selected ? null : a.id)}
-                      className={`shrink-0 w-44 text-left px-3.5 py-3 rounded-xl border transition-colors ${
-                        selected ? 'border-blue-400 bg-blue-50/60 ring-1 ring-blue-400' : 'border-gray-200 bg-white hover:border-gray-300'
+                      className={`shrink-0 w-44 text-left px-3.5 py-3 rounded-card border transition-colors shadow-[var(--shadow-card-sm)] ${
+                        selected ? 'border-accent bg-accent/10 ring-1 ring-accent' : 'border-gray-200 bg-white hover:border-gray-300'
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-2">
@@ -1125,7 +1145,7 @@ export function MoneyTracking() {
           )}
 
           {anomalies.length > 0 && (
-            <div className="bg-white border border-amber-200 rounded-xl overflow-hidden mb-5">
+            <div className="bg-white border border-amber-200 rounded-card overflow-hidden mb-5">
               <button onClick={() => setInsightsOpen(v => !v)}
                 className="w-full flex items-center justify-between px-4 py-3 text-left">
                 <span className="flex items-center gap-2 text-sm font-medium text-amber-800">
@@ -1156,7 +1176,7 @@ export function MoneyTracking() {
             </div>
           )}
 
-          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+          <div className="bg-white border border-gray-200 rounded-card p-4 mb-5">
             <p className="text-xs font-medium text-gray-500 mb-3">Net cash, last 14 days</p>
             <div className="flex items-end gap-1.5" style={{ height: 64 }}>
               {(() => {
@@ -1179,7 +1199,7 @@ export function MoneyTracking() {
                 className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2">
                 <ChevronLeft size={13} /> All transactions
               </button>
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+              <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
                 <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{selectedAccount.name}</p>
@@ -1270,7 +1290,7 @@ export function MoneyTracking() {
               <div className="flex gap-1">
                 {(['all', 'in', 'out'] as const).map(d => (
                   <button key={d} onClick={() => setDirection(d)}
-                    className={`px-2.5 py-1 text-xs rounded-lg border capitalize ${direction === d ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200'}`}>
+                    className={`px-2.5 py-1 text-xs rounded-lg border capitalize ${direction === d ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200'}`}>
                     {d === 'all' ? 'All' : d === 'in' ? 'In' : 'Out'}
                   </button>
                 ))}
@@ -1283,19 +1303,21 @@ export function MoneyTracking() {
             </div>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
             {filtered.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No transactions found. Use "Add income" or "Add expense" above to record one.</p>
             ) : filtered.slice(0, 50).map((t, i, arr) => (
-              <div key={t.id} className={i < arr.length - 1 ? 'border-b border-gray-50' : ''}>
+              <div key={t.id} className={`border-l-[3px] ${t.direction === 'in' ? 'border-l-green-400' : 'border-l-red-400'} ${i < arr.length - 1 ? 'border-b border-gray-50' : ''}`}>
                 <div className="flex items-center gap-3 px-4 py-2.5 text-xs cursor-pointer hover:bg-gray-50/70"
                   onClick={() => toggleTxnExpand(t)}>
                   {expandedTxnId === t.id ? <ChevronDown size={12} className="text-gray-300 shrink-0" /> : <ChevronRight size={12} className="text-gray-300 shrink-0" />}
-                  {t.direction === 'in' ? <ArrowDownLeft size={14} className="text-green-600 shrink-0" /> : <ArrowUpRight size={14} className="text-red-500 shrink-0" />}
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${t.direction === 'in' ? 'bg-green-50' : 'bg-red-50'}`}>
+                    {t.direction === 'in' ? <ArrowDownLeft size={12} className="text-green-600" /> : <ArrowUpRight size={12} className="text-red-500" />}
+                  </span>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate flex items-center gap-1.5">
                       {t.party}
-                      {t.sensitive && <ShieldAlert size={11} className="text-amber-500 shrink-0" aria-label="Sensitive" />}
+                      {t.sensitive && <Badge variant="warning" icon={<ShieldAlert size={9} />}>Sensitive</Badge>}
                       {anomaliesByTxnId.has(t.id) && (
                         <Sparkles size={11} className={`shrink-0 ${anomaliesByTxnId.get(t.id)!.some(a => a.severity === 'high') ? 'text-red-500' : 'text-amber-500'}`}
                           aria-label="Flagged as unusual" />
@@ -1339,7 +1361,7 @@ export function MoneyTracking() {
               Record a repayment <ChevronRight size={12} />
             </Link>
           </div>
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
             {credit.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No open credit accounts.</p>
             ) : credit.map((c, i, arr) => (

@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Plus, Building2, Phone, Mail, X, Check, Loader2, ClipboardPaste } from 'lucide-react'
+import { Plus, Building2, Phone, Mail, Check, Loader2, ClipboardPaste } from 'lucide-react'
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
 import { BulkActionBar } from '../components/BulkActionBar'
 import { SortHeader } from '../components/SortHeader'
 import { useSort } from '../lib/useSort'
 import { useBulkSelect } from '../lib/useBulkSelect'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', ETB: '' }
@@ -182,32 +187,14 @@ export function Suppliers() {
   return (
     <div className="p-5 max-w-5xl mx-auto">
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Suppliers</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}
-            {totalOwed.length > 0 && ` · ${totalOwed.map(o => `${CURRENCY_SYMBOL[o.currency] ?? ''}${N(o.amount)}${CURRENCY_SYMBOL[o.currency] ? '' : ` ${o.currency}`}`).join(' · ')} owed`}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowImport(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600
-                       text-xs rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <ClipboardPaste size={13} /> Bulk import
-          </button>
-          <button
-            onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                       text-xs rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={13} /> Add supplier
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Suppliers"
+        subtitle={`${suppliers.length} supplier${suppliers.length !== 1 ? 's' : ''}${totalOwed.length > 0 ? ` · ${totalOwed.map(o => `${CURRENCY_SYMBOL[o.currency] ?? ''}${N(o.amount)}${CURRENCY_SYMBOL[o.currency] ? '' : ` ${o.currency}`}`).join(' · ')} owed` : ''}`}
+        actions={<>
+          <Button variant="secondary" icon={<ClipboardPaste size={13} />} onClick={() => setShowImport(true)}>Bulk import</Button>
+          <Button icon={<Plus size={13} />} onClick={openNew}>Add supplier</Button>
+        </>}
+      />
 
       {error && (
         <div className="px-3 py-2 mb-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -242,11 +229,7 @@ export function Suppliers() {
           <p className="text-xs text-gray-400 mb-4">
             Add your first supplier to start creating shipments.
           </p>
-          <button onClick={openNew}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
-                             text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
-            <Plus size={13} /> Add first supplier
-          </button>
+          <Button icon={<Plus size={13} />} onClick={openNew} className="mx-auto">Add first supplier</Button>
         </div>
       )}
 
@@ -254,7 +237,7 @@ export function Suppliers() {
       {!loading && suppliers.length > 0 && (
         <>
           <BulkActionBar count={count} itemLabel="supplier" onClear={clear} onDelete={bulkDelete} />
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
           {/* Table header */}
           <div className="grid grid-cols-[24px_2fr_1fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100
@@ -272,10 +255,11 @@ export function Suppliers() {
           {sorted.map((sup, i) => (
             <div
               key={sup.id}
-              className={`grid grid-cols-[24px_2fr_1fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-3
+              className={`stagger-row grid grid-cols-[24px_2fr_1fr_1fr_1.5fr_auto_80px_auto] gap-3 px-4 py-3
                           items-center text-sm
                           ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''}
                           ${selected.has(sup.id) ? 'bg-blue-50/40' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
             >
               <input type="checkbox" checked={selected.has(sup.id)} onChange={() => toggle(sup.id)} className="cursor-pointer" />
               {/* Name */}
@@ -303,12 +287,7 @@ export function Suppliers() {
 
               {/* Currency */}
               <div>
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                  ${sup.currency === 'USD'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'bg-green-50 text-green-700'}`}>
-                  {sup.currency}
-                </span>
+                <Badge variant={sup.currency === 'USD' ? 'info' : 'success'}>{sup.currency}</Badge>
               </div>
 
               {/* Owed */}
@@ -327,12 +306,7 @@ export function Suppliers() {
 
               {/* Status */}
               <div>
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                  ${sup.is_active
-                    ? 'bg-green-50 text-green-700'
-                    : 'bg-gray-100 text-gray-500'}`}>
-                  {sup.is_active ? 'Active' : 'Inactive'}
-                </span>
+                <Badge variant={sup.is_active ? 'success' : 'neutral'}>{sup.is_active ? 'Active' : 'Inactive'}</Badge>
               </div>
 
               {/* Added */}
@@ -349,40 +323,28 @@ export function Suppliers() {
                 >
                   Edit
                 </button>
-                <button
-                  onClick={() => toggleActive(sup.id, sup.is_active)}
-                  className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg
-                             hover:bg-gray-50 transition-colors text-gray-600"
-                >
+                <Button variant="secondary" onClick={() => toggleActive(sup.id, sup.is_active)}>
                   {sup.is_active ? 'Deactivate' : 'Activate'}
-                </button>
+                </Button>
               </div>
             </div>
           ))}
-          </div>
+          </Card>
         </>
       )}
 
       {/* Modal */}
-      {open && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
-
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">
-                {editId ? 'Edit supplier' : 'New supplier'}
-              </h2>
-              <button onClick={() => setOpen(false)}
-                      className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-4">
-
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit supplier' : 'New supplier'}
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button loading={saving} icon={<Check size={12} />} onClick={save} className="min-w-[110px]">
+            {editId ? 'Save changes' : 'Add supplier'}
+          </Button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">
                   Supplier name <span className="text-red-400">*</span>
@@ -473,32 +435,7 @@ export function Suppliers() {
                   {error}
                 </div>
               )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 text-xs text-gray-600 border border-gray-200
-                           rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
-                           text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50
-                           transition-colors min-w-[110px] justify-center"
-              >
-                {saving
-                  ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
-                  : <><Check size={12} /> {editId ? 'Save changes' : 'Add supplier'}</>
-                }
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

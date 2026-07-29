@@ -3,6 +3,10 @@ import { recordCompanyExpense, fetchCompanyExpenses, fetchCompaniesList, fetchEm
 import { usePageState } from '../lib/pageState'
 import { Receipt, Loader2, Plus, X, ShieldAlert, Search } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Button } from '../components/ui/Button'
 
 interface ExpenseRow {
   id: string
@@ -88,7 +92,7 @@ function NewExpenseForm({ companies, employees, onDone, onCancel }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <input
         value={description} onChange={e => setDescription(e.target.value)}
@@ -140,13 +144,10 @@ function NewExpenseForm({ companies, employees, onDone, onCancel }: {
         <ShieldAlert size={12} className="text-amber-500" /> Flag as sensitive
       </label>
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-red-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : 'Record expense'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit}>Record expense</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -196,26 +197,16 @@ export function Expenses() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Receipt size={18} /> Expenses</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Every company expense — who paid, how, and where it went</p>
-        </div>
-        <button onClick={() => setShowForm(v => !v)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-red-600 text-white flex items-center gap-1">
-          {showForm ? <X size={12} /> : <Plus size={12} />} New expense
-        </button>
-      </div>
+      <PageHeader
+        icon={<Receipt size={18} />}
+        title="Expenses"
+        subtitle="Every company expense — who paid, how, and where it went"
+        actions={<Button icon={showForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowForm(v => !v)}>New expense</Button>}
+      />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Total (ETB)</p>
-          <p className="text-xl font-medium font-mono text-red-700">{N(totalEtb)}</p>
-        </div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Total (USD)</p>
-          <p className="text-xl font-medium font-mono text-red-700">${N(totalUsd)}</p>
-        </div>
+        <StatCard label="Total (ETB)" value={<span className="text-red-700">{N(totalEtb)}</span>} />
+        <StatCard label="Total (USD)" value={<span className="text-red-700">${N(totalUsd)}</span>} />
       </div>
 
       {showForm && (
@@ -243,9 +234,10 @@ export function Expenses() {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-sm text-gray-400">No expenses recorded yet.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {filtered.map((r, i) => (
-            <div key={r.id} className={`flex items-center gap-3 px-4 py-2.5 text-xs ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}>
+            <div key={r.id} className={`stagger-row flex items-center gap-3 px-4 py-2.5 text-xs ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
               <div className="flex-1 min-w-0">
                 <p className="font-medium flex items-center gap-1.5">
                   {r.description}
@@ -263,7 +255,7 @@ export function Expenses() {
               </div>
             </div>
           ))}
-        </div>
+        </Card>
       )}
     </div>
   )

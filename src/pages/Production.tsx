@@ -7,7 +7,13 @@ import type { DamageReport } from '../api/damageReports'
 import { produceAssembly, fetchComponentAvailability } from '../api/production'
 import type { ComponentAvailability } from '../api/production'
 import { usePageState } from '../lib/pageState'
-import { Plus, Wrench, X, Check, Loader2, BarChart3, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search } from 'lucide-react'
+import { Plus, Wrench, X, Check, Loader2, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 type BomStage = 'ASSEMBLY' | 'STICKER' | 'OTHER'
 
@@ -56,11 +62,11 @@ interface DayMovement {
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 
-const STATUS_STYLE: Record<string, string> = {
-  DRAFT:       'bg-gray-100 text-gray-600',
-  IN_PROGRESS: 'bg-blue-50 text-blue-700',
-  COMPLETED:   'bg-green-50 text-green-700',
-  CANCELLED:   'bg-red-50 text-red-700',
+const STATUS_VARIANT: Record<string, 'neutral' | 'info' | 'success' | 'danger'> = {
+  DRAFT:       'neutral',
+  IN_PROGRESS: 'info',
+  COMPLETED:   'success',
+  CANCELLED:   'danger',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -568,23 +574,21 @@ export function Production() {
   return (
     <div className="p-5 max-w-4xl mx-auto">
 
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Production</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {activeOrders.length} open orders
-            {totalToday > 0 && ` · ${N(totalToday)} units logged today`}
-            {todayEfficiencyPct !== null && (
-              <span className={`font-medium ${todayEfficiencyPct >= 100 ? 'text-green-600' : todayEfficiencyPct >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
-                {' '}· {todayEfficiencyPct}% of today's goal
-              </span>
-            )}
-            {lateOrders.length > 0 && (
-              <span className="text-red-600 font-medium"> · {lateOrders.length} late</span>
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        title="Production"
+        subtitle={<>
+          {activeOrders.length} open orders
+          {totalToday > 0 && ` · ${N(totalToday)} units logged today`}
+          {todayEfficiencyPct !== null && (
+            <span className={`font-medium ${todayEfficiencyPct >= 100 ? 'text-green-600' : todayEfficiencyPct >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
+              {' '}· {todayEfficiencyPct}% of today's goal
+            </span>
+          )}
+          {lateOrders.length > 0 && (
+            <span className="text-red-600 font-medium"> · {lateOrders.length} late</span>
+          )}
+        </>}
+        actions={<>
           <div className="flex gap-1">
             {(['orders', 'report'] as const).map(t => (
               <button
@@ -592,40 +596,24 @@ export function Production() {
                 onClick={() => setTab(t)}
                 className={`px-3 py-1.5 text-xs rounded-lg border transition-colors capitalize
                   ${tab === t
-                    ? 'bg-blue-600 text-white border-blue-600'
+                    ? 'bg-accent text-accent-foreground border-accent font-medium'
                     : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
               >
                 {t === 'orders' ? 'Assembly lines' : 'Daily report'}
               </button>
             ))}
           </div>
-          <button
-            onClick={() => { setCreateOpen(v => !v); setError(null) }}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600
-                       text-xs rounded-lg hover:bg-gray-50 transition-colors"
+          <Button variant="secondary" icon={<ClipboardList size={13} />}
             title="Optional — for target-tracked runs with a due date. Not required to log daily output."
-          >
-            <ClipboardList size={13} /> New order
-          </button>
-          <button
-            onClick={() => { setDamageOpen(true); setError(null) }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white
-                       text-xs rounded-lg hover:bg-amber-700 transition-colors"
-          >
-            <ShieldAlert size={13} /> Log damage
-          </button>
-          <button
-            onClick={() => { setLogOpen(true); setError(null) }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                       text-xs rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={13} /> Log production
-          </button>
-        </div>
-      </div>
+            onClick={() => { setCreateOpen(v => !v); setError(null) }}>New order</Button>
+          <Button icon={<ShieldAlert size={13} />} className="!bg-amber-600 !text-white hover:!brightness-95"
+            onClick={() => { setDamageOpen(true); setError(null) }}>Log damage</Button>
+          <Button icon={<Plus size={13} />} onClick={() => { setLogOpen(true); setError(null) }}>Log production</Button>
+        </>}
+      />
 
       {createOpen && (
-        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <div className="mb-4 rounded-card border border-blue-100 bg-blue-50 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="font-semibold text-blue-900">Create production order from BOM</h3>
@@ -713,23 +701,20 @@ export function Production() {
                     const goal = dailyGoal(order)
                     const effPct = goal && goal > 0 ? Math.round(((todayLog?.quantity_produced ?? 0) / goal) * 100) : null
 
+                    const rail = isLate(order) ? 'border-l-red-400' : pct >= 100 ? 'border-l-green-400' : pct >= 50 ? 'border-l-blue-400' : 'border-l-amber-400'
                     return (
-                      <div key={order.id}
-                           className="bg-white border border-gray-200 rounded-xl p-4">
+                      <Card padded key={order.id} className={`border-l-[3px] ${rail}`}>
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-sm font-medium">
                                 {prod?.name ?? 'Unknown product'}
                               </span>
-                              <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                                ${STATUS_STYLE[order.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                              <Badge variant={STATUS_VARIANT[order.status] ?? 'neutral'}>
                                 {STATUS_LABEL[order.status] ?? order.status}
-                              </span>
+                              </Badge>
                               {isLate(order) && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700">
-                                  <AlertTriangle size={10} /> Late
-                                </span>
+                                <Badge variant="danger" icon={<AlertTriangle size={10} />}>Late</Badge>
                               )}
                             </div>
                             <p className="text-xs text-gray-400">
@@ -770,7 +755,7 @@ export function Production() {
                             </div>
                           ))}
                         </div>
-                      </div>
+                      </Card>
                     )
                   })}
                 </div>
@@ -783,20 +768,13 @@ export function Production() {
       {!loading && tab === 'report' && (
         <div className="space-y-4">
           <div className="grid grid-cols-4 gap-3">
-            {[
-              { label: 'Produced today', val: `${N(totalToday)} units`, icon: Wrench },
-              { label: 'Sales today', val: `${N(salesToday)} ETB`, icon: BarChart3 },
-              { label: 'Withdrawals (30d)', val: String(withdrawals.length), icon: Package },
-              { label: 'Damage reports (30d)', val: String(damageReports.length), icon: ShieldAlert },
-            ].map(s => (
-              <div key={s.label} className="bg-gray-50 rounded-xl px-4 py-3">
-                <p className="text-xs text-gray-400">{s.label}</p>
-                <p className="text-sm font-medium font-mono mt-1">{s.val}</p>
-              </div>
-            ))}
+            <StatCard label="Produced today" value={`${N(totalToday)} units`} />
+            <StatCard label="Sales today" value={`${N(salesToday)} ETB`} />
+            <StatCard label="Withdrawals (30d)" value={String(withdrawals.length)} />
+            <StatCard label="Damage reports (30d)" value={String(damageReports.length)} />
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
               Production logs (last 30 days)
             </div>
@@ -804,17 +782,18 @@ export function Production() {
               <p className="px-4 py-6 text-xs text-gray-400 text-center">No logs yet</p>
             ) : logs.map((l, i) => (
               <div key={l.id}
-                   className={`flex items-center justify-between px-4 py-2.5 text-xs
-                     ${i < logs.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                   className={`stagger-row flex items-center justify-between px-4 py-2.5 text-xs
+                     ${i < logs.length - 1 ? 'border-b border-gray-50' : ''}`}
+                   style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                 <span className="text-gray-600">
                   {l.log_date} · {(l.production_orders as any)?.bom_headers?.products?.name ?? '—'}
                 </span>
                 <span className="font-mono font-medium">{N(l.quantity_produced)} units</span>
               </div>
             ))}
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 flex items-center gap-1.5">
               <ShieldAlert size={12} className="text-amber-500" /> Damage reports
             </div>
@@ -822,8 +801,9 @@ export function Production() {
               <p className="px-4 py-6 text-xs text-gray-400 text-center">No damage logged</p>
             ) : damageReports.map((d, i) => (
               <div key={d.id}
-                   className={`flex items-center justify-between px-4 py-2.5 text-xs
-                     ${i < damageReports.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                   className={`stagger-row flex items-center justify-between px-4 py-2.5 text-xs
+                     ${i < damageReports.length - 1 ? 'border-b border-gray-50' : ''}`}
+                   style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                 <span className="text-gray-600">
                   {d.report_date} · {products.find(p => p.id === d.product_id)?.name ?? '—'} · {d.reason}
                   {d.shipment_id && ` · ${shipments.find(s => s.id === d.shipment_id)?.shipment_number ?? ''}`}
@@ -831,9 +811,9 @@ export function Production() {
                 <span className="font-mono font-medium text-red-600">-{N(d.quantity)}</span>
               </div>
             ))}
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
               Warehouse withdrawals & sales
             </div>
@@ -843,8 +823,9 @@ export function Production() {
               .sort((a, b) => b.movement_date.localeCompare(a.movement_date))
               .map((m, i, arr) => (
                 <div key={m.id}
-                     className={`flex items-center justify-between px-4 py-2.5 text-xs
-                       ${i < arr.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                     className={`stagger-row flex items-center justify-between px-4 py-2.5 text-xs
+                       ${i < arr.length - 1 ? 'border-b border-gray-50' : ''}`}
+                     style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                   <span className="text-gray-600">
                     {m.movement_date} · {m.products?.name ?? '—'} ·{' '}
                     <span className={
@@ -860,26 +841,21 @@ export function Production() {
                   </span>
                 </div>
               ))}
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Log Modal — tap items, no production order required */}
-      {logOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setLogOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh]
-                          overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">Log production</h2>
-              <button onClick={() => setLogOpen(false)}
-                      className="text-gray-400 hover:text-gray-600">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-4">
+      <Modal
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        title="Log production"
+        footer={<>
+          <Button variant="secondary" onClick={() => setLogOpen(false)}>Cancel</Button>
+          <Button loading={saving} disabled={bomOptions.length === 0} icon={<Check size={12} />} onClick={saveLog}>Save</Button>
+        </>}
+      >
+            <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Log date</label>
@@ -980,23 +956,7 @@ export function Production() {
                 </div>
               )}
             </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setLogOpen(false)}
-                      className="px-4 py-2 text-xs border border-gray-200 rounded-lg">
-                Cancel
-              </button>
-              <button onClick={saveLog} disabled={saving || bomOptions.length === 0}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
-                                 text-xs rounded-lg disabled:opacity-50">
-                {saving
-                  ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
-                  : <><Check size={12} /> Save</>
-                }
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Damage Modal */}
       {damageOpen && (
@@ -1004,7 +964,7 @@ export function Production() {
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setDamageOpen(false)}
         >
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
+          <div className="bg-white rounded-card w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="text-sm font-medium flex items-center gap-1.5"><ShieldAlert size={15} className="text-amber-600" /> Log damage</h2>
               <button onClick={() => setDamageOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>

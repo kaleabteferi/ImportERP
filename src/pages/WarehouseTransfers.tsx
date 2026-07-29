@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Truck, Loader2, CheckCircle2, AlertTriangle, Plus, X } from 'lucide-react'
+import { Truck, Loader2, CheckCircle2, AlertTriangle, Plus } from 'lucide-react'
 import { fetchWarehousesList } from '../api/income'
 import { fetchAllProducts } from '../api/bom'
 import { fetchEmployeesList } from '../api/companyExpenses'
@@ -10,6 +10,11 @@ import {
 import type { WarehouseTransfer, TransferPurpose } from '../api/warehouseTransfers'
 import { usePageState } from '../lib/pageState'
 import { SearchableSelect } from '../components/SearchableSelect'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 interface Option { id: string; name: string; sku?: string }
 
@@ -136,31 +141,23 @@ export function WarehouseTransfers() {
 
   return (
     <div className="p-5 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Truck size={18} /> Warehouse Transfers</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Movement between warehouses (e.g. Debre Berhan → Addisu Gebeya → Merkato), with driver, plate, and purpose
-          </p>
-        </div>
-        <button
-          onClick={() => { setForm({ ...EMPTY_FORM }); setOpen(true) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> New transfer
-        </button>
-      </div>
+      <PageHeader
+        icon={<Truck size={18} />}
+        title="Warehouse Transfers"
+        subtitle="Movement between warehouses (e.g. Debre Berhan → Addisu Gebeya → Merkato), with driver, plate, and purpose"
+        actions={<Button icon={<Plus size={13} />} onClick={() => { setForm({ ...EMPTY_FORM }); setOpen(true) }}>New transfer</Button>}
+      />
 
-      {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-1.5"><AlertTriangle size={12} />{error}</div>}
-      {success && <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 flex items-center gap-1.5"><CheckCircle2 size={12} />{success}</div>}
+      {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-card text-xs text-red-700 flex items-center gap-1.5"><AlertTriangle size={12} />{error}</div>}
+      {success && <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-card text-xs text-green-700 flex items-center gap-1.5"><CheckCircle2 size={12} />{success}</div>}
 
       <div className="flex gap-2 mb-3">
         {['IN_TRANSIT', 'RECEIVED', 'CANCELLED', 'ALL'].map(s => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-              statusFilter === s ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+            className={`px-3 py-1.5 text-xs rounded-card border transition-colors ${
+              statusFilter === s ? 'bg-accent text-accent-foreground border-accent' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}
           >
             {s === 'IN_TRANSIT' ? 'In transit' : s.charAt(0) + s.slice(1).toLowerCase()}
@@ -173,15 +170,19 @@ export function WarehouseTransfers() {
           <Loader2 size={16} className="animate-spin" /> Loading…
         </div>
       ) : visible.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+        <Card padded className="text-center py-10">
           <Truck size={32} className="mx-auto text-gray-200 mb-3" />
           <p className="text-sm font-medium text-gray-500 mb-1">No transfers here</p>
           <p className="text-xs text-gray-400">Log a transfer whenever stock moves between warehouses.</p>
-        </div>
+        </Card>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {visible.map((t, i) => (
-            <div key={t.id} className={`px-5 py-4 ${i > 0 ? 'border-t border-gray-100' : ''}`}>
+            <div
+              key={t.id}
+              className={`stagger-row px-5 py-4 ${i > 0 ? 'border-t border-gray-100' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium">
@@ -198,51 +199,44 @@ export function WarehouseTransfers() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${
-                    t.status === 'RECEIVED' ? 'bg-green-100 text-green-700'
-                      : t.status === 'CANCELLED' ? 'bg-gray-100 text-gray-500'
-                      : 'bg-amber-50 text-amber-700'
-                  }`}>
+                  <Badge variant={t.status === 'RECEIVED' ? 'success' : t.status === 'CANCELLED' ? 'neutral' : 'warning'}>
                     {t.status === 'IN_TRANSIT' ? 'In transit' : t.status.charAt(0) + t.status.slice(1).toLowerCase()}
-                  </span>
+                  </Badge>
                   {t.status === 'IN_TRANSIT' && (
                     <>
-                      <button
+                      <Button
                         onClick={() => markReceived(t)}
                         disabled={busyId === t.id}
-                        className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        className="px-2.5 py-1"
                       >
                         Mark received
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="secondary"
                         onClick={() => cancel(t)}
                         disabled={busyId === t.id}
-                        className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500 disabled:opacity-50"
+                        className="px-2.5 py-1"
                       >
                         Cancel
-                      </button>
+                      </Button>
                     </>
                   )}
                 </div>
               </div>
             </div>
           ))}
-        </div>
+        </Card>
       )}
 
-      {open && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New transfer</h2>
-              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="New transfer"
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button loading={saving} onClick={submit} className="min-w-[110px]">Log transfer</Button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Purpose</label>
                 <select
@@ -349,25 +343,7 @@ export function WarehouseTransfers() {
                   onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
                 />
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors min-w-[110px] justify-center"
-              >
-                {saving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : 'Log transfer'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

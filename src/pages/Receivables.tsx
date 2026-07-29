@@ -7,6 +7,11 @@ import type { Account } from '../api/accounts'
 import { usePageState } from '../lib/pageState'
 import { CreditCard, Loader2, AlertTriangle, ShieldAlert, X, Landmark, ArrowUpDown, ExternalLink } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 interface Receivable {
   id: string
@@ -47,6 +52,9 @@ function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
   const [hawala, setHawala] = useState(emptyHawalaValue())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Receivable payments are always ETB (sales_payments.amount_etb) — a
+  // non-ETB account would silently never count toward that account's balance.
+  const eligibleAccounts = accounts.filter(a => a.currency === 'ETB')
 
   async function submit() {
     const amt = Number(amount)
@@ -88,8 +96,8 @@ function RecordPaymentForm({ receivable, accounts, onDone, onCancel }: {
           value={accountId} onChange={e => setAccountId(e.target.value)}
           className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
         >
-          <option value="">Which account received it?</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          <option value="">{eligibleAccounts.length > 0 ? 'Which ETB account received it?' : 'No ETB account set up yet'}</option>
+          {eligibleAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
       {method === 'hawala' && <HawalaFields value={hawala} onChange={setHawala} />}
@@ -233,24 +241,11 @@ export function Receivables() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2">
-          <CreditCard size={18} /> Receivables
-        </h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Customer invoices awaiting payment
-        </p>
-      </div>
+      <PageHeader icon={<CreditCard size={18} />} title="Receivables" subtitle="Customer invoices awaiting payment" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Total outstanding</p>
-          <p className="text-xl font-medium font-mono text-green-700">{N(totalOutstanding)} ETB</p>
-        </div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Over 30 days</p>
-          <p className="text-xl font-medium font-mono text-amber-700">{overdue.length}</p>
-        </div>
+        <StatCard label="Total outstanding" value={<span className="text-green-700">{N(totalOutstanding)} ETB</span>} />
+        <StatCard label="Over 30 days" value={<span className="text-amber-700">{overdue.length}</span>} />
       </div>
 
       {loading ? (
@@ -278,20 +273,18 @@ export function Receivables() {
               <ArrowUpDown size={12} className={dateSort === 'oldest' ? 'rotate-180' : ''} /> {dateSort === 'newest' ? 'Newest first' : 'Oldest first'}
             </button>
           </div>
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {sortedRows.map((r, i) => {
             const outstanding = r.total_etb - r.paid_etb
             const isOverdue = r.days_outstanding > 30
             return (
-              <div key={r.id} className={i < sortedRows.length - 1 ? 'border-b border-gray-50' : ''}>
+              <div key={r.id} className={`stagger-row ${i < sortedRows.length - 1 ? 'border-b border-gray-50' : ''}`} style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                 <div className="flex items-center gap-4 px-4 py-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium flex items-center gap-1.5">
                       {r.customer_name}
                       {r.creditAccountId && (
-                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 text-violet-700">
-                          <Landmark size={9} /> Credit sale
-                        </span>
+                        <Badge variant="info" icon={<Landmark size={9} />}>Credit sale</Badge>
                       )}
                     </p>
                     <p className="text-xs text-gray-400">
@@ -318,12 +311,9 @@ export function Receivables() {
                       Settle in Credit <ExternalLink size={11} />
                     </Link>
                   ) : (
-                    <button
-                      onClick={() => setOpenFormId(openFormId === r.id ? null : r.id)}
-                      className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 shrink-0"
-                    >
+                    <Button variant="secondary" className="shrink-0" onClick={() => setOpenFormId(openFormId === r.id ? null : r.id)}>
                       {openFormId === r.id ? <X size={12} /> : 'Record payment'}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {openFormId === r.id && (
@@ -337,7 +327,7 @@ export function Receivables() {
               </div>
             )
           })}
-        </div>
+        </Card>
         </>
       )}
     </div>

@@ -34,7 +34,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[70] flex flex-col justify-end bg-black/40" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-2xl max-h-[85vh] flex flex-col shadow-xl">
+      <div className="bg-white rounded-t-[24px] max-h-[85vh] flex flex-col shadow-[var(--shadow-card-xl)]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
           <div>
             <p className="text-sm font-medium">{profile?.full_name ?? 'Unnamed'}</p>
@@ -50,7 +50,7 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
               <div className="grid grid-cols-3 gap-2">
                 {group.items.map(link => (
                   <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={onClose}
-                    className={({ isActive }) => `flex flex-col items-center gap-1.5 p-2.5 rounded-xl border text-center ${isActive ? 'border-blue-300 bg-blue-50' : 'border-gray-200'}`}>
+                    className={({ isActive }) => `flex flex-col items-center gap-1.5 p-2.5 rounded-card border text-center ${isActive ? 'border-accent bg-accent/10' : 'border-gray-200'}`}>
                     <link.icon size={17} strokeWidth={1.5} className="text-gray-500" />
                     <span className="text-[10px] leading-tight">{link.label}</span>
                   </NavLink>
@@ -97,13 +97,23 @@ export function MobileNav() {
             style={({ isActive }) => ({
               flex: 1, display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              padding: '8px 4px', gap: '2px', textDecoration: 'none',
-              color: isActive ? 'var(--color-text-info)' : 'var(--color-text-tertiary)',
-              fontSize: '10px',
+              padding: '6px 4px 8px', gap: '3px', textDecoration: 'none',
+              color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+              fontSize: '10px', fontWeight: isActive ? 600 : 400,
             })}
           >
-            <tab.icon size={22} strokeWidth={1.5} />
-            {tab.label}
+            {({ isActive }) => (
+              <>
+                <span style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: '34px', height: '22px', borderRadius: '9999px',
+                  background: isActive ? 'var(--color-accent)' : 'transparent',
+                }}>
+                  <tab.icon size={19} strokeWidth={1.5} color={isActive ? 'var(--color-accent-foreground)' : 'currentColor'} />
+                </span>
+                {tab.label}
+              </>
+            )}
           </NavLink>
         ))}
         <button
@@ -111,7 +121,7 @@ export function MobileNav() {
           style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
-            padding: '8px 4px', gap: '2px', background: 'none', border: 'none',
+            padding: '6px 4px 8px', gap: '3px', background: 'none', border: 'none',
             color: 'var(--color-text-tertiary)', fontSize: '10px', cursor: 'pointer',
           }}
         >

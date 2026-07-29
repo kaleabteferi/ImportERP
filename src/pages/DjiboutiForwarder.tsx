@@ -11,8 +11,13 @@ import {
 import type { WarehouseTransfer, AliStockRow, DjiboutiReconciliationLine } from '../api/warehouseTransfers'
 import { SearchableSelect } from '../components/SearchableSelect'
 import {
-  Truck, Loader2, Plus, X, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight,
+  Truck, Loader2, Plus, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 interface Option { id: string; name: string; sku?: string }
 
@@ -27,6 +32,10 @@ const EMPTY_REQUEST_FORM = {
 const EMPTY_DISPATCH_FORM = {
   actualQuantity: '', waybillNumber: '', driverName: '', truckPlate: '',
   weightKg: '', truckingRatePerKg: '', linkedShipmentId: '',
+}
+
+const STATUS_VARIANT: Record<string, 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent'> = {
+  RECEIVED: 'success', CANCELLED: 'neutral', IN_TRANSIT: 'warning', REQUESTED: 'info',
 }
 
 export function DjiboutiForwarder() {
@@ -190,14 +199,11 @@ export function DjiboutiForwarder() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2">
-          <Ship size={18} /> Djibouti Forwarder
-        </h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Stock held at Ali's Djibouti warehouse, and requests to dispatch it to your warehouses
-        </p>
-      </div>
+      <PageHeader
+        icon={<Ship size={18} />}
+        title="Djibouti Forwarder"
+        subtitle="Stock held at Ali's Djibouti warehouse, and requests to dispatch it to your warehouses"
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-1.5"><AlertTriangle size={12} />{error}</div>}
       {success && <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 flex items-center gap-1.5"><CheckCircle2 size={12} />{success}</div>}
@@ -209,7 +215,7 @@ export function DjiboutiForwarder() {
       ) : (
         <>
           {/* Stock with Ali */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+          <Card className="mb-5">
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-1.5">
               <Package size={13} className="text-gray-400" />
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Currently with Ali (Djibouti)</p>
@@ -221,18 +227,18 @@ export function DjiboutiForwarder() {
               </div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {stock.map(s => (
-                  <div key={s.product_id} className="flex items-center justify-between px-4 py-2 text-sm">
+                {stock.map((s, i) => (
+                  <div key={s.product_id} className="stagger-row flex items-center justify-between px-4 py-2 text-sm" style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                     <span className="text-gray-700">{s.product_name} {s.sku && <span className="text-gray-400 font-mono text-xs">({s.sku})</span>}</span>
                     <span className="font-mono font-medium">{N(s.quantity)}</span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
           {/* Sent from China vs received at Ali */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+          <Card className="mb-5">
             <button
               onClick={() => setReconOpen(v => !v)}
               className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100"
@@ -281,7 +287,7 @@ export function DjiboutiForwarder() {
                 </div>
               )
             )}
-          </div>
+          </Card>
 
           {/* Requests */}
           <div className="flex items-center justify-between mb-3">
@@ -291,31 +297,28 @@ export function DjiboutiForwarder() {
                   key={s}
                   onClick={() => setStatusFilter(s)}
                   className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-                    statusFilter === s ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    statusFilter === s ? 'bg-accent text-accent-foreground border-accent' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                   }`}
                 >
                   {s === 'IN_TRANSIT' ? 'In transit' : s.charAt(0) + s.slice(1).toLowerCase()}
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => { setReqForm({ ...EMPTY_REQUEST_FORM }); setReqOpen(true) }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors shrink-0"
-            >
-              <Plus size={13} /> New request to Ali
-            </button>
+            <Button icon={<Plus size={13} />} onClick={() => { setReqForm({ ...EMPTY_REQUEST_FORM }); setReqOpen(true) }} className="shrink-0">
+              New request to Ali
+            </Button>
           </div>
 
           {visible.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <Card padded className="text-center py-10">
               <Truck size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No requests here</p>
               <p className="text-xs text-gray-400">Log a request whenever you ask Ali to send items.</p>
-            </div>
+            </Card>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <Card>
               {visible.map((t, i) => (
-                <div key={t.id} className={`px-5 py-4 ${i > 0 ? 'border-t border-gray-100' : ''}`}>
+                <div key={t.id} className={`stagger-row px-5 py-4 ${i > 0 ? 'border-t border-gray-100' : ''}`} style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
                       <p className="text-sm font-medium">
@@ -341,51 +344,37 @@ export function DjiboutiForwarder() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${
-                        t.status === 'RECEIVED' ? 'bg-green-100 text-green-700'
-                          : t.status === 'CANCELLED' ? 'bg-gray-100 text-gray-500'
-                          : t.status === 'IN_TRANSIT' ? 'bg-amber-50 text-amber-700'
-                          : 'bg-blue-50 text-blue-700'
-                      }`}>
+                      <Badge variant={STATUS_VARIANT[t.status] ?? 'neutral'}>
                         {t.status === 'IN_TRANSIT' ? 'In transit' : t.status.charAt(0) + t.status.slice(1).toLowerCase()}
-                      </span>
+                      </Badge>
                       {t.status === 'REQUESTED' && (
                         <>
-                          <button onClick={() => openDispatch(t)}
-                            className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                            Record dispatch
-                          </button>
-                          <button onClick={() => cancel(t)}
-                            className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500">
-                            Cancel
-                          </button>
+                          <Button onClick={() => openDispatch(t)}>Record dispatch</Button>
+                          <Button variant="secondary" onClick={() => cancel(t)}>Cancel</Button>
                         </>
                       )}
                       {t.status === 'IN_TRANSIT' && (
-                        <button onClick={() => openReceive(t)}
-                          className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                          Confirm receipt
-                        </button>
+                        <Button onClick={() => openReceive(t)}>Confirm receipt</Button>
                       )}
                     </div>
                   </div>
                 </div>
               ))}
-            </div>
+            </Card>
           )}
         </>
       )}
 
       {/* New request modal */}
-      {reqOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setReqOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New request to Ali</h2>
-              <button onClick={() => setReqOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
+      <Modal
+        open={reqOpen}
+        onClose={() => setReqOpen(false)}
+        title="New request to Ali"
+        footer={<>
+          <Button variant="secondary" onClick={() => setReqOpen(false)}>Cancel</Button>
+          <Button loading={reqSaving} onClick={submitRequest} className="min-w-[110px]">Log request</Button>
+        </>}
+      >
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Item</label>
@@ -438,33 +427,23 @@ export function DjiboutiForwarder() {
                 <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
                   value={reqForm.notes} onChange={e => setReqForm(p => ({ ...p, notes: e.target.value }))} />
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setReqOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={submitRequest} disabled={reqSaving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 min-w-[110px] justify-center">
-                {reqSaving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : 'Log request'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Record dispatch modal */}
-      {dispatchTarget && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setDispatchTarget(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div>
-                <h2 className="text-sm font-medium">Record dispatch</h2>
-                <p className="text-xs text-gray-500 mt-0.5">
+      <Modal
+        open={!!dispatchTarget}
+        onClose={() => setDispatchTarget(null)}
+        title="Record dispatch"
+        footer={<>
+          <Button variant="secondary" onClick={() => setDispatchTarget(null)}>Cancel</Button>
+          <Button loading={dispatchSaving} onClick={submitDispatch} className="min-w-[110px]">Record dispatch</Button>
+        </>}
+      >
+              {dispatchTarget && (
+                <p className="text-xs text-gray-500 -mt-2">
                   {dispatchTarget.transfer_number} · requested {N(dispatchTarget.requested_quantity ?? dispatchTarget.quantity)} {productName(dispatchTarget.product_id)}
                 </p>
-              </div>
-              <button onClick={() => setDispatchTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
+              )}
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Quantity Ali actually loaded</label>
                 <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -512,52 +491,35 @@ export function DjiboutiForwarder() {
                   {shipments.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setDispatchTarget(null)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={submitDispatch} disabled={dispatchSaving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 min-w-[110px] justify-center">
-                {dispatchSaving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : 'Record dispatch'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Confirm receipt modal */}
-      {receiveTarget && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setReceiveTarget(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <div>
-                <h2 className="text-sm font-medium">Confirm receipt</h2>
-                <p className="text-xs text-gray-500 mt-0.5">
+      <Modal
+        open={!!receiveTarget}
+        onClose={() => setReceiveTarget(null)}
+        title="Confirm receipt"
+        maxWidth="max-w-sm"
+        footer={<>
+          <Button variant="secondary" onClick={() => setReceiveTarget(null)}>Cancel</Button>
+          <Button loading={receiveSaving} onClick={submitReceive} className="min-w-[110px]">Confirm receipt</Button>
+        </>}
+      >
+              {receiveTarget && (
+                <p className="text-xs text-gray-500 -mt-2">
                   {receiveTarget.transfer_number} · dispatched {N(receiveTarget.quantity)} {productName(receiveTarget.product_id)}
                 </p>
-              </div>
-              <button onClick={() => setReceiveTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4">
-              <label className="block text-xs text-gray-500 mb-1">Quantity that actually arrived</label>
-              <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
-                value={receiveQty} onChange={e => setReceiveQty(e.target.value)} />
-              {Number(receiveQty) !== receiveTarget.quantity && receiveQty !== '' && (
-                <p className="text-xs text-amber-600 mt-1">
-                  {Number(receiveQty) < receiveTarget.quantity ? 'Short' : 'Over'} by {N(Math.abs(Number(receiveQty) - receiveTarget.quantity))} vs. what was dispatched.
-                </p>
               )}
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setReceiveTarget(null)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={submitReceive} disabled={receiveSaving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 min-w-[110px] justify-center">
-                {receiveSaving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : 'Confirm receipt'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Quantity that actually arrived</label>
+                <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  value={receiveQty} onChange={e => setReceiveQty(e.target.value)} />
+                {receiveTarget && Number(receiveQty) !== receiveTarget.quantity && receiveQty !== '' && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    {Number(receiveQty) < receiveTarget.quantity ? 'Short' : 'Over'} by {N(Math.abs(Number(receiveQty) - receiveTarget.quantity))} vs. what was dispatched.
+                  </p>
+                )}
+              </div>
+      </Modal>
     </div>
   )
 }

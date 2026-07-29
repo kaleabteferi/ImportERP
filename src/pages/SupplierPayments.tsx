@@ -9,18 +9,23 @@ import {
 import type { SupplierPayableListRow, SupplierPayableDetail, PayableCurrency, PaymentMethod } from '../api/supplierPayables'
 import { SearchableSelect } from '../components/SearchableSelect'
 import {
-  Landmark, Loader2, Plus, X, Check, Trash2, ChevronLeft, ArrowRightLeft,
+  Landmark, Loader2, Plus, X, Check, ChevronLeft, ArrowRightLeft,
   Banknote, Building2, Receipt,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
 interface Option { id: string; name: string }
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
 const CURRENCY_SYMBOL: Record<PayableCurrency, string> = { USD: '$', CNY: '¥', ETB: '' }
 const METHOD_LABEL: Record<PaymentMethod, string> = { hawala: 'Hawala', bank_transfer: 'Bank transfer', cash: 'Cash', other: 'Other' }
-const METHOD_CLS: Record<PaymentMethod, string> = {
-  hawala: 'bg-purple-50 text-purple-700', bank_transfer: 'bg-blue-50 text-blue-700',
-  cash: 'bg-green-50 text-green-700', other: 'bg-gray-100 text-gray-600',
+const METHOD_VARIANT: Record<PaymentMethod, 'accent' | 'info' | 'success' | 'neutral'> = {
+  hawala: 'accent', bank_transfer: 'info', cash: 'success', other: 'neutral',
 }
 
 function NewPayableForm({ suppliers, shipments, onCancel, onCreated }: {
@@ -53,7 +58,7 @@ function NewPayableForm({ suppliers, shipments, onCancel, onCreated }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
+    <Card padded className="mb-4 space-y-3">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <SearchableSelect
         options={suppliers.map(s => ({ id: s.id, label: s.name }))}
@@ -76,12 +81,10 @@ function NewPayableForm({ suppliers, shipments, onCancel, onCreated }: {
       <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (optional)" rows={2}
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg resize-none" />
       <div className="flex gap-2 justify-end pt-1">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {saving ? 'Creating…' : 'Create payable'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} icon={<Check size={12} />} onClick={submit}>Create payable</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -106,6 +109,16 @@ function RecordPaymentForm({ payable, accounts, salesOrders, onCancel, onRecorde
   const isHawala = method === 'hawala'
   const computedAmount = isHawala && Number(etbAmount) > 0 && Number(exchangeRate) > 0
     ? Number(etbAmount) / Number(exchangeRate) : null
+  // Only accounts whose currency actually matches what leaves them here —
+  // a hawala payment debits the ETB account that paid the dealer, anything
+  // else debits an account in the payable's own currency. Picking a
+  // mismatched account would silently never count against that account's
+  // balance (see fetchAccountBalances), so it's not offered at all.
+  const requiredCurrency = isHawala ? 'ETB' : payable.currency
+  const eligibleAccounts = useMemo(() => accounts.filter(a => a.currency === requiredCurrency), [accounts, requiredCurrency])
+  useEffect(() => {
+    if (accountId && !eligibleAccounts.some(a => a.id === accountId)) setAccountId('')
+  }, [eligibleAccounts, accountId])
 
   async function submit() {
     const finalAmount = isHawala ? computedAmount : Number(amount)
@@ -133,7 +146,7 @@ function RecordPaymentForm({ payable, accounts, salesOrders, onCancel, onRecorde
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
+    <Card padded className="mb-4 space-y-3">
       <p className="text-sm font-medium flex items-center gap-1.5"><Banknote size={14} className="text-blue-600" /> Record a payment</p>
       {error && <p className="text-xs text-red-600">{error}</p>}
 
@@ -171,10 +184,12 @@ function RecordPaymentForm({ payable, accounts, salesOrders, onCancel, onRecorde
       )}
 
       <div>
-        <p className="text-xs text-gray-500 mb-1">Where did the money come from?</p>
+        <p className="text-xs text-gray-500 mb-1">Where did the money come from? ({requiredCurrency} accounts only)</p>
         <SearchableSelect
-          options={accounts.map(a => ({ id: a.id, label: a.name, sublabel: a.type }))}
-          value={accountId} onChange={setAccountId} placeholder="Which account / cash pool paid it?"
+          options={eligibleAccounts.map(a => ({ id: a.id, label: a.name, sublabel: a.type }))}
+          value={accountId} onChange={setAccountId}
+          placeholder={eligibleAccounts.length > 0 ? `Which ${requiredCurrency} account / cash pool paid it?` : `No ${requiredCurrency} account set up yet`}
+          disabled={eligibleAccounts.length === 0}
         />
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -191,12 +206,10 @@ function RecordPaymentForm({ payable, accounts, salesOrders, onCancel, onRecorde
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
 
       <div className="flex gap-2 justify-end pt-1">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {saving ? 'Saving…' : 'Record payment'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} icon={<Check size={12} />} onClick={submit}>Record payment</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -251,26 +264,20 @@ function PayableDetailView({ payableId, onBack }: { payableId: string; onBack: (
         <ChevronLeft size={13} /> Back to supplier payments
       </button>
 
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-medium">{payable.supplierName}</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {payable.reference ?? 'No reference'}{payable.shipmentNumber && ` · ${payable.shipmentNumber}`}
-          </p>
-        </div>
-        {outstanding > 0.005 && (
-          <button onClick={() => setShowForm(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white">
-            {showForm ? <X size={12} /> : <Plus size={12} />} {showForm ? 'Cancel' : 'Record payment'}
-          </button>
+      <PageHeader
+        title={payable.supplierName}
+        subtitle={`${payable.reference ?? 'No reference'}${payable.shipmentNumber ? ` · ${payable.shipmentNumber}` : ''}`}
+        actions={outstanding > 0.005 && (
+          <Button icon={showForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowForm(v => !v)}>{showForm ? 'Cancel' : 'Record payment'}</Button>
         )}
-      </div>
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
       <div className="grid grid-cols-3 gap-3 mb-5">
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Total owed</p><p className="text-lg font-medium font-mono">{sym}{N(payable.totalAmount)} {payable.currency}</p></div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Paid so far</p><p className="text-lg font-medium font-mono text-green-700">{sym}{N(payable.paidAmount)}</p></div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Outstanding</p><p className={`text-lg font-medium font-mono ${outstanding > 0.005 ? 'text-red-700' : 'text-gray-400'}`}>{sym}{N(Math.max(0, outstanding))}</p></div>
+        <StatCard label="Total owed" value={`${sym}${N(payable.totalAmount)} ${payable.currency}`} />
+        <StatCard label="Paid so far" value={<span className="text-green-700">{sym}{N(payable.paidAmount)}</span>} />
+        <StatCard label="Outstanding" value={<span className={outstanding > 0.005 ? 'text-red-700' : 'text-gray-400'}>{sym}{N(Math.max(0, outstanding))}</span>} />
       </div>
 
       {payable.notes && <p className="text-xs text-gray-500 mb-4">{payable.notes}</p>}
@@ -282,16 +289,16 @@ function PayableDetailView({ payableId, onBack }: { payableId: string; onBack: (
 
       <p className="text-xs font-medium text-gray-500 mb-2">Payment history</p>
       {payable.payments.length === 0 ? (
-        <div className="text-center py-12 text-sm text-gray-400 bg-gray-50 rounded-xl">No payments recorded yet.</div>
+        <div className="text-center py-12 text-sm text-gray-400 bg-gray-50 rounded-card">No payments recorded yet.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {payable.payments.map((p, i) => (
-            <div key={p.id} className={`px-4 py-3 ${i < payable.payments.length - 1 ? 'border-b border-gray-50' : ''}`}>
+            <SwipeToDelete key={p.id} onDelete={() => removePayment(p.id)}>
+            <div className={`px-4 py-3 bg-inherit ${i < payable.payments.length - 1 ? 'border-b border-gray-50' : ''}`}>
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-xs text-gray-400 w-24">{p.paymentDate}</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${METHOD_CLS[p.method]}`}>{METHOD_LABEL[p.method]}</span>
+                <Badge variant={METHOD_VARIANT[p.method]}>{METHOD_LABEL[p.method]}</Badge>
                 <span className="flex-1 text-sm font-mono font-medium">{sym}{N(p.amount)} {payable.currency}</span>
-                <button onClick={() => removePayment(p.id)} className="p-1 text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
                 {p.method === 'hawala' && p.hawalaRoute && <span className="flex items-center gap-1"><ArrowRightLeft size={11} /> {p.hawalaRoute}</span>}
@@ -305,8 +312,9 @@ function PayableDetailView({ payableId, onBack }: { payableId: string; onBack: (
               </div>
               {p.notes && <p className="mt-1 text-xs text-gray-400 italic">{p.notes}</p>}
             </div>
+            </SwipeToDelete>
           ))}
-        </div>
+        </Card>
       )}
     </div>
   )
@@ -363,24 +371,21 @@ export function SupplierPayments() {
 
   return (
     <div className="p-5 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Landmark size={18} /> Supplier Payments</h1>
-          <p className="text-xs text-gray-400 mt-0.5">What you owe each supplier for goods, and every hawala/bank/cash payment made against it</p>
-        </div>
-        <button onClick={() => setShowForm(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
-          {showForm ? <X size={12} /> : <Plus size={12} />} New payable
-        </button>
-      </div>
+      <PageHeader
+        icon={<Landmark size={18} />}
+        title="Supplier Payments"
+        subtitle="What you owe each supplier for goods, and every hawala/bank/cash payment made against it"
+        actions={<Button icon={showForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowForm(v => !v)}>New payable</Button>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
       {showForm && <NewPayableForm suppliers={suppliers} shipments={shipments} onCancel={() => setShowForm(false)} onCreated={id => { setShowForm(false); load(); setActiveId(id) }} />}
 
       <div className="grid grid-cols-3 gap-3 mb-5">
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Outstanding (USD)</p><p className="text-xl font-medium font-mono text-red-700">${N(totals.USD)}</p></div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Outstanding (CNY)</p><p className="text-xl font-medium font-mono text-red-700">¥{N(totals.CNY)}</p></div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3"><p className="text-xs text-gray-400">Outstanding (ETB)</p><p className="text-xl font-medium font-mono text-red-700">{N(totals.ETB)}</p></div>
+        <StatCard label="Outstanding (USD)" value={<span className="text-red-700">${N(totals.USD)}</span>} />
+        <StatCard label="Outstanding (CNY)" value={<span className="text-red-700">¥{N(totals.CNY)}</span>} />
+        <StatCard label="Outstanding (ETB)" value={<span className="text-red-700">{N(totals.ETB)}</span>} />
       </div>
 
       {loading ? (
@@ -392,15 +397,17 @@ export function SupplierPayments() {
           <p className="text-xs text-gray-400">Add one above whenever you owe a supplier — for a shipment, a combined order, or an open credit line.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
-            <div>Supplier</div><div>Total</div><div>Paid</div><div>Outstanding</div><div></div>
+        <Card>
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
+            <div>Supplier</div><div>Total</div><div>Paid</div><div>Outstanding</div>
           </div>
           {payables.map((p, i) => {
             const outstanding = p.totalAmount - p.paidAmount
             const sym = CURRENCY_SYMBOL[p.currency]
             return (
-              <div key={p.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50 ${i < payables.length - 1 ? 'border-b border-gray-50' : ''}`}
+              <SwipeToDelete key={p.id} onDelete={() => remove(p.id, p.supplierName)}>
+              <div className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50 bg-inherit ${i < payables.length - 1 ? 'border-b border-gray-50' : ''}`}
+                style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                 onClick={() => setActiveId(p.id)}>
                 <div>
                   <p className="font-medium">{p.supplierName}</p>
@@ -409,13 +416,11 @@ export function SupplierPayments() {
                 <div className="text-xs font-mono text-gray-500">{sym}{N(p.totalAmount)}</div>
                 <div className="text-xs font-mono text-green-700">{sym}{N(p.paidAmount)}</div>
                 <div className={`text-xs font-mono font-medium ${outstanding > 0.005 ? 'text-red-700' : 'text-gray-400'}`}>{sym}{N(Math.max(0, outstanding))}</div>
-                <button onClick={e => { e.stopPropagation(); remove(p.id, p.supplierName) }} className="p-1.5 text-gray-300 hover:text-red-500">
-                  <Trash2 size={13} />
-                </button>
               </div>
+              </SwipeToDelete>
             )
           })}
-        </div>
+        </Card>
       )}
     </div>
   )

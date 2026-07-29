@@ -194,18 +194,18 @@ export function MobileSales() {
             {showNewCustomer ? (
               <div className="flex gap-2">
                 <input value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} placeholder="Customer name" autoFocus
-                  className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
-                <button onClick={addCustomer} disabled={saving} className="px-3 bg-blue-600 text-white rounded-xl"><Check size={16} /></button>
-                <button onClick={() => setShowNewCustomer(false)} className="px-3 border border-gray-200 rounded-xl"><X size={16} /></button>
+                  className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
+                <button onClick={addCustomer} disabled={saving} className="px-3 bg-accent text-accent-foreground rounded-card"><Check size={16} /></button>
+                <button onClick={() => setShowNewCustomer(false)} className="px-3 border border-gray-200 rounded-card"><X size={16} /></button>
               </div>
             ) : (
               <div className="flex gap-2">
                 <select value={customerId} onChange={e => setCustomerId(e.target.value)}
-                  className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+                  className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                   <option value="">Select…</option>
                   {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                <button onClick={() => setShowNewCustomer(true)} className="px-3 border border-gray-200 rounded-xl text-gray-500"><Plus size={16} /></button>
+                <button onClick={() => setShowNewCustomer(true)} className="px-3 border border-gray-200 rounded-card text-gray-500"><Plus size={16} /></button>
               </div>
             )}
           </div>
@@ -213,7 +213,7 @@ export function MobileSales() {
           <div>
             <label className="block text-xs text-gray-500 mb-1">Warehouse</label>
             <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
               <option value="">Select…</option>
               {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
@@ -227,13 +227,13 @@ export function MobileSales() {
               <input value={itemQuery} onChange={e => setItemQuery(e.target.value)} placeholder="Search products…"
                 className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
             </div>
-            <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 border border-gray-100 rounded-xl mb-2">
+            <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 border border-gray-100 rounded-card mb-2">
               {products.filter(p => p.name.toLowerCase().includes(itemQuery.toLowerCase()) || p.sku?.toLowerCase().includes(itemQuery.toLowerCase())).map(p => {
                 const stock = stockByProduct[p.id] ?? 0
                 const outOfStock = !!warehouseId && stock <= 0
                 return (
                   <button key={p.id} onClick={() => addToCart(p.id)} disabled={cart.some(l => l.productId === p.id) || outOfStock}
-                    className="flex flex-col items-center gap-1 p-2 rounded-xl border border-gray-200 active:bg-gray-50 disabled:opacity-30 text-center">
+                    className="flex flex-col items-center gap-1 p-2 rounded-card border border-gray-200 active:bg-gray-50 disabled:opacity-30 text-center">
                     <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center">
                       {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" /> : <Package size={16} className="text-gray-300" />}
                     </div>
@@ -247,7 +247,7 @@ export function MobileSales() {
             {cart.map(line => {
               const p = products.find(x => x.id === line.productId)
               return (
-                <div key={line.productId} className="bg-gray-50 rounded-xl px-3 py-2.5 mb-2">
+                <div key={line.productId} className="bg-gray-50 rounded-card px-3 py-2.5 mb-2">
                   <div className="flex items-center gap-2 mb-1.5">
                     <span className="flex-1 text-sm font-medium truncate">{p?.name}</span>
                     <button onClick={() => removeLine(line.productId)} className="text-gray-400"><Trash2 size={14} /></button>
@@ -277,7 +277,7 @@ export function MobileSales() {
             <div className="grid grid-cols-4 gap-1.5 mb-2">
               {(['cash', 'bank_transfer', 'mobile_money', 'credit', 'hawala'] as const).map(m => (
                 <button key={m} onClick={() => setMethod(m)}
-                  className={`py-2 text-xs rounded-lg border capitalize ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>
+                  className={`py-2 text-xs rounded-lg border capitalize ${method === m ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white border-gray-200 text-gray-600'}`}>
                   {m.replace('_', ' ')}
                 </button>
               ))}
@@ -285,7 +285,7 @@ export function MobileSales() {
             {method === 'credit' ? (
               customerCredit.length > 0 ? (
                 <select value={creditAccountId} onChange={e => setCreditAccountId(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                   <option value="">Select credit account…</option>
                   {customerCredit.map(c => <option key={c.id} value={c.id}>{N(c.balance)}/{N(c.credit_limit)} ETB</option>)}
                 </select>
@@ -294,9 +294,9 @@ export function MobileSales() {
               )
             ) : (
               <select value={accountId} onChange={e => setAccountId(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
-                <option value="">Which account received it?</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
+                <option value="">Which ETB account received it?</option>
+                {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             )}
             {method === 'hawala' && <div className="mt-2"><HawalaFields value={hawala} onChange={setHawala} /></div>}
@@ -304,7 +304,7 @@ export function MobileSales() {
         </div>
         <div className="p-4 border-t border-gray-100 shrink-0">
           <button onClick={submit} disabled={saving}
-            className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+            className="w-full py-3.5 rounded-card bg-accent text-accent-foreground font-medium disabled:opacity-50 flex items-center justify-center gap-2">
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
             {saving ? 'Saving…' : `Record sale · ${N(cartTotal)} ETB`}
           </button>
@@ -318,7 +318,7 @@ export function MobileSales() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold flex items-center gap-2"><ShoppingCart size={18} /> Sales</h1>
         <button onClick={() => { setOpen(true); setError(null); setSuccess(null) }}
-          className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-xs rounded-xl">
+          className="flex items-center gap-1.5 px-3 py-2 bg-accent text-accent-foreground text-xs rounded-card">
           <Plus size={14} /> New sale
         </button>
       </div>
@@ -332,7 +332,7 @@ export function MobileSales() {
       ) : (
         <div className="space-y-2">
           {orders.map(o => (
-            <div key={o.id} className="bg-white border border-gray-200 rounded-2xl p-3.5">
+            <div key={o.id} className="bg-white shadow-[var(--shadow-card-sm)] rounded-card p-3.5">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-sm font-medium">{oneName(o.customers)}</p>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_CLS[o.status] ?? 'bg-gray-100 text-gray-600'}`}>{o.status}</span>

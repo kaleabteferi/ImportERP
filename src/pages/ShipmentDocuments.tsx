@@ -5,6 +5,8 @@ import {
   ArrowLeft, Printer, Edit2, Save, X,
   FileText, Package, Truck, Loader2
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Button } from '../components/ui/Button'
 
 interface DocData {
   shipment: any
@@ -184,58 +186,26 @@ export function ShipmentDocuments() {
     <div>
       {/* Toolbar — hidden on print */}
       <div className="p-5 max-w-5xl mx-auto print:hidden">
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-3">
-            <Link to={`/shipments/${id}`}
-                  className="inline-flex items-center gap-1 text-xs text-gray-400
-                             hover:text-gray-600 transition-colors">
-              <ArrowLeft size={13} /> Back
-            </Link>
-            <h1 className="text-lg font-medium">Shipping documents</h1>
-          </div>
-          <div className="flex items-center gap-2">
+        <Link to={`/shipments/${id}`}
+              className="inline-flex items-center gap-1 text-xs text-gray-400
+                         hover:text-gray-600 mb-3 transition-colors">
+          <ArrowLeft size={13} /> Back
+        </Link>
+
+        <PageHeader
+          title="Shipping documents"
+          actions={<>
             {editing ? (
               <>
-                <button
-                  onClick={() => setEditing(false)}
-                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                             border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
-                             text-gray-600"
-                >
-                  <X size={12} /> Cancel
-                </button>
-                <button
-                  onClick={saveOverrides}
-                  disabled={saving}
-                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-700
-                             text-white rounded-lg hover:bg-green-800 transition-colors
-                             disabled:opacity-50"
-                >
-                  {saving
-                    ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
-                    : <><Save size={12} /> Save to shipment</>
-                  }
-                </button>
+                <Button variant="secondary" icon={<X size={12} />} onClick={() => setEditing(false)}>Cancel</Button>
+                <Button loading={saving} icon={<Save size={12} />} onClick={saveOverrides}>Save to shipment</Button>
               </>
             ) : (
-              <button
-                onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                           border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
-                           text-gray-600"
-              >
-                <Edit2 size={12} /> Edit document details
-              </button>
+              <Button variant="secondary" icon={<Edit2 size={12} />} onClick={() => setEditing(true)}>Edit document details</Button>
             )}
-            <button
-              onClick={print}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600
-                         text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Printer size={12} /> Print / Save PDF
-            </button>
-          </div>
-        </div>
+            <Button icon={<Printer size={12} />} onClick={print}>Print / Save PDF</Button>
+          </>}
+        />
 
         {/* Document selector */}
         <div className="flex gap-2 mb-5">
@@ -250,7 +220,7 @@ export function ShipmentDocuments() {
               className={`flex items-center gap-1.5 px-4 py-2 text-xs rounded-lg
                           border transition-colors
                 ${docType === d.key
-                  ? 'bg-blue-600 text-white border-blue-600'
+                  ? 'bg-accent text-accent-foreground border-accent'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
             >
               <d.icon size={13} />

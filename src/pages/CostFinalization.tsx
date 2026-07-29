@@ -7,6 +7,11 @@ import {
   AlertTriangle, Lock, CheckCircle,
 } from 'lucide-react'
 import { useCostFinalization, type AllocationMethod } from '../hooks/useCostFinalization'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
@@ -69,13 +74,10 @@ export function CostFinalization() {
       </Link>
 
       {/* Page header */}
-      <div className="mb-6">
-        <h1 className="text-lg font-medium">Finalize costs</h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Review provisional expenses, confirm final amounts, preview unit
-          cost impact, then lock permanently.
-        </p>
-      </div>
+      <PageHeader
+        title="Finalize costs"
+        subtitle="Review provisional expenses, confirm final amounts, preview unit cost impact, then lock permanently."
+      />
 
       {/* Stepper */}
       <div className="flex items-center gap-0 mb-8">
@@ -89,12 +91,12 @@ export function CostFinalization() {
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center
                                  text-xs font-medium border-2 transition-all
                   ${done   ? 'bg-green-100 border-green-600 text-green-700'   : ''}
-                  ${active ? 'bg-blue-50 border-blue-600 text-blue-700'       : ''}
+                  ${active ? 'bg-accent/20 border-accent text-accent-foreground' : ''}
                   ${!done && !active ? 'bg-gray-50 border-gray-200 text-gray-400' : ''}`}>
                   {done ? <Check size={13} /> : n}
                 </div>
                 <span className={`text-xs text-center leading-tight
-                  ${active ? 'text-blue-700 font-medium' : 'text-gray-400'}`}>
+                  ${active ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
                   {label}
                 </span>
               </div>
@@ -110,7 +112,7 @@ export function CostFinalization() {
       {/* Error banner */}
       {fin.error && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border
-                        border-red-200 rounded-xl text-xs text-red-700 mb-4">
+                        border-red-200 rounded-card text-xs text-red-700 mb-4">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           {fin.error}
         </div>
@@ -120,7 +122,7 @@ export function CostFinalization() {
       {fin.step === 1 && (
         <div className="space-y-4">
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="flex items-center justify-between px-4 py-3 bg-gray-50
                             border-b border-gray-100">
               <p className="text-sm font-medium">Provisional expenses</p>
@@ -130,10 +132,10 @@ export function CostFinalization() {
             </div>
 
             <div className="divide-y divide-gray-50">
-              {fin.expenses.map(exp => {
+              {fin.expenses.map((exp, i) => {
                 const diff = exp.finalAmount - (exp.amount_etb ?? exp.amount)
                 return (
-                  <div key={exp.id} className="px-4 py-3">
+                  <div key={exp.id} className="stagger-row px-4 py-3" style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                     <div className="grid grid-cols-[2fr_1fr_auto_auto] gap-3
                                     items-center">
 
@@ -187,7 +189,7 @@ export function CostFinalization() {
                           onClick={() => fin.toggleFinal(exp.id)}
                           className={`relative w-8 h-4.5 rounded-full border-none
                                       transition-colors cursor-pointer
-                            ${exp.isFinal ? 'bg-blue-600' : 'bg-gray-200'}`}
+                            ${exp.isFinal ? 'bg-accent' : 'bg-gray-200'}`}
                           style={{ width: 32, height: 18 }}
                           aria-label={exp.isFinal ? 'Mark provisional' : 'Mark final'}
                         >
@@ -196,65 +198,34 @@ export function CostFinalization() {
                             ${exp.isFinal ? 'left-4' : 'left-0.5'}`}
                                 style={{ width: 14, height: 14 }} />
                         </button>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium
-                          ${exp.isFinal
-                            ? 'bg-green-50 text-green-700'
-                            : 'bg-amber-50 text-amber-700'}`}>
+                        <Badge variant={exp.isFinal ? 'success' : 'warning'}>
                           {exp.isFinal ? 'Final' : 'Provisional'}
-                        </span>
+                        </Badge>
                       </div>
                     </div>
                   </div>
                 )
               })}
             </div>
-          </div>
+          </Card>
 
           {/* Summary */}
           <div className="grid grid-cols-3 gap-3">
-            {[
-              {
-                label: 'Provisional total',
-                val: `${N(fin.provisionalTotal)} ETB`,
-                color: 'text-gray-900',
-              },
-              {
-                label: 'Final total',
-                val: fin.allConfirmed ? `${N(fin.finalTotal)} ETB` : '—',
-                color: 'text-blue-700',
-              },
-              {
-                label: 'Confirmed',
-                val: `${fin.confirmedCount} / ${fin.expenses.length}`,
-                color: fin.allConfirmed ? 'text-green-700' : 'text-gray-900',
-              },
-            ].map(s => (
-              <div key={s.label}
-                   className="bg-gray-50 rounded-xl px-4 py-3">
-                <p className="text-xs text-gray-400 mb-1">{s.label}</p>
-                <p className={`text-sm font-medium font-mono ${s.color}`}>{s.val}</p>
-              </div>
-            ))}
+            <StatCard label="Provisional total" value={`${N(fin.provisionalTotal)} ETB`} />
+            <StatCard label="Final total" value={<span className="text-blue-700">{fin.allConfirmed ? `${N(fin.finalTotal)} ETB` : '—'}</span>} />
+            <StatCard label="Confirmed" value={<span className={fin.allConfirmed ? 'text-green-700' : ''}>{fin.confirmedCount} / {fin.expenses.length}</span>} />
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={fin.markAllFinal}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                         border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
-                         text-gray-600"
-            >
-              <Check size={13} /> Mark all as final
-            </button>
-            <button
+            <Button variant="secondary" icon={<Check size={13} />} onClick={fin.markAllFinal}>
+              Mark all as final
+            </Button>
+            <Button
               onClick={() => fin.goToStep(2)}
               disabled={!fin.allConfirmed}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
-                         text-xs rounded-lg hover:bg-blue-700 disabled:opacity-40
-                         transition-colors"
             >
               Preview cost impact <ArrowRight size={13} />
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -265,7 +236,7 @@ export function CostFinalization() {
 
           {/* Controls */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="bg-white border border-gray-200 rounded-xl p-3">
+            <Card padded>
               <p className="text-xs text-gray-400 mb-2">Exchange rate (ETB/USD)</p>
               <div className="flex items-center gap-1.5">
                 <input
@@ -278,8 +249,8 @@ export function CostFinalization() {
                 />
                 <span className="text-xs text-gray-400">ETB</span>
               </div>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3">
+            </Card>
+            <Card padded>
               <p className="text-xs text-gray-400 mb-2">Allocation method</p>
               <select
                 value={fin.method}
@@ -292,23 +263,24 @@ export function CostFinalization() {
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3">
-              <p className="text-xs text-gray-400 mb-2">Total overhead change</p>
-              <p className={`text-sm font-medium font-mono
-                ${fin.overheadDelta > 0 ? 'text-red-600'
+            </Card>
+            <StatCard
+              label="Total overhead change"
+              value={
+                <span className={`text-sm ${fin.overheadDelta > 0 ? 'text-red-600'
                   : fin.overheadDelta < 0 ? 'text-green-700'
                   : 'text-gray-500'}`}>
-                {fin.overheadDelta === 0
-                  ? 'No change'
-                  : `${fin.overheadDelta > 0 ? '+' : ''}${N(fin.overheadDelta)} ETB`
-                }
-              </p>
-            </div>
+                  {fin.overheadDelta === 0
+                    ? 'No change'
+                    : `${fin.overheadDelta > 0 ? '+' : ''}${N(fin.overheadDelta)} ETB`
+                  }
+                </span>
+              }
+            />
           </div>
 
           {/* Impact table */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="grid grid-cols-4 gap-3 px-4 py-2.5 bg-gray-50
                             border-b border-gray-100 text-xs font-medium
                             text-gray-400 uppercase tracking-wide">
@@ -325,8 +297,9 @@ export function CostFinalization() {
               return (
                 <div
                   key={p.product_name}
-                  className={`grid grid-cols-4 gap-3 px-4 py-3 items-center
+                  className={`stagger-row grid grid-cols-4 gap-3 px-4 py-3 items-center
                     ${i < fin.preview.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                 >
                   <div className="text-sm font-medium">{p.product_name}</div>
                   <div className="text-right text-xs font-mono text-gray-500">
@@ -344,11 +317,11 @@ export function CostFinalization() {
                 </div>
               )
             })}
-          </div>
+          </Card>
 
           {/* Safety note */}
           <div className="flex items-start gap-2 px-4 py-3 bg-amber-50
-                          border border-amber-200 rounded-xl text-xs text-amber-800">
+                          border border-amber-200 rounded-card text-xs text-amber-800">
             <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-600" />
             <span>
               Units sold before finalization keep their provisional cost snapshot.
@@ -358,21 +331,12 @@ export function CostFinalization() {
           </div>
 
           <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={() => fin.goToStep(1)}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                         border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
-                         text-gray-600"
-            >
-              <ArrowLeft size={13} /> Back
-            </button>
-            <button
-              onClick={() => { fin.goToStep(3); setConfirmed(false) }}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
-                         text-xs rounded-lg hover:bg-blue-700 transition-colors"
-            >
+            <Button variant="secondary" icon={<ArrowLeft size={13} />} onClick={() => fin.goToStep(1)}>
+              Back
+            </Button>
+            <Button onClick={() => { fin.goToStep(3); setConfirmed(false) }}>
               Confirm finalization <ArrowRight size={13} />
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -383,7 +347,7 @@ export function CostFinalization() {
 
           {/* Danger warning */}
           <div className="flex items-start gap-3 px-4 py-3 bg-red-50
-                          border border-red-200 rounded-xl text-xs text-red-700">
+                          border border-red-200 rounded-card text-xs text-red-700">
             <AlertTriangle size={15} className="shrink-0 mt-0.5 text-red-500" />
             <div>
               <p className="font-medium mb-1">This action cannot be undone.</p>
@@ -393,7 +357,7 @@ export function CostFinalization() {
           </div>
 
           {/* Expense lock list */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 Expenses to lock
@@ -404,8 +368,9 @@ export function CostFinalization() {
               return (
                 <div
                   key={exp.id}
-                  className={`flex items-center justify-between px-4 py-2.5 text-sm
+                  className={`stagger-row flex items-center justify-between px-4 py-2.5 text-sm
                     ${i < fin.expenses.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                 >
                   <span className="text-gray-600">{exp.description}</span>
                   <div className="text-right">
@@ -425,10 +390,10 @@ export function CostFinalization() {
               <span className="text-gray-600">Total</span>
               <span className="font-mono">{N(fin.finalTotal)} ETB</span>
             </div>
-          </div>
+          </Card>
 
           {/* New unit costs */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 New unit landed costs
@@ -437,8 +402,9 @@ export function CostFinalization() {
             {fin.preview.map((p, i) => (
               <div
                 key={p.product_name}
-                className={`flex items-center justify-between px-4 py-2.5 text-sm
+                className={`stagger-row flex items-center justify-between px-4 py-2.5 text-sm
                   ${i < fin.preview.length - 1 ? 'border-b border-gray-50' : ''}`}
+                style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
               >
                 <span className="font-medium">{p.product_name}</span>
                 <div className="flex items-center gap-3">
@@ -457,11 +423,11 @@ export function CostFinalization() {
                 </div>
               </div>
             ))}
-          </div>
+          </Card>
 
           {/* Confirmation checkbox */}
           <label className="flex items-center gap-3 px-4 py-3 bg-gray-50
-                            rounded-xl border border-gray-200 cursor-pointer">
+                            rounded-card border border-gray-200 cursor-pointer">
             <input
               type="checkbox"
               checked={confirmed}
@@ -475,26 +441,18 @@ export function CostFinalization() {
           </label>
 
           <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={() => fin.goToStep(2)}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                         border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
-                         text-gray-600"
-            >
-              <ArrowLeft size={13} /> Back
-            </button>
-            <button
+            <Button variant="secondary" icon={<ArrowLeft size={13} />} onClick={() => fin.goToStep(2)}>
+              Back
+            </Button>
+            <Button
               onClick={fin.finalize}
               disabled={!confirmed || fin.isSaving}
-              className="flex items-center gap-1.5 px-4 py-2 bg-green-700 text-white
-                         text-xs rounded-lg hover:bg-green-800 disabled:opacity-40
-                         transition-colors min-w-[160px] justify-center"
+              loading={fin.isSaving}
+              icon={<Lock size={12} />}
+              className="min-w-[160px]"
             >
-              {fin.isSaving
-                ? <><Loader2 size={12} className="animate-spin" /> Finalizing…</>
-                : <><Lock size={12} /> Lock costs permanently</>
-              }
-            </button>
+              {fin.isSaving ? 'Finalizing…' : 'Lock costs permanently'}
+            </Button>
           </div>
         </div>
       )}
@@ -503,7 +461,7 @@ export function CostFinalization() {
       {fin.step === 4 && fin.result && (
         <div className="space-y-4">
 
-          <div className="bg-green-50 border border-green-200 rounded-xl
+          <div className="bg-green-50 border border-green-200 rounded-card
                           p-8 text-center">
             <div className="w-12 h-12 rounded-full bg-green-100 border-2
                             border-green-600 flex items-center justify-center
@@ -525,7 +483,7 @@ export function CostFinalization() {
           </div>
 
           {/* What changed */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 What changed
@@ -534,8 +492,9 @@ export function CostFinalization() {
             {fin.result.items.map((item, i) => (
               <div
                 key={item.product_name}
-                className={`flex items-center justify-between px-4 py-3
+                className={`stagger-row flex items-center justify-between px-4 py-3
                   ${i < fin.result!.items.length - 1 ? 'border-b border-gray-50' : ''}`}
+                style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
               >
                 <div>
                   <p className="text-sm font-medium">{item.product_name}</p>
@@ -559,22 +518,22 @@ export function CostFinalization() {
                 </div>
               </div>
             ))}
-          </div>
+          </Card>
 
           <div className="flex items-center justify-between pt-2">
             <Link
               to={`/shipments/${id}`}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                         border-gray-200 rounded-lg hover:bg-gray-50 transition-colors
+                         border-gray-200 rounded-card hover:bg-gray-50 transition-colors
                          text-gray-600"
             >
               <ArrowLeft size={13} /> Back to shipment
             </Link>
             <Link
               to="/"
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600
-                         text-white text-xs rounded-lg hover:bg-blue-700
-                         transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 bg-accent
+                         text-accent-foreground text-xs rounded-card hover:brightness-95
+                         transition-colors font-medium"
             >
               Go to dashboard
             </Link>

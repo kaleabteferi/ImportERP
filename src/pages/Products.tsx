@@ -7,7 +7,12 @@ import { BulkActionBar } from '../components/BulkActionBar'
 import { SortHeader } from '../components/SortHeader'
 import { useSort } from '../lib/useSort'
 import { useBulkSelect } from '../lib/useBulkSelect'
-import { Plus, Tag, X, Check, Loader2, ImagePlus, ClipboardPaste } from 'lucide-react'
+import { Plus, Tag, Check, Loader2, ImagePlus, ClipboardPaste } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
 
 const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'sku', label: 'SKU', required: true, width: '110px' },
@@ -200,30 +205,14 @@ export function Products() {
   return (
     <div className="p-5 max-w-5xl mx-auto">
 
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Products</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {products.length} product{products.length !== 1 ? 's' : ''}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowImport(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 bg-white
-                       text-gray-600 text-xs rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <ClipboardPaste size={13} /> Bulk import
-          </button>
-          <button
-            onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                       text-xs rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={13} /> Add product
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Products"
+        subtitle={`${products.length} product${products.length !== 1 ? 's' : ''}`}
+        actions={<>
+          <Button variant="secondary" icon={<ClipboardPaste size={13} />} onClick={() => setShowImport(true)}>Bulk import</Button>
+          <Button icon={<Plus size={13} />} onClick={openNew}>Add product</Button>
+        </>}
+      />
 
       {showImport && (
         <BulkImportModal
@@ -251,20 +240,14 @@ export function Products() {
             Add your products here first. You'll link them to shipments
             when entering PI line items.
           </p>
-          <button
-            onClick={openNew}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
-                       text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={13} /> Add first product
-          </button>
+          <Button icon={<Plus size={13} />} onClick={openNew} className="mx-auto">Add first product</Button>
         </div>
       )}
 
       {!loading && products.length > 0 && (
         <>
           <BulkActionBar count={count} itemLabel="product" onClear={clear} onDelete={bulkDelete} />
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
           <div className="grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_90px_auto] gap-3
                           px-4 py-2.5 bg-gray-50 border-b border-gray-100
                           text-xs font-medium text-gray-400 uppercase tracking-wide items-center">
@@ -284,9 +267,10 @@ export function Products() {
           {sorted.map((p, i) => (
             <div
               key={p.id}
-              className={`grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_90px_auto] gap-3
+              className={`stagger-row grid grid-cols-[24px_36px_1fr_2fr_70px_80px_80px_1fr_90px_90px_auto] gap-3
                           px-4 py-3 items-center text-sm
                           ${i < sorted.length - 1 ? 'border-b border-gray-50' : ''} ${selected.has(p.id) ? 'bg-blue-50/40' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
             >
               <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="cursor-pointer" />
               <div className="w-8 h-8 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
@@ -311,14 +295,9 @@ export function Products() {
                 {p.volume_m3 ?? '—'}
               </div>
               <div>
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                  ${p.assembly_type === 'FULL' || p.is_assembled
-                    ? 'bg-purple-50 text-purple-700'
-                    : p.assembly_type === 'SKD' || p.assembly_type === 'CKD'
-                      ? 'bg-amber-50 text-amber-700'
-                      : 'bg-gray-100 text-gray-600'}`}>
+                <Badge variant={p.assembly_type === 'FULL' || p.is_assembled ? 'accent' : p.assembly_type === 'SKD' || p.assembly_type === 'CKD' ? 'warning' : 'neutral'}>
                   {p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED')}
-                </span>
+                </Badge>
               </div>
               <div className="text-right text-xs font-mono text-gray-500">
                 {p.default_customs_value != null ? `$${p.default_customs_value}` : '—'}
@@ -337,35 +316,22 @@ export function Products() {
               </div>
             </div>
           ))}
-          </div>
+          </Card>
         </>
       )}
 
       {/* Modal */}
-      {open && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center
-                     justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-md
-                          max-h-[90vh] overflow-auto shadow-xl">
-
-            <div className="flex items-center justify-between px-5 py-4
-                            border-b border-gray-100">
-              <h2 className="text-sm font-medium">
-                {editId ? 'Edit product' : 'New product'}
-              </h2>
-              <button
-                onClick={() => setOpen(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-4">
-
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? 'Edit product' : 'New product'}
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button loading={saving} icon={<Check size={12} />} onClick={save} className="min-w-[110px]">
+            {editId ? 'Save' : 'Add product'}
+          </Button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Photo</label>
                 {editId ? (
@@ -568,34 +534,7 @@ export function Products() {
                   {error}
                 </div>
               )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-4
-                            border-t border-gray-100">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 text-xs text-gray-600 border border-gray-200
-                           rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600
-                           text-white text-xs rounded-lg hover:bg-blue-700
-                           disabled:opacity-50 transition-colors
-                           min-w-[110px] justify-center"
-              >
-                {saving
-                  ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
-                  : <><Check size={12} /> {editId ? 'Save' : 'Add product'}</>
-                }
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

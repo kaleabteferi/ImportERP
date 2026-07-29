@@ -168,13 +168,13 @@ export function ManufacturingPerformanceCard() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-xs font-medium text-gray-500 flex items-center gap-1.5"><Gauge size={12} /> Capacity efficiency (last 30 days)</p>
-          <button onClick={() => setAddOpen(v => !v)} className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+          <button onClick={() => setAddOpen(v => !v)} className="flex items-center gap-1 text-xs text-gray-500 hover:text-accent-foreground transition-colors">
             <Plus size={11} /> Set a rate
           </button>
         </div>
 
         {addOpen && (
-          <div className="flex flex-wrap items-end gap-2 bg-gray-50 rounded-lg p-2.5 mb-3">
+          <div className="flex flex-wrap items-end gap-2 bg-gray-50 rounded-card p-2.5 mb-3">
             <select value={form.warehouseId} onChange={e => setForm(p => ({ ...p, warehouseId: e.target.value }))}
               className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
               <option value="">Warehouse…</option>
@@ -189,7 +189,7 @@ export function ManufacturingPerformanceCard() {
               onChange={e => setForm(p => ({ ...p, rate: e.target.value }))}
               className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg w-24" />
             <button onClick={saveCapacity} disabled={saving}
-              className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded-lg disabled:opacity-50">
+              className="px-3 py-1.5 bg-accent text-accent-foreground text-xs font-medium rounded-full disabled:opacity-50 hover:brightness-95 transition">
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

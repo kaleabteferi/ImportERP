@@ -1,6 +1,7 @@
 import { useState, useMemo, isValidElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { BookOpen, ChevronRight, Search, ListChecks } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
 
 interface DocGroup { title: string; sections: DocSectionDef[] }
 interface DocSectionDef { id: string; title: string; roles?: string; body: React.ReactNode }
@@ -378,28 +379,29 @@ export function Documentation() {
 
   return (
     <div className="p-5 max-w-6xl mx-auto">
-      <div className="mb-5 flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><BookOpen size={18} /> Documentation</h1>
-          <p className="text-xs text-gray-400 mt-0.5">How every part of the ERP actually works — one page, organized by module</p>
-        </div>
-        <div className="relative w-full max-w-xs">
-          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search the docs…"
-            className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-        </div>
-      </div>
+      <PageHeader
+        icon={<BookOpen size={18} />}
+        title="Documentation"
+        subtitle="How every part of the ERP actually works — one page, organized by module"
+        actions={
+          <div className="relative w-full max-w-xs">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search the docs…"
+              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        }
+      />
 
       {q && (
         <p className="text-xs text-gray-400 mb-3">{matchCount === 0 ? `No sections match "${query}".` : `${matchCount} section${matchCount === 1 ? '' : 's'} match "${query}".`}</p>
       )}
 
       {!q && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 mb-5">
+        <div className="bg-blue-50 border border-blue-100 rounded-card p-5 mb-5">
           <p className="text-sm font-medium flex items-center gap-2 mb-3"><ListChecks size={15} className="text-blue-600" /> New here? Do these in order</p>
           <div className="space-y-3">
             {QUICK_START.map(item => (
@@ -440,7 +442,7 @@ export function Documentation() {
           {matchedGroups.map(group => (
             <div key={group.title} className="space-y-4">
               {group.sections.map(s => (
-                <div key={s.id} id={s.id} className="bg-white border border-gray-200 rounded-xl p-5 scroll-mt-5">
+                <div key={s.id} id={s.id} className="bg-white border border-gray-200 rounded-card p-5 scroll-mt-5">
                   <RoleBadge roles={s.roles} />
                   <h2 className="text-sm font-medium mb-2">{s.title}</h2>
                   <div className="text-sm text-gray-700 leading-relaxed space-y-2">{s.body}</div>

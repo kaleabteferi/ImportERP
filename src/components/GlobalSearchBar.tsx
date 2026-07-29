@@ -49,7 +49,7 @@ export function GlobalSearchBar({ placeholder, autoFocus }: { placeholder?: stri
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
         onFocus={() => setOpen(true)}
         placeholder={placeholder ?? 'Search products, customers, suppliers, orders, shipments…'}
-        className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+        className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-full bg-white focus:outline-none focus:ring-2 focus:ring-accent"
       />
       {showDropdown && (
         <div className="absolute z-40 mt-1 w-full max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1.5">

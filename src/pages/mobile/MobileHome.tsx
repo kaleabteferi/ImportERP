@@ -11,7 +11,7 @@ function Tile({ to, icon: Icon, label, value, tone }: {
   to: string; icon: typeof TrendingUp; label: string; value: string; tone?: 'warn' | 'good'
 }) {
   return (
-    <Link to={to} className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col gap-2 active:bg-gray-50">
+    <Link to={to} className="bg-white rounded-card shadow-[var(--shadow-card-sm)] p-4 flex flex-col gap-2 active:bg-gray-50">
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tone === 'warn' ? 'bg-amber-50 text-amber-600' : tone === 'good' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
         <Icon size={16} />
       </div>
@@ -25,7 +25,7 @@ function Tile({ to, icon: Icon, label, value, tone }: {
 
 function ActionButton({ to, icon: Icon, label, color }: { to: string; icon: typeof ShoppingCart; label: string; color: string }) {
   return (
-    <Link to={to} className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl py-4 text-white ${color} active:opacity-90`}>
+    <Link to={to} className={`flex flex-col items-center justify-center gap-1.5 rounded-card py-4 text-white ${color} active:opacity-90`}>
       <Icon size={22} />
       <span className="text-xs font-medium">{label}</span>
     </Link>
@@ -50,7 +50,7 @@ export function MobileHome() {
       ) : (
         <>
           {d.topAdvice && (
-            <div className="bg-indigo-600 text-white rounded-2xl p-4 mb-4">
+            <div className="bg-indigo-600 text-white rounded-card p-4 mb-4">
               <p className="text-xs text-indigo-200 uppercase tracking-wide mb-1">Today's advice</p>
               <p className="text-sm leading-snug">{d.topAdvice.text}</p>
             </div>
@@ -73,7 +73,7 @@ export function MobileHome() {
           </div>
 
           {d.todoToday.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+            <div className="bg-white rounded-card shadow-[var(--shadow-card-sm)] overflow-hidden">
               <p className="text-xs font-medium text-gray-500 px-4 pt-3 pb-1">What needs attention</p>
               {d.todoToday.map((t, i) => {
                 const content = (

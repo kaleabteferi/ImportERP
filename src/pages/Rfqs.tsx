@@ -11,15 +11,22 @@ import {
   FileSearch, Loader2, Plus, X, Check, Trash2, ChevronLeft, Award, UserPlus,
   ExternalLink, Info,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
 interface Option { id: string; name: string }
 interface ProductOption { id: string; name: string; sku: string }
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
-const STATUS_CLS: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-50 text-blue-700',
-  awarded: 'bg-green-50 text-green-700', closed: 'bg-gray-100 text-gray-500',
-  invited: 'bg-gray-100 text-gray-600', quoted: 'bg-blue-50 text-blue-700', declined: 'bg-red-50 text-red-700',
+
+type BadgeVariant = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent'
+const STATUS_VARIANT: Record<string, BadgeVariant> = {
+  draft: 'neutral', sent: 'info',
+  awarded: 'success', closed: 'neutral',
+  invited: 'neutral', quoted: 'info', declined: 'danger',
 }
 
 function NewRfqForm({ products, companies, onCancel, onCreated }: {
@@ -59,7 +66,7 @@ function NewRfqForm({ products, companies, onCancel, onCreated }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
+    <Card padded className="mb-4 space-y-3">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="grid grid-cols-2 gap-2">
         <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Reference (e.g. Q3 SKD panels restock)"
@@ -75,13 +82,14 @@ function NewRfqForm({ products, companies, onCancel, onCreated }: {
       <div className="space-y-2">
         <p className="text-xs font-medium text-gray-500">Products to source</p>
         {lines.map((line, i) => (
-          <div key={i} className="flex gap-2 items-center">
-            <SearchableSelect className="flex-1" options={productOptions} value={line.productId}
-              onChange={id => updateLine(i, { productId: id })} placeholder="Product" />
-            <input type="number" value={line.quantity} onChange={e => updateLine(i, { quantity: e.target.value })}
-              placeholder="Quantity" className="w-28 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-            <button onClick={() => removeLine(i)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
-          </div>
+          <SwipeToDelete key={i} onDelete={() => removeLine(i)}>
+            <div className="flex gap-2 items-center bg-white py-0.5">
+              <SearchableSelect className="flex-1" options={productOptions} value={line.productId}
+                onChange={id => updateLine(i, { productId: id })} placeholder="Product" />
+              <input type="number" value={line.quantity} onChange={e => updateLine(i, { quantity: e.target.value })}
+                placeholder="Quantity" className="w-28 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            </div>
+          </SwipeToDelete>
         ))}
         <button onClick={addLine} className="text-xs text-blue-600 flex items-center gap-1"><Plus size={12} /> Add product</button>
       </div>
@@ -90,12 +98,12 @@ function NewRfqForm({ products, companies, onCancel, onCreated }: {
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg resize-none" />
 
       <div className="flex gap-2 justify-end pt-1">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {saving ? 'Creating…' : 'Create RFQ'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} icon={<Check size={12} />} onClick={submit}>
+          {saving ? 'Creating…' : 'Create RFQ'}
+        </Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -161,7 +169,7 @@ function QuoteColumn({ quote, rfq, onChanged, onAwarded }: {
   }
 
   return (
-    <div className={`border rounded-xl overflow-hidden shrink-0 w-64 ${quote.status === 'declined' ? 'opacity-50' : ''} ${isAwarded && quote.status !== 'declined' ? 'border-green-300' : 'border-gray-200'}`}>
+    <div className={`border rounded-card overflow-hidden shrink-0 w-64 ${quote.status === 'declined' ? 'opacity-50' : ''} ${isAwarded && quote.status !== 'declined' ? 'border-green-300' : 'border-gray-200'}`}>
       <div className="px-3 py-2.5 bg-gray-50 border-b border-gray-100">
         <div className="flex items-center justify-between gap-1">
           <p className="text-sm font-medium truncate">{quote.supplierName}</p>
@@ -169,7 +177,7 @@ function QuoteColumn({ quote, rfq, onChanged, onAwarded }: {
             <button onClick={remove} disabled={removing} className="p-1 text-gray-300 hover:text-red-500 shrink-0"><Trash2 size={12} /></button>
           )}
         </div>
-        <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_CLS[quote.status]}`}>{quote.status}</span>
+        <Badge variant={STATUS_VARIANT[quote.status] ?? 'neutral'}>{quote.status}</Badge>
       </div>
 
       <div className="p-3 space-y-2">
@@ -204,13 +212,11 @@ function QuoteColumn({ quote, rfq, onChanged, onAwarded }: {
 
         {canEdit && (
           <div className="flex gap-1.5 pt-1">
-            <button onClick={save} disabled={saving} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
-              {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Save
-            </button>
-            <button onClick={award} disabled={awarding || total <= 0} title={total <= 0 ? 'Enter at least one price first' : undefined}
-              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded-lg bg-green-600 text-white disabled:opacity-40">
-              {awarding ? <Loader2 size={11} className="animate-spin" /> : <Award size={11} />} Award
-            </button>
+            <Button variant="secondary" loading={saving} icon={<Check size={11} />} onClick={save} className="flex-1">Save</Button>
+            <Button loading={awarding} disabled={total <= 0} icon={<Award size={11} />} onClick={award}
+              title={total <= 0 ? 'Enter at least one price first' : undefined} className="flex-1">
+              Award
+            </Button>
           </div>
         )}
       </div>
@@ -269,15 +275,13 @@ function RfqDetailView({ rfqId, onBack }: { rfqId: string; onBack: () => void })
         <ChevronLeft size={13} /> Back to RFQs
       </button>
 
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-medium">{rfq.reference}</h1>
-          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1.5">
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_CLS[rfq.status]}`}>{rfq.status}</span>
-            {rfq.lines.length} product{rfq.lines.length === 1 ? '' : 's'} · {rfq.quotes.length} supplier{rfq.quotes.length === 1 ? '' : 's'} invited
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={rfq.reference}
+        subtitle={<span className="flex items-center gap-1.5">
+          <Badge variant={STATUS_VARIANT[rfq.status] ?? 'neutral'}>{rfq.status}</Badge>
+          {rfq.lines.length} product{rfq.lines.length === 1 ? '' : 's'} · {rfq.quotes.length} supplier{rfq.quotes.length === 1 ? '' : 's'} invited
+        </span>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -296,15 +300,12 @@ function RfqDetailView({ rfqId, onBack }: { rfqId: string; onBack: () => void })
       {rfq.status !== 'awarded' && (
         <div className="flex items-center gap-2 mb-4">
           <SearchableSelect className="w-64" options={inviteOptions} value="" onChange={setInviteId} placeholder="Invite a supplier…" />
-          <button onClick={invite} disabled={!inviteId || inviting}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-            {inviting ? <Loader2 size={12} className="animate-spin" /> : <UserPlus size={12} />} Invite
-          </button>
+          <Button loading={inviting} disabled={!inviteId} icon={<UserPlus size={12} />} onClick={invite}>Invite</Button>
         </div>
       )}
 
       {rfq.quotes.length === 0 ? (
-        <div className="text-center py-12 text-sm text-gray-400 bg-gray-50 rounded-xl">Invite a supplier above to start collecting quotes.</div>
+        <div className="text-center py-12 text-sm text-gray-400 bg-gray-50 rounded-card">Invite a supplier above to start collecting quotes.</div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {rfq.quotes.map(q => (
@@ -361,15 +362,12 @@ export function Rfqs() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><FileSearch size={18} /> Supplier RFQs</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Collect and compare quotes from multiple suppliers before creating a shipment</p>
-        </div>
-        <button onClick={() => setShowForm(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
-          {showForm ? <X size={12} /> : <Plus size={12} />} New RFQ
-        </button>
-      </div>
+      <PageHeader
+        icon={<FileSearch size={18} />}
+        title="Supplier RFQs"
+        subtitle="Collect and compare quotes from multiple suppliers before creating a shipment"
+        actions={<Button icon={showForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowForm(v => !v)}>New RFQ</Button>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -384,35 +382,37 @@ export function Rfqs() {
           <p className="text-xs text-gray-400 mb-4 flex items-center gap-1.5 justify-center"><Info size={12} /> Use this when you want to compare pricing across suppliers before committing to a shipment.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <div>Reference</div><div>Status</div><div>Products</div><div>Suppliers</div><div></div>
           </div>
-          {rfqs.map((r, i) => (
-            <div key={r.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50 ${i < rfqs.length - 1 ? 'border-b border-gray-50' : ''}`}
-              onClick={() => setActiveId(r.id)}>
-              <div>
-                <p className="font-medium">{r.reference}</p>
-                {r.companyName && <p className="text-xs text-gray-400">{r.companyName}</p>}
+          {rfqs.map((r, i) => {
+            const content = (
+              <div className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50 ${i < rfqs.length - 1 ? 'border-b border-gray-50' : ''}`}
+                style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
+                onClick={() => setActiveId(r.id)}>
+                <div>
+                  <p className="font-medium">{r.reference}</p>
+                  {r.companyName && <p className="text-xs text-gray-400">{r.companyName}</p>}
+                </div>
+                <div>
+                  <Badge variant={STATUS_VARIANT[r.status] ?? 'neutral'}>{r.status}</Badge>
+                  {r.awardedShipmentNumber && (
+                    <Link to={`/shipments/${r.awardedShipmentId}`} onClick={e => e.stopPropagation()} className="ml-2 text-xs text-blue-600 hover:underline">{r.awardedShipmentNumber}</Link>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500">{r.lineCount} line{r.lineCount === 1 ? '' : 's'}</div>
+                <div className="text-xs text-gray-500">{r.quoteCount} invited</div>
+                <div></div>
               </div>
-              <div>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_CLS[r.status]}`}>{r.status}</span>
-                {r.awardedShipmentNumber && (
-                  <Link to={`/shipments/${r.awardedShipmentId}`} onClick={e => e.stopPropagation()} className="ml-2 text-xs text-blue-600 hover:underline">{r.awardedShipmentNumber}</Link>
-                )}
-              </div>
-              <div className="text-xs text-gray-500">{r.lineCount} line{r.lineCount === 1 ? '' : 's'}</div>
-              <div className="text-xs text-gray-500">{r.quoteCount} invited</div>
-              <div>
-                {r.status !== 'awarded' && (
-                  <button onClick={e => { e.stopPropagation(); remove(r.id, r.reference) }} className="p-1.5 text-gray-300 hover:text-red-500">
-                    <Trash2 size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+            )
+            return r.status !== 'awarded' ? (
+              <SwipeToDelete key={r.id} onDelete={() => remove(r.id, r.reference)}>{content}</SwipeToDelete>
+            ) : (
+              <div key={r.id}>{content}</div>
+            )
+          })}
+        </Card>
       )}
     </div>
   )

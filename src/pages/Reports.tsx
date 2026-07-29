@@ -5,6 +5,8 @@ import {
   BarChart3, Loader2, ArrowDownLeft, ArrowUpRight, Wallet, CreditCard, ChevronRight,
   Users, Package, Building2, Receipt, Landmark,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { StatCard } from '../components/ui/StatCard'
 
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
@@ -249,10 +251,7 @@ export function Reports() {
   return (
     <div className="p-5 max-w-4xl mx-auto">
 
-      <div className="mb-5">
-        <h1 className="text-lg font-medium">Reports</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Last 6 months · every payment recorded across the app</p>
-      </div>
+      <PageHeader title="Reports" subtitle="Last 6 months · every payment recorded across the app" />
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -262,16 +261,13 @@ export function Reports() {
           { label: 'Cash in (6mo)',   val: N(totalCashIn) + ' ETB', color: 'text-green-700' },
           { label: 'Cash out (6mo)',  val: N(totalCashOut) + ' ETB', color: 'text-red-600' },
         ].map(k => (
-          <div key={k.label} className="bg-gray-50 rounded-xl p-4">
-            <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">{k.label}</p>
-            <p className={`text-xl font-medium ${k.color}`}>{k.val}</p>
-          </div>
+          <StatCard key={k.label} label={k.label} value={<span className={k.color}>{k.val}</span>} />
         ))}
       </div>
 
       {/* Outstanding today */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-        <Link to="/supplier-payments" className="group bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between transition-all hover:border-red-300 hover:shadow-sm">
+        <Link to="/supplier-payments" className="group bg-white border border-gray-200 rounded-card p-4 flex items-center justify-between transition-all hover:border-red-300 hover:shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center shrink-0"><Wallet size={16} className="text-red-600" /></div>
             <div>
@@ -285,7 +281,7 @@ export function Reports() {
           </div>
           <ChevronRight size={16} className="text-gray-300 group-hover:text-red-400 shrink-0" />
         </Link>
-        <Link to="/receivables" className="group bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between transition-all hover:border-blue-300 hover:shadow-sm">
+        <Link to="/receivables" className="group bg-white border border-gray-200 rounded-card p-4 flex items-center justify-between transition-all hover:border-blue-300 hover:shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0"><CreditCard size={16} className="text-blue-600" /></div>
             <div>
@@ -295,7 +291,7 @@ export function Reports() {
           </div>
           <ChevronRight size={16} className="text-gray-300 group-hover:text-blue-400 shrink-0" />
         </Link>
-        <Link to="/credit-accounts" className="group bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between transition-all hover:border-violet-300 hover:shadow-sm">
+        <Link to="/credit-accounts" className="group bg-white border border-gray-200 rounded-card p-4 flex items-center justify-between transition-all hover:border-violet-300 hover:shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-violet-50 flex items-center justify-center shrink-0"><Landmark size={16} className="text-violet-600" /></div>
             <div>
@@ -317,11 +313,11 @@ export function Reports() {
         </Link>
       </div>
       {totalAging === 0 ? (
-        <div className="text-center py-8 mb-6 bg-gray-50 rounded-xl text-xs text-gray-400">Nothing unpaid right now.</div>
+        <div className="text-center py-8 mb-6 bg-gray-50 rounded-card text-xs text-gray-400">Nothing unpaid right now.</div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {aging.map((b, i) => (
-            <div key={b.label} className={`rounded-xl p-3 ${i === 3 && b.amount > 0 ? 'bg-red-50' : i === 2 && b.amount > 0 ? 'bg-amber-50' : 'bg-gray-50'}`}>
+            <div key={b.label} className={`rounded-card p-3 ${i === 3 && b.amount > 0 ? 'bg-red-50' : i === 2 && b.amount > 0 ? 'bg-amber-50' : 'bg-gray-50'}`}>
               <p className="text-xs text-gray-400">{b.label}</p>
               <p className={`text-base font-medium font-mono ${i === 3 && b.amount > 0 ? 'text-red-700' : i === 2 && b.amount > 0 ? 'text-amber-700' : 'text-gray-700'}`}>{N(b.amount)} ETB</p>
               <p className="text-[10px] text-gray-400">{b.count} invoice{b.count === 1 ? '' : 's'}</p>
@@ -338,11 +334,11 @@ export function Reports() {
         </Link>
       </div>
       {cash.length === 0 ? (
-        <div className="text-center py-10 mb-6 bg-gray-50 rounded-xl text-xs text-gray-400">
+        <div className="text-center py-10 mb-6 bg-gray-50 rounded-card text-xs text-gray-400">
           No payments recorded in the last 6 months.
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+        <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
           {cash.map((m, i) => {
             const net = m.cashIn - m.cashOut
             return (
@@ -378,7 +374,7 @@ export function Reports() {
       {/* Money in/out by method */}
       <div className="text-xs font-medium text-gray-500 mb-2">How money moved (6mo, ETB)</div>
       <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-card p-4">
           <p className="text-xs font-medium text-green-700 mb-2">In</p>
           {methodIn.length === 0 ? <p className="text-xs text-gray-300">Nothing yet</p> : (
             <div className="space-y-1.5">
@@ -394,7 +390,7 @@ export function Reports() {
             </div>
           )}
         </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-card p-4">
           <p className="text-xs font-medium text-red-600 mb-2">Out</p>
           {methodOut.length === 0 ? <p className="text-xs text-gray-300">Nothing yet</p> : (
             <div className="space-y-1.5">
@@ -415,9 +411,9 @@ export function Reports() {
       {/* Expenses by category */}
       <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Receipt size={12} /> Expenses by category (6mo, ETB)</div>
       {expensesByCategory.length === 0 ? (
-        <div className="text-center py-8 mb-6 bg-gray-50 rounded-xl text-xs text-gray-400">No expenses recorded in the last 6 months.</div>
+        <div className="text-center py-8 mb-6 bg-gray-50 rounded-card text-xs text-gray-400">No expenses recorded in the last 6 months.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 space-y-1.5">
+        <div className="bg-white border border-gray-200 rounded-card p-4 mb-6 space-y-1.5">
           {expensesByCategory.map(c => (
             <div key={c.name} className="flex items-center gap-2 text-xs">
               <span className="w-24 text-gray-500 shrink-0 truncate">{c.name}</span>
@@ -435,9 +431,9 @@ export function Reports() {
         <div>
           <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Users size={12} /> Top customers (6mo revenue)</div>
           {topCustomers.length === 0 ? (
-            <div className="text-center py-8 bg-gray-50 rounded-xl text-xs text-gray-400">No sales yet.</div>
+            <div className="text-center py-8 bg-gray-50 rounded-card text-xs text-gray-400">No sales yet.</div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {topCustomers.map((c, i) => (
                 <div key={c.name} className={`flex items-center justify-between px-3 py-2 text-xs ${i < topCustomers.length - 1 ? 'border-b border-gray-50' : ''}`}>
                   <span className="text-gray-700 truncate">{c.name}</span>
@@ -450,9 +446,9 @@ export function Reports() {
         <div>
           <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Building2 size={12} /> Top suppliers paid (6mo)</div>
           {topSuppliers.length === 0 ? (
-            <div className="text-center py-8 bg-gray-50 rounded-xl text-xs text-gray-400">No supplier payments yet.</div>
+            <div className="text-center py-8 bg-gray-50 rounded-card text-xs text-gray-400">No supplier payments yet.</div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {topSuppliers.map((s, i) => (
                 <div key={s.name} className={`flex items-center justify-between px-3 py-2 text-xs ${i < topSuppliers.length - 1 ? 'border-b border-gray-50' : ''}`}>
                   <span className="text-gray-700 truncate">{s.name}</span>
@@ -467,9 +463,9 @@ export function Reports() {
       {/* Top products */}
       <div className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5"><Package size={12} /> Top products (6mo revenue &amp; margin)</div>
       {topProducts.length === 0 ? (
-        <div className="text-center py-8 mb-6 bg-gray-50 rounded-xl text-xs text-gray-400">No sales yet.</div>
+        <div className="text-center py-8 mb-6 bg-gray-50 rounded-card text-xs text-gray-400">No sales yet.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+        <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
           <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <div>Product</div>
             <div className="text-right">Units</div>
@@ -500,7 +496,7 @@ export function Reports() {
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
           <div className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100
                           text-xs font-medium text-gray-400 uppercase tracking-wide">

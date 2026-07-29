@@ -6,6 +6,7 @@ import {
   Building2, DollarSign, Users, Check,
   Loader2, Plus, X, Info, Wallet
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
 
 interface CompanySettings {
   id: string
@@ -112,7 +113,7 @@ function InfoTip({ text }: { text: string }) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShow(false)} />
           <div className="absolute left-5 top-0 z-50 w-64 p-3 bg-white border
-                          border-blue-200 rounded-xl shadow-lg text-xs
+                          border-blue-200 rounded-card shadow-lg text-xs
                           text-gray-700 leading-relaxed">
             {text}
           </div>
@@ -384,12 +385,7 @@ export function Settings() {
 
   return (
     <div className="p-5 max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-lg font-medium">Settings</h1>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Company details, exchange rates, and document settings
-        </p>
-      </div>
+      <PageHeader title="Settings" subtitle="Company details, exchange rates, and document settings" />
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-gray-100 pb-3">
@@ -397,10 +393,10 @@ export function Settings() {
           <button
             key={t.key}
             onClick={() => setTab(t.key as TabKey)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full
                         border transition-colors
               ${tab === t.key
-                ? 'bg-blue-600 text-white border-blue-600'
+                ? 'bg-accent text-accent-foreground border-accent font-medium'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
           >
             <t.icon size={13} />
@@ -412,7 +408,7 @@ export function Settings() {
       {/* ── Company tab ───────────────────────────────────── */}
       {tab === 'company' && company && (
         <div className="space-y-4">
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 Company information
@@ -498,7 +494,7 @@ export function Settings() {
             </div>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 Bank details
@@ -534,7 +530,7 @@ export function Settings() {
           </div>
 
           {error && (
-            <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl
+            <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-card
                             text-xs text-red-700">
               {error}
             </div>
@@ -588,7 +584,7 @@ export function Settings() {
           </div>
 
           {companiesList.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Building2 size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No companies yet</p>
               <p className="text-xs text-gray-400 mb-4">
@@ -603,7 +599,7 @@ export function Settings() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {companiesList.map((c, i) => (
                 <div
                   key={c.id}
@@ -641,7 +637,7 @@ export function Settings() {
               className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
               onClick={e => e.target === e.currentTarget && setOwnOpen(false)}
             >
-              <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
+              <div className="bg-white rounded-card w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-medium">{ownEditId ? 'Edit company' : 'New company'}</h2>
                   <button onClick={() => setOwnOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -761,7 +757,7 @@ export function Settings() {
           </div>
 
           {accounts.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Wallet size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No accounts yet</p>
               <p className="text-xs text-gray-400 mb-4">
@@ -776,7 +772,7 @@ export function Settings() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {accounts.map((a, i) => (
                 <div
                   key={a.id}
@@ -823,7 +819,7 @@ export function Settings() {
               className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
               onClick={e => e.target === e.currentTarget && setAcctOpen(false)}
             >
-              <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+              <div className="bg-white rounded-card w-full max-w-sm shadow-xl">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-medium">{acctEditId ? 'Edit account' : 'New account'}</h2>
                   <button onClick={() => setAcctOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -915,7 +911,7 @@ export function Settings() {
       {tab === 'forex' && (
         <div className="space-y-4">
           <div className="flex items-start gap-3 px-4 py-3 bg-blue-50 border
-                          border-blue-100 rounded-xl text-xs text-blue-800">
+                          border-blue-100 rounded-card text-xs text-blue-800">
             <Info size={14} className="shrink-0 mt-0.5 text-blue-500" />
             <div>
               <p className="font-medium mb-1">How exchange rates work</p>
@@ -934,7 +930,7 @@ export function Settings() {
           </div>
 
           {/* Add new rate */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 Add / update rate
@@ -998,7 +994,7 @@ export function Settings() {
           </div>
 
           {/* Rate history */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 Rate history (USD → ETB)
@@ -1085,7 +1081,7 @@ export function Settings() {
           </div>
 
           {warehouses.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Building2 size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No warehouses yet</p>
               <p className="text-xs text-gray-400 mb-4">
@@ -1100,7 +1096,7 @@ export function Settings() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {warehouses.map((w, i) => (
                 <div
                   key={w.id}
@@ -1236,7 +1232,7 @@ export function Settings() {
                   <button
                     onClick={saveWarehouse}
                     disabled={wSaving || !wForm.name}
-                    className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50"
                   >
                     {wSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                     {wSaving ? 'Saving…' : 'Save warehouse'}
@@ -1277,7 +1273,7 @@ export function Settings() {
           </div>
 
           {consignees.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Users size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No consignees yet</p>
               <p className="text-xs text-gray-400 mb-4">
@@ -1293,7 +1289,7 @@ export function Settings() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               {consignees.map((c, i) => (
                 <div
                   key={c.id}
@@ -1358,7 +1354,7 @@ export function Settings() {
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setCOpen(false)}
         >
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh]
+          <div className="bg-white rounded-card w-full max-w-md max-h-[90vh]
                           overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="text-sm font-medium">

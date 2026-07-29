@@ -12,6 +12,12 @@ import {
   Package, Minus, Trash2, TrendingUp, Search, Pencil, ArrowUpDown, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
+import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
 interface Customer { id: string; name: string; type: string | null; outstanding_etb: number }
 interface Product { id: string; name: string; sku: string; image_url: string | null }
@@ -35,10 +41,17 @@ const METHODS = [
   { value: 'hawala', label: 'Hawala' },
 ]
 
-const STATUS_CLS: Record<string, string> = {
-  DRAFT: 'bg-gray-100 text-gray-600', CONFIRMED: 'bg-blue-50 text-blue-700',
-  INVOICED: 'bg-amber-50 text-amber-700', PARTIAL: 'bg-amber-50 text-amber-700',
-  PAID: 'bg-green-50 text-green-700', CANCELLED: 'bg-red-50 text-red-700',
+const STATUS_VARIANT: Record<string, 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
+  DRAFT: 'neutral', CONFIRMED: 'info',
+  INVOICED: 'warning', PARTIAL: 'warning',
+  PAID: 'success', CANCELLED: 'danger',
+}
+// A ledger feel distinct from the app's usual stacked-card lists — a
+// status-colored rail down the left of each row, like a statement line.
+const STATUS_RAIL: Record<string, string> = {
+  DRAFT: 'border-l-gray-300', CONFIRMED: 'border-l-blue-400',
+  INVOICED: 'border-l-amber-400', PARTIAL: 'border-l-amber-400',
+  PAID: 'border-l-green-400', CANCELLED: 'border-l-red-400',
 }
 
 function oneName(c: OrderRow['customers']): string {
@@ -72,6 +85,9 @@ export function Sales() {
   const [hawala, setHawala] = useState(emptyHawalaValue())
   const [accountId, setAccountId] = useState('')
   const [creditAccountId, setCreditAccountId] = useState('')
+  // Sale payments are always ETB (sales_payments.amount_etb) — a non-ETB
+  // account would silently never count toward that account's balance.
+  const eligibleAccounts = useMemo(() => accounts.filter(a => a.currency === 'ETB'), [accounts])
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [justCreatedCustomerId, setJustCreatedCustomerId] = useState<string | null>(null)
@@ -357,18 +373,12 @@ export function Sales() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><ShoppingCart size={18} /> Sales</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Record a sale — stock, payment, and customer credit update automatically</p>
-        </div>
-        <button
-          onClick={() => { resetForm(); setOpen(true); setError(null); setSuccess(null) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> New sale
-        </button>
-      </div>
+      <PageHeader
+        icon={<ShoppingCart size={18} />}
+        title="Sales"
+        subtitle="Record a sale — stock, payment, and customer credit update automatically"
+        actions={<Button icon={<Plus size={13} />} onClick={() => { resetForm(); setOpen(true); setError(null); setSuccess(null) }}>New sale</Button>}
+      />
 
       {!open && error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -439,7 +449,7 @@ export function Sales() {
           {filteredOrders.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-sm">No orders match this filter.</div>
           ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           <div className="grid grid-cols-[auto_1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-2.5
                           bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <div></div>
@@ -454,9 +464,10 @@ export function Sales() {
           {filteredOrders.map((o, i) => {
             const editable = Number(o.paid_amount ?? 0) === 0
             const expanded = expandedOrderId === o.id
-            return (
-            <div key={o.id} className={i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}>
-            <div className="grid grid-cols-[auto_1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50/70"
+            const rowBody = (
+            <div className={`border-l-[3px] ${STATUS_RAIL[o.status] ?? 'border-l-gray-200'} ${i < filteredOrders.length - 1 ? 'border-b border-gray-50' : ''}`}>
+            <div className={`stagger-row grid grid-cols-[auto_1.5fr_1fr_1fr_1fr_1fr_auto_auto] gap-3 px-4 py-3 items-center text-sm cursor-pointer hover:bg-gray-50/70 ${i % 2 === 1 ? 'bg-gray-50/40' : 'bg-inherit'}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
               onClick={() => toggleOrderExpand(o.id)}>
               {expanded ? <ChevronDown size={12} className="text-gray-300" /> : <ChevronRight size={12} className="text-gray-300" />}
               <div>
@@ -478,20 +489,12 @@ export function Sales() {
                 )}
               </div>
               <div>
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_CLS[o.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                  {o.status}
-                </span>
+                <Badge variant={STATUS_VARIANT[o.status] ?? 'neutral'}>{o.status}</Badge>
               </div>
               <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
                 {editable ? (
-                  <>
-                    <button onClick={() => openEditOrder(o)} title="Edit"
-                      className="p-1 text-gray-300 hover:text-blue-600"><Pencil size={12} /></button>
-                    <button onClick={() => handleDelete(o)} disabled={deletingId === o.id} title="Delete"
-                      className="p-1 text-gray-300 hover:text-red-500 disabled:opacity-40">
-                      {deletingId === o.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                    </button>
-                  </>
+                  <button onClick={() => openEditOrder(o)} title="Edit"
+                    className="p-1 text-gray-300 hover:text-blue-600"><Pencil size={12} /></button>
                 ) : (
                   <span className="text-[10px] text-gray-300" title="Already paid — edit the payment in Receivables instead">—</span>
                 )}
@@ -517,21 +520,27 @@ export function Sales() {
             )}
             </div>
             )
+            return editable ? (
+              <SwipeToDelete key={o.id} disabled={deletingId === o.id} onDelete={() => handleDelete(o)}>{rowBody}</SwipeToDelete>
+            ) : <div key={o.id}>{rowBody}</div>
           })}
-        </div>
+        </Card>
           )}
         </>
       )}
 
-      {open && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && closeModal()}>
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[92vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">{editingOrderId ? 'Edit sale' : 'New sale'}</h2>
-              <button onClick={closeModal} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4 space-y-4">
+      <Modal
+        open={open}
+        onClose={closeModal}
+        title={editingOrderId ? 'Edit sale' : 'New sale'}
+        maxWidth="max-w-lg"
+        footer={<>
+          <Button variant="secondary" onClick={closeModal}>Cancel</Button>
+          <Button loading={saving} className="min-w-[130px]" onClick={submit}>
+            {editingOrderId ? `Save changes · ${N(cartTotal)} ETB` : `Record sale · ${N(cartTotal)} ETB`}
+          </Button>
+        </>}
+      >
               {error && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
               <div className="grid grid-cols-2 gap-3">
@@ -686,11 +695,11 @@ export function Sales() {
                       </div>
                     ) : (
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Account received</label>
+                        <label className="block text-xs text-gray-500 mb-1">Account received (ETB)</label>
                         <select value={accountId} onChange={e => setAccountId(e.target.value)}
                           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                          <option value="">Select…</option>
-                          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          <option value="">{eligibleAccounts.length > 0 ? 'Select…' : 'No ETB account set up yet'}</option>
+                          {eligibleAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
                       </div>
                     )}
@@ -704,17 +713,7 @@ export function Sales() {
                 </>
                 )}
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={closeModal} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={submit} disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 min-w-[130px] justify-center">
-                {saving ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : editingOrderId ? `Save changes · ${N(cartTotal)} ETB` : `Record sale · ${N(cartTotal)} ETB`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

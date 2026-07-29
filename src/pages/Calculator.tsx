@@ -11,6 +11,8 @@ import {
   Calculator as CalcIcon, Plus, Save, Trash2, Loader2, FileSpreadsheet,
   BarChart3, LineChart, PieChart, X, Sparkles,
 } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Button } from '../components/ui/Button'
 
 const COLS = 10
 const ROWS = 30
@@ -152,22 +154,14 @@ export function Calculator() {
 
   return (
     <div className="p-5 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><CalcIcon size={18} /> Calculator</h1>
-          <p className="text-xs text-gray-400 mt-0.5">A spreadsheet for your own math — formulas, ranges, and charts</p>
-        </div>
-      </div>
+      <PageHeader icon={<CalcIcon size={18} />} title="Calculator" subtitle="A spreadsheet for your own math — formulas, ranges, and charts" />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
       <div className="grid grid-cols-[200px_1fr] gap-4">
         {/* Sheet list */}
         <div>
-          <button onClick={() => startNewSheet()}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 mb-2 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700">
-            <Plus size={13} /> New sheet
-          </button>
+          <Button className="w-full mb-2" icon={<Plus size={13} />} onClick={() => startNewSheet()}>New sheet</Button>
           <button onClick={() => setShowTemplates(v => !v)}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 mb-3 text-xs rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600">
             <Sparkles size={13} /> Templates
@@ -215,7 +209,7 @@ export function Calculator() {
             <input value={name} onChange={e => { setName(e.target.value); setDirty(true) }}
               className="flex-1 px-3 py-1.5 text-sm font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
             <button onClick={() => setShowChart(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border ${showChart ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border ${showChart ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
               <BarChart3 size={13} /> Chart
             </button>
             <button onClick={save} disabled={saving || !dirty}
@@ -236,12 +230,12 @@ export function Calculator() {
           </div>
 
           {showChart && (
-            <div className="mb-4 bg-white border border-gray-200 rounded-xl p-4">
+            <div className="mb-4 bg-white border border-gray-200 rounded-card p-4">
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <div className="flex gap-1">
                   {([['bar', BarChart3], ['line', LineChart], ['pie', PieChart]] as const).map(([t, Icon]) => (
                     <button key={t} onClick={() => setChartType(t)}
-                      className={`p-1.5 rounded-lg border ${chartType === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                      className={`p-1.5 rounded-lg border ${chartType === t ? 'bg-accent text-accent-foreground border-accent' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
                       <Icon size={14} />
                     </button>
                   ))}
@@ -259,7 +253,7 @@ export function Calculator() {
           )}
 
           {/* Grid */}
-          <div className="overflow-auto border border-gray-200 rounded-xl" style={{ maxHeight: 520 }}>
+          <div className="overflow-auto border border-gray-200 rounded-card" style={{ maxHeight: 520 }}>
             <div style={{ display: 'grid', gridTemplateColumns: `32px repeat(${COLS}, 84px)`, width: 'max-content' }}>
               <div className="sticky top-0 left-0 z-20 bg-gray-50 border-r border-b border-gray-200 h-7" />
               {Array.from({ length: COLS }).map((_, c) => (

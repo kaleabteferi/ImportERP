@@ -25,6 +25,10 @@ import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
 import { SearchableSelect } from '../components/SearchableSelect'
 import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
+import { PageHeader } from '../components/ui/PageHeader'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 const ITEM_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'sku', label: 'SKU', required: true, width: '110px' },
@@ -185,7 +189,7 @@ function InfoTip({ text }: { text: string }) {
       )}
       {show && (
         <div className="absolute left-5 top-0 z-50 w-64 p-3 bg-white border
-                        border-blue-200 rounded-xl shadow-lg text-xs
+                        border-blue-200 rounded-card shadow-lg text-xs
                         text-gray-700 leading-relaxed">
           {text}
         </div>
@@ -541,51 +545,40 @@ export function ShipmentDetail() {
       </Link>
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <h1 className="text-lg font-medium">{shipment.shipment_number}</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {supplier?.name ?? '-'}
-            {shipment.container_number && ` · ${shipment.container_number}`}
-            {shipment.vessel_name && ` · ${shipment.vessel_name}`}
-            {shipment.eta_djibouti && ` · ETA Djibouti ${shipment.eta_djibouti}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${st?.cls}`}>
-            {st?.label}
-          </span>
+      <PageHeader
+        title={shipment.shipment_number}
+        subtitle={<>
+          {supplier?.name ?? '-'}
+          {shipment.container_number && ` · ${shipment.container_number}`}
+          {shipment.vessel_name && ` · ${shipment.vessel_name}`}
+          {shipment.eta_djibouti && ` · ETA Djibouti ${shipment.eta_djibouti}`}
+        </>}
+        actions={<>
+          <Badge variant="accent">{st?.label}</Badge>
           {allProvisional && items.length > 0 && expenses.length > 0 && (
             <Link
               to={`/shipments/${id}/finalize`}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50
-                         border border-amber-300 text-amber-700 rounded-lg
+              className="flex items-center gap-1.5 text-xs px-4 py-1.5 bg-amber-50
+                         border border-amber-300 text-amber-700 rounded-full
                          hover:bg-amber-100 transition-colors"
             >
               <Lock size={12} /> Finalize costs
             </Link>
-            
-            
           )}
           <Link
               to={`/shipments/${id}/documents`}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                          border-gray-200 bg-white text-gray-600 rounded-lg
+              className="flex items-center gap-1.5 text-xs px-4 py-1.5 border
+                          border-gray-200 bg-white text-gray-600 rounded-full
                           hover:bg-gray-50 transition-colors"
               >
               <FileText size={12} /> Documents
             </Link>
-            <button
-              onClick={() => setShowDeleteModal(true)}
-              title="Delete shipment"
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border
-                          border-gray-200 bg-white text-gray-400 rounded-lg
-                          hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
-              >
+            <Button variant="secondary" className="!p-1.5" title="Delete shipment"
+              onClick={() => setShowDeleteModal(true)}>
               <Trash2 size={12} />
-            </button>
-        </div>
-      </div>
+            </Button>
+        </>}
+      />
 
       {/* Summary strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -615,14 +608,10 @@ export function ShipmentDetail() {
             tip: 'The National Bank of Ethiopia (NBE) customs rate used to convert USD costs to ETB. Update this in Settings → Forex Rates before calculating.',
           },
         ].map(s => (
-          <div key={s.label} className="bg-gray-50 rounded-xl px-4 py-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <p className="text-xs text-gray-400">{s.label}</p>
-              <InfoTip text={s.tip} />
-            </div>
-            <p className="text-sm font-medium font-mono">{s.val}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>
-          </div>
+          <StatCard key={s.label}
+            label={<span className="flex items-center gap-1.5">{s.label}<InfoTip text={s.tip} /></span>}
+            value={<span className="text-lg">{s.val}</span>}
+            hint={s.sub} />
         ))}
       </div>
 
@@ -633,7 +622,7 @@ export function ShipmentDetail() {
           inventory on top of whatever the Djibouti dispatch/receive cycle
           transfers. That flow owns getting it into the final warehouse. */}
       {items.length > 0 && shipment.djibouti_received_at && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
-        <div className="flex items-start gap-2 px-4 py-3 mb-5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+        <div className="flex items-start gap-2 px-4 py-3 mb-5 bg-amber-50 border border-amber-200 rounded-card text-xs text-amber-800">
           <Info size={14} className="shrink-0 mt-0.5" />
           <span>
             This shipment already landed at Ali's Djibouti warehouse. Get it into your warehouse via{' '}
@@ -645,7 +634,7 @@ export function ShipmentDetail() {
 
       {/* Receive into inventory */}
       {items.length > 0 && !shipment.djibouti_received_at && !['WAREHOUSE_RECEIVED', 'COMPLETED'].includes(shipment.status) && (
-        <div className="flex flex-col gap-3 px-4 py-3 mb-5 bg-green-50 border border-green-200 rounded-xl md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 px-4 py-3 mb-5 bg-green-50 border border-green-200 rounded-card md:flex-row md:items-center md:justify-between">
           <div className="text-xs text-green-800">
             <p className="font-medium">Ready for warehouse receipt</p>
             <p className="mt-0.5 text-green-700">
@@ -688,10 +677,10 @@ export function ShipmentDetail() {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full
                         border transition-colors whitespace-nowrap shrink-0
               ${activeTab === tab.key
-                ? 'bg-blue-600 text-white border-blue-600'
+                ? 'bg-accent text-accent-foreground border-accent font-medium'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
           >
             <tab.icon size={12} />
@@ -716,7 +705,7 @@ export function ShipmentDetail() {
       {/* Global error */}
       {error && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border
-                        border-red-200 rounded-xl text-xs text-red-700 mb-4">
+                        border-red-200 rounded-card text-xs text-red-700 mb-4">
           <X size={14} className="shrink-0 mt-0.5 cursor-pointer"
              onClick={() => setError(null)} />
           {error}
@@ -776,7 +765,7 @@ export function ShipmentDetail() {
           )}
 
           {items.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Package size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No items yet</p>
               <p className="text-xs text-gray-400 mb-2 max-w-sm mx-auto">
@@ -801,7 +790,7 @@ export function ShipmentDetail() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -999,7 +988,7 @@ export function ShipmentDetail() {
 
           {/* Info guide */}
           <div className="flex items-start gap-2 px-4 py-3 bg-blue-50 border
-                          border-blue-100 rounded-xl text-xs text-blue-800 mb-4">
+                          border-blue-100 rounded-card text-xs text-blue-800 mb-4">
             <Info size={14} className="shrink-0 mt-0.5 text-blue-500" />
             <div>
               <p className="font-medium mb-1">How expenses work</p>
@@ -1014,7 +1003,7 @@ export function ShipmentDetail() {
           </div>
 
           {nonCustomsExpenses.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Receipt size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-1">No expenses yet</p>
               <p className="text-xs text-gray-400 mb-4 max-w-sm mx-auto">
@@ -1037,7 +1026,7 @@ export function ShipmentDetail() {
                 const catTotal = catExps.reduce((s, e) => s + (e.amount_etb ?? 0), 0)
                 return (
                   <div key={cat}
-                       className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                       className="bg-white border border-gray-200 rounded-card overflow-hidden">
                     <div className="flex items-center justify-between px-4 py-2.5
                                     bg-gray-50 border-b border-gray-100">
                       <span className="text-xs font-medium text-gray-600">{catLabel}</span>
@@ -1105,7 +1094,7 @@ export function ShipmentDetail() {
               })}
 
               <div className="flex items-center justify-between px-4 py-3
-                              bg-white border border-gray-200 rounded-xl font-medium">
+                              bg-white border border-gray-200 rounded-card font-medium">
                 <span className="text-sm text-gray-600">Total (excl. customs)</span>
                 <span className="text-base font-mono text-gray-900">{N(nonCustomsExpEtb)} ETB</span>
               </div>
@@ -1164,7 +1153,7 @@ export function ShipmentDetail() {
           </div>
 
           {/* Step-by-step guide */}
-          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
+          <div className="bg-blue-50 border border-blue-100 rounded-card px-4 py-3 mb-4">
             <div className="flex items-center gap-2 text-xs text-blue-800 font-medium mb-2">
               <Info size={13} />
               How to use the cost engine - step by step
@@ -1179,7 +1168,7 @@ export function ShipmentDetail() {
           </div>
 
           {items.length === 0 || expenses.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <div className="bg-white border border-gray-200 rounded-card p-10 text-center">
               <Calculator size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm font-medium text-gray-500 mb-2">
                 Not ready to calculate
@@ -1211,7 +1200,7 @@ export function ShipmentDetail() {
               </div>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -1368,7 +1357,7 @@ export function ShipmentDetail() {
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setItemOpen(false)}
         >
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh]
+          <div className="bg-white rounded-card w-full max-w-lg max-h-[90vh]
                           overflow-auto shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <div>
@@ -1614,7 +1603,7 @@ export function ShipmentDetail() {
       {shortageTarget && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setShortageTarget(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+          <div className="bg-white rounded-card w-full max-w-sm shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="text-sm font-medium">Flag shortage — {shortageTarget.name}</h2>
               <button onClick={() => setShortageTarget(null)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>

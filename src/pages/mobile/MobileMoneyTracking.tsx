@@ -5,6 +5,7 @@ import { recordCompanyExpense } from '../../api/companyExpenses'
 import { fetchCustomers } from '../../api/customers'
 import { fetchCreditAccounts } from '../../api/credit'
 import { fetchAccounts } from '../../api/accounts'
+import type { Account } from '../../api/accounts'
 import {
   Banknote, Loader2, ArrowDownLeft, ArrowUpRight, Plus, ChevronLeft, Check,
 } from 'lucide-react'
@@ -31,7 +32,7 @@ export function MobileMoneyTracking() {
   const [customers, setCustomers] = useState<Option[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [credit, setCredit] = useState<CreditAccount[]>([])
-  const [accounts, setAccounts] = useState<Option[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<'income' | 'expense' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -74,7 +75,7 @@ export function MobileMoneyTracking() {
       setCustomers((customerRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
       setWarehouses((warehouseRows ?? []).map((w: any) => ({ id: w.id, name: w.name })))
       setCredit((creditRows ?? []).map((c: any) => ({ id: c.id, customer_id: one(c.customers)?.id ?? '', balance: Number(c.balance ?? 0), credit_limit: Number(c.credit_limit ?? 0), due_date: c.due_date })))
-      setAccounts((accountRows ?? []).map(a => ({ id: a.id, name: a.name })))
+      setAccounts(accountRows ?? [])
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load.')
     } finally {
@@ -147,33 +148,33 @@ export function MobileMoneyTracking() {
           {error && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
           {form === 'income' ? (
             <>
-              <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+              <select value={customerId} onChange={e => setCustomerId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                 <option value="">Which customer?</option>
                 {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+              <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                 <option value="">Which warehouse?</option>
                 {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
               <input type="number" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} placeholder="Amount (ETB)"
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
               <div className="grid grid-cols-4 gap-1.5">
                 {METHODS.map(m => (
                   <button key={m.value} onClick={() => setIncomeMethod(m.value as any)}
-                    className={`py-2 text-[10px] rounded-lg border ${incomeMethod === m.value ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}>
+                    className={`py-2 text-[10px] rounded-lg border ${incomeMethod === m.value ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white border-gray-200 text-gray-600'}`}>
                     {m.label}
                   </button>
                 ))}
               </div>
               {incomeMethod === 'credit' ? (
-                <select value={creditAccountId} onChange={e => setCreditAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+                <select value={creditAccountId} onChange={e => setCreditAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                   <option value="">Which credit account?</option>
                   {customerCredit.map(c => <option key={c.id} value={c.id}>{N(c.balance)}/{N(c.credit_limit)} ETB</option>)}
                 </select>
               ) : (
-                <select value={incomeAccountId} onChange={e => setIncomeAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+                <select value={incomeAccountId} onChange={e => setIncomeAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                   <option value="">Which account received it?</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               )}
               {incomeMethod === 'hawala' && <HawalaFields value={incomeHawala} onChange={setIncomeHawala} />}
@@ -181,9 +182,9 @@ export function MobileMoneyTracking() {
           ) : (
             <>
               <input value={expenseDesc} onChange={e => setExpenseDesc(e.target.value)} placeholder="What was this for?"
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
               <input type="number" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} placeholder="Amount (ETB)"
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl" />
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
               <div className="grid grid-cols-4 gap-1.5">
                 {EXPENSE_METHODS.map(m => (
                   <button key={m.value} onClick={() => setExpenseMethod(m.value as any)}
@@ -192,9 +193,9 @@ export function MobileMoneyTracking() {
                   </button>
                 ))}
               </div>
-              <select value={expenseAccountId} onChange={e => setExpenseAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white">
+              <select value={expenseAccountId} onChange={e => setExpenseAccountId(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white">
                 <option value="">Which account paid it?</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                {accounts.filter(a => a.currency === 'ETB').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
               {expenseMethod === 'hawala' && <HawalaFields value={expenseHawala} onChange={setExpenseHawala} />}
             </>
@@ -202,7 +203,7 @@ export function MobileMoneyTracking() {
         </div>
         <div className="p-4 border-t border-gray-100 shrink-0">
           <button onClick={form === 'income' ? submitIncome : submitExpense} disabled={saving}
-            className={`w-full py-3.5 rounded-xl text-white font-medium disabled:opacity-50 flex items-center justify-center gap-2 ${form === 'income' ? 'bg-green-600' : 'bg-red-600'}`}>
+            className={`w-full py-3.5 rounded-card text-white font-medium disabled:opacity-50 flex items-center justify-center gap-2 ${form === 'income' ? 'bg-green-600' : 'bg-red-600'}`}>
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
             {saving ? 'Saving…' : `Record ${form}`}
           </button>
@@ -220,21 +221,21 @@ export function MobileMoneyTracking() {
 
       <div className="grid grid-cols-2 gap-2 mb-3">
         <button onClick={() => { setForm('income'); setError(null); resetForms() }}
-          className="flex items-center justify-center gap-1.5 py-3 rounded-xl bg-green-600 text-white text-sm font-medium">
+          className="flex items-center justify-center gap-1.5 py-3 rounded-card bg-green-600 text-white text-sm font-medium">
           <Plus size={15} /> Income
         </button>
         <button onClick={() => { setForm('expense'); setError(null); resetForms() }}
-          className="flex items-center justify-center gap-1.5 py-3 rounded-xl bg-red-600 text-white text-sm font-medium">
+          className="flex items-center justify-center gap-1.5 py-3 rounded-card bg-red-600 text-white text-sm font-medium">
           <Plus size={15} /> Expense
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-5">
-        <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+        <div className="bg-gray-50 rounded-card px-3 py-2.5">
           <p className="text-xs text-gray-400">Received</p>
           <p className="text-base font-semibold text-green-700">{N(inTotal)} ETB</p>
         </div>
-        <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+        <div className="bg-gray-50 rounded-card px-3 py-2.5">
           <p className="text-xs text-gray-400">Paid out</p>
           <p className="text-base font-semibold text-red-700">{N(outTotal)} ETB</p>
         </div>
@@ -247,7 +248,7 @@ export function MobileMoneyTracking() {
       ) : (
         <div className="space-y-2">
           {txns.slice(0, 30).map(t => (
-            <div key={t.id} className="bg-white border border-gray-200 rounded-2xl p-3 flex items-center gap-3">
+            <div key={t.id} className="bg-white shadow-[var(--shadow-card-sm)] rounded-card p-3 flex items-center gap-3">
               {t.direction === 'in' ? <ArrowDownLeft size={16} className="text-green-600 shrink-0" /> : <ArrowUpRight size={16} className="text-red-500 shrink-0" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{t.party}</p>

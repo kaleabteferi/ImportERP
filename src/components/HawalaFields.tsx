@@ -30,7 +30,7 @@ export function HawalaFields({ value, onChange, targetCurrency }: {
   const computed = computeHawalaAmount(value)
 
   return (
-    <div className="bg-purple-50/50 border border-purple-100 rounded-lg p-3 space-y-2">
+    <div className="bg-purple-50/50 border border-purple-100 rounded-card p-3 space-y-2">
       <input
         value={value.route}
         onChange={e => onChange({ ...value, route: e.target.value })}

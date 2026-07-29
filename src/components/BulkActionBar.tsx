@@ -23,23 +23,23 @@ export function BulkActionBar({ count, itemLabel, onClear, onDelete }: {
   }
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 mb-3 bg-blue-50 border border-blue-200 rounded-xl text-xs">
+    <div className="flex items-center gap-3 px-4 py-2.5 mb-3 bg-blue-50 border border-blue-200 rounded-card text-xs">
       <span className="font-medium text-blue-800">{count} {itemLabel}{count === 1 ? '' : 's'} selected</span>
       {confirming ? (
         <div className="flex items-center gap-2 ml-auto">
           <span className="flex items-center gap-1 text-red-700"><AlertTriangle size={12} /> Delete permanently?</span>
           <button onClick={handleDelete} disabled={deleting}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 text-white disabled:opacity-50">
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-600 text-white disabled:opacity-50">
             {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Confirm
           </button>
-          <button onClick={() => setConfirming(false)} disabled={deleting} className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white">Cancel</button>
+          <button onClick={() => setConfirming(false)} disabled={deleting} className="px-2.5 py-1 rounded-full border border-gray-200 bg-white">Cancel</button>
         </div>
       ) : (
         <div className="flex items-center gap-2 ml-auto">
-          <button onClick={() => setConfirming(true)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50">
+          <button onClick={() => setConfirming(true)} className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-red-200 text-red-600 bg-white hover:bg-red-50">
             <Trash2 size={11} /> Delete selected
           </button>
-          <button onClick={onClear} className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50">
+          <button onClick={onClear} className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-50">
             <X size={11} /> Clear
           </button>
         </div>

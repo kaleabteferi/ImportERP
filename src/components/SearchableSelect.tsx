@@ -73,7 +73,7 @@ export function SearchableSelect({ options, value, onChange, placeholder, disabl
             onChange={e => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={selected?.label ?? placeholder ?? 'Search…'}
-            className="w-full pl-7 pr-7 py-1.5 text-xs border border-blue-400 rounded-lg bg-white focus:outline-none"
+            className="w-full pl-7 pr-7 py-1.5 text-xs border border-accent rounded-lg bg-white focus:outline-none"
           />
           <button type="button" onClick={() => { setOpen(false); setQuery('') }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500">
             <X size={12} />
@@ -107,7 +107,7 @@ export function SearchableSelect({ options, value, onChange, placeholder, disabl
                 onClick={() => pick(o)}
                 title={o.disabled ? o.disabledReason : undefined}
                 className={`w-full flex items-center justify-between gap-2 text-left px-3 py-1.5 text-xs
-                  ${o.disabled ? 'opacity-40 cursor-not-allowed' : i === highlight ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}
+                  ${o.disabled ? 'opacity-40 cursor-not-allowed' : i === highlight ? 'bg-accent/15 text-accent-foreground' : 'hover:bg-gray-50'}
                   ${o.id === value ? 'font-medium' : ''}`}
               >
                 <span className="truncate">{o.label}</span>

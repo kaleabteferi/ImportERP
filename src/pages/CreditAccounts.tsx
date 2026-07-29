@@ -5,6 +5,11 @@ import { Link } from 'react-router-dom'
 import { usePageState } from '../lib/pageState'
 import { CreditCard as CardIcon, Loader2, Plus, X, ShieldAlert, ArrowRightLeft, ArrowUpDown } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../components/HawalaFields'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { StatCard } from '../components/ui/StatCard'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 interface CreditAccount {
   id: string
@@ -28,11 +33,11 @@ const METHODS = [
   { value: 'hawala', label: 'Hawala' },
 ]
 
-const STATUS_STYLE: Record<string, string> = {
-  active: 'bg-blue-50 text-blue-700',
-  overdue: 'bg-red-50 text-red-700',
-  settled: 'bg-green-50 text-green-700',
-  overpaid: 'bg-violet-50 text-violet-700',
+const STATUS_VARIANT: Record<string, 'info' | 'danger' | 'success' | 'accent'> = {
+  active: 'info',
+  overdue: 'danger',
+  settled: 'success',
+  overpaid: 'accent',
 }
 
 // The DB only tracks active/overdue/settled — a negative balance ("settled")
@@ -72,7 +77,7 @@ function NewAccountForm({ customers, onDone, onCancel }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       {error && <p className="text-xs text-red-600">{error}</p>}
       <select
         value={customerId} onChange={e => setCustomerId(e.target.value)}
@@ -97,15 +102,10 @@ function NewAccountForm({ customers, onDone, onCancel }: {
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg"
       />
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button
-          onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50"
-        >
-          {saving ? 'Saving…' : 'Open account'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit}>{saving ? 'Saving…' : 'Open account'}</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -256,35 +256,21 @@ export function CreditAccounts() {
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2">
-            <CardIcon size={18} /> Credit accounts
-          </h1>
-          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
-            What each customer owes, and where — draws happen automatically when you record a credit sale
-            <Link to="/receivables" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
-              <ArrowRightLeft size={10} /> Credit-funded sales also show in Receivables until repaid
-            </Link>
-          </p>
-        </div>
-        <button
-          onClick={() => setShowNewForm(v => !v)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white flex items-center gap-1"
-        >
-          {showNewForm ? <X size={12} /> : <Plus size={12} />} New account
-        </button>
-      </div>
+      <PageHeader
+        icon={<CardIcon size={18} />}
+        title="Credit accounts"
+        subtitle={<span className="flex items-center gap-1 flex-wrap">
+          What each customer owes, and where — draws happen automatically when you record a credit sale
+          <Link to="/receivables" className="text-blue-600 hover:underline inline-flex items-center gap-0.5">
+            <ArrowRightLeft size={10} /> Credit-funded sales also show in Receivables until repaid
+          </Link>
+        </span>}
+        actions={<Button icon={showNewForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowNewForm(v => !v)}>New account</Button>}
+      />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Total outstanding</p>
-          <p className="text-xl font-medium font-mono text-amber-700">{N(totalOutstanding)} ETB</p>
-        </div>
-        <div className="bg-gray-50 rounded-xl px-4 py-3">
-          <p className="text-xs text-gray-400">Overdue accounts</p>
-          <p className="text-xl font-medium font-mono text-red-700">{overdueCount}</p>
-        </div>
+        <StatCard label="Total outstanding" value={<span className="text-amber-700">{N(totalOutstanding)} ETB</span>} />
+        <StatCard label="Overdue accounts" value={<span className="text-red-700">{overdueCount}</span>} />
       </div>
 
       {showNewForm && (
@@ -321,7 +307,7 @@ export function CreditAccounts() {
               <ArrowUpDown size={12} className={dateSort === 'latest' ? 'rotate-180' : ''} /> Due {dateSort === 'soonest' ? 'soonest first' : 'latest first'}
             </button>
           </div>
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {sortedAccounts.length === 0 ? (
             <p className="px-4 py-8 text-xs text-gray-400 text-center">No accounts match this filter.</p>
           ) : sortedAccounts.map((a, i) => (
@@ -334,9 +320,9 @@ export function CreditAccounts() {
                     {a.notes && ` · ${a.notes}`}
                   </p>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[displayStatus(a.status, a.balance)]}`}>
+                <Badge variant={STATUS_VARIANT[displayStatus(a.status, a.balance)]}>
                   {displayStatus(a.status, a.balance)}
-                </span>
+                </Badge>
                 <div className={`font-mono font-medium w-24 text-right text-sm ${a.balance < 0 ? 'text-violet-700' : ''}`}>
                   {a.balance < 0 ? `+${N(-a.balance)}` : N(a.balance)} ETB
                 </div>
@@ -356,7 +342,7 @@ export function CreditAccounts() {
               )}
             </div>
           ))}
-        </div>
+        </Card>
         </>
       )}
     </div>

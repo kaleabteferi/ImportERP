@@ -30,37 +30,53 @@ export function Layout() {
           just a responsive breakpoint) */}
       {!isMobile && <Sidebar />}
 
-      <button
-        onClick={toggleMode}
-        title={isMobile ? 'Switch to full version' : 'Switch to mobile version'}
-        style={{
-          position: 'fixed', top: '12px', right: '52px', zIndex: 60,
-          height: '32px', padding: '0 10px', borderRadius: '9999px',
-          display: 'flex', alignItems: 'center', gap: '5px',
-          background: 'var(--color-background-primary)',
-          border: '1px solid var(--color-border-tertiary)',
-          color: 'var(--color-text-secondary)', cursor: 'pointer',
-          fontSize: '11px', fontWeight: 500,
-        }}
-      >
-        {isMobile ? <Monitor size={13} strokeWidth={1.5} /> : <Smartphone size={13} strokeWidth={1.5} />}
-        {isMobile ? 'Full version' : 'Mobile version'}
-      </button>
+      {/* A single grouped floating pill, echoing the reference's unified
+          top nav-bar treatment rather than two separate disconnected
+          buttons. */}
+      <div style={{
+        position: 'fixed', top: '12px', right: '12px', zIndex: 60,
+        display: 'flex', alignItems: 'center', gap: '2px',
+        height: '32px', padding: '3px', borderRadius: '9999px',
+        background: 'var(--color-background-primary)',
+        border: '1px solid var(--color-border-tertiary)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+      }}>
+        <button
+          onClick={toggleMode}
+          title={isMobile ? 'Switch to full version' : 'Switch to mobile version'}
+          style={{
+            height: '100%', padding: '0 10px', borderRadius: '9999px',
+            display: 'flex', alignItems: 'center', gap: '5px',
+            background: 'transparent', border: 'none',
+            color: 'var(--color-text-secondary)', cursor: 'pointer',
+            fontSize: '11px', fontWeight: 500,
+            transition: 'background-color 150ms ease',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-background-secondary)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+        >
+          {isMobile ? <Monitor size={13} strokeWidth={1.5} /> : <Smartphone size={13} strokeWidth={1.5} />}
+          {isMobile ? 'Full version' : 'Mobile version'}
+        </button>
 
-      <button
-        onClick={toggleTheme}
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        style={{
-          position: 'fixed', top: '12px', right: '12px', zIndex: 60,
-          width: '32px', height: '32px', borderRadius: '9999px',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'var(--color-background-primary)',
-          border: '1px solid var(--color-border-tertiary)',
-          color: 'var(--color-text-secondary)', cursor: 'pointer',
-        }}
-      >
-        {theme === 'dark' ? <Sun size={15} strokeWidth={1.5} /> : <Moon size={15} strokeWidth={1.5} />}
-      </button>
+        <div style={{ width: '1px', height: '16px', background: 'var(--color-border-tertiary)' }} />
+
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          style={{
+            width: '26px', height: '26px', borderRadius: '9999px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent', border: 'none',
+            color: 'var(--color-text-secondary)', cursor: 'pointer',
+            transition: 'transform 150ms ease, background-color 150ms ease',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'rotate(-8deg)'; e.currentTarget.style.background = 'var(--color-background-secondary)' }}
+          onMouseLeave={e => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.background = 'transparent' }}
+        >
+          {theme === 'dark' ? <Sun size={15} strokeWidth={1.5} /> : <Moon size={15} strokeWidth={1.5} />}
+        </button>
+      </div>
 
       {/* Main */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column',

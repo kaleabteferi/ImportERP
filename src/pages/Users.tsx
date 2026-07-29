@@ -3,6 +3,9 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { resetUserPassword, fetchUserEmails } from '../api/admin'
 import { UserCog, Loader2, ShieldOff, KeyRound, Eye, EyeOff, Check, X } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
 
 interface UserRow {
   id: string
@@ -121,25 +124,30 @@ export function Users() {
 
   return (
     <div className="p-5 max-w-3xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-lg font-medium flex items-center gap-2"><UserCog size={18} /> Users &amp; Roles</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Assign what each person can access, and link their login to an employee record</p>
-      </div>
+      <PageHeader
+        icon={<UserCog size={18} />}
+        title="Users & Roles"
+        subtitle="Assign what each person can access, and link their login to an employee record"
+      />
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
           <Loader2 size={18} className="animate-spin" /> Loading…
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <Card>
           {rows.map((r, i) => (
-            <div key={r.id} className={`${i < rows.length - 1 ? 'border-b border-gray-50' : ''}`}>
+            <div
+              key={r.id}
+              className={`stagger-row ${i < rows.length - 1 ? 'border-b border-gray-50' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
+            >
               <div className="flex items-center gap-3 px-4 py-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{r.full_name ?? 'Unnamed'}</p>
                   {r.email && <p className="text-xs text-gray-400 truncate">{r.email}</p>}
-                  {r.role === 'pending' && <p className="text-xs text-amber-600">Waiting for a role</p>}
-                  {resetDoneId === r.id && <p className="text-xs text-green-600 flex items-center gap-1"><Check size={11} /> Password reset — let them know their new one.</p>}
+                  {r.role === 'pending' && <Badge variant="warning">Waiting for a role</Badge>}
+                  {resetDoneId === r.id && <Badge variant="success" icon={<Check size={11} />}>Password reset — let them know their new one.</Badge>}
                 </div>
                 <select
                   value={r.employee_id ?? ''}
@@ -204,7 +212,7 @@ export function Users() {
               )}
             </div>
           ))}
-        </div>
+        </Card>
       )}
     </div>
   )

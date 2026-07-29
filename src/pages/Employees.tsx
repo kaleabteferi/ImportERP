@@ -9,6 +9,10 @@ import { SortHeader } from '../components/SortHeader'
 import { useSort } from '../lib/useSort'
 import { useBulkSelect } from '../lib/useBulkSelect'
 import { Users, Loader2, Plus, X, Check, Search, Pencil, ShieldCheck, ClipboardPaste } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 interface Option { id: string; name: string }
 
@@ -78,7 +82,7 @@ function EmployeeForm({ initial, warehouses, onCancel, onSaved }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-4">
+    <Card padded className="mb-4 space-y-4">
       {error && <p className="text-xs text-red-600">{error}</p>}
 
       <div>
@@ -150,13 +154,10 @@ function EmployeeForm({ initial, warehouses, onCancel, onSaved }: {
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
 
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {saving ? 'Saving…' : 'Save employee'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} icon={<Check size={12} />} onClick={submit}>Save employee</Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -229,25 +230,18 @@ export function Employees() {
 
   return (
     <div className="p-5 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium flex items-center gap-2"><Users size={18} /> Employees</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {employees.length} on record · {employees.filter(e => e.is_active).length} active ·{' '}
-            <span className="inline-flex items-center gap-1"><ShieldCheck size={11} className="text-gray-400" /> HR only — includes salary, bank, and TIN</span>
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowImport(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 bg-white text-gray-600 text-xs rounded-lg hover:bg-gray-50">
-            <ClipboardPaste size={13} /> Bulk import
-          </button>
-          <button onClick={() => { setShowForm(v => !v); setEditing(null) }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700">
-            {showForm && !editing ? <X size={12} /> : <Plus size={12} />} New employee
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Users size={18} />}
+        title="Employees"
+        subtitle={<>
+          {employees.length} on record · {employees.filter(e => e.is_active).length} active ·{' '}
+          <span className="inline-flex items-center gap-1"><ShieldCheck size={11} className="text-gray-400" /> HR only — includes salary, bank, and TIN</span>
+        </>}
+        actions={<>
+          <Button variant="secondary" icon={<ClipboardPaste size={13} />} onClick={() => setShowImport(true)}>Bulk import</Button>
+          <Button icon={showForm && !editing ? <X size={12} /> : <Plus size={12} />} onClick={() => { setShowForm(v => !v); setEditing(null) }}>New employee</Button>
+        </>}
+      />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -291,7 +285,7 @@ export function Employees() {
       ) : (
         <>
           <BulkActionBar count={count} itemLabel="employee" onClear={clear} onDelete={bulkDelete} />
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
           <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
             <div className="flex-1"><SortHeader label="Name" active={sortKey === 'full_name'} dir={sortDir} onClick={() => toggleSort('full_name')} /></div>
@@ -300,7 +294,8 @@ export function Employees() {
             <div className="w-6"></div>
           </div>
           {visible.map((e, i) => (
-            <div key={e.id} className={`flex items-center gap-3 px-4 py-3 ${i < visible.length - 1 ? 'border-b border-gray-50' : ''} ${!e.is_active ? 'opacity-50' : ''} ${selected.has(e.id) ? 'bg-blue-50/40' : ''}`}>
+            <div key={e.id} className={`stagger-row flex items-center gap-3 px-4 py-3 ${i < visible.length - 1 ? 'border-b border-gray-50' : ''} ${!e.is_active ? 'opacity-50' : ''} ${selected.has(e.id) ? 'bg-blue-50/40' : ''}`}
+              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
               <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggle(e.id)} className="cursor-pointer" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">{e.full_name}</p>
@@ -309,9 +304,7 @@ export function Employees() {
                   {!e.is_active && ' · inactive'}
                 </p>
               </div>
-              <span className="w-32 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize text-center">
-                {e.employment_type.replace('_', ' ')}
-              </span>
+              <div className="w-32 text-center"><Badge>{e.employment_type.replace('_', ' ')}</Badge></div>
               <div className="text-right w-28">
                 <p className="text-xs font-mono font-medium text-gray-700">
                   {e.employment_type === 'permanent' ? `${N(e.base_salary_etb ?? 0)}/mo` : `${N(e.daily_rate_etb ?? 0)}/day`}
@@ -323,7 +316,7 @@ export function Employees() {
               </button>
             </div>
           ))}
-          </div>
+          </Card>
         </>
       )}
     </div>

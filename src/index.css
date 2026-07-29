@@ -10,6 +10,32 @@
    a small fixed set of gray/white utilities. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Design tokens for the app-wide visual redesign. Registered via Tailwind
+   v4's @theme so they become real utilities (bg-accent, text-accent,
+   border-panel-dark, rounded-card, font-sans, ...) instead of one-off
+   arbitrary values scattered through every page. Each points at a plain
+   --app-* custom property (defined below in :root/.dark) rather than a
+   literal value, so they stay runtime-theme-switchable the same way the
+   existing gray ramp above already is -- these are deliberate, fixed
+   design colors (the lime accent, the dark side-panel), not colors that
+   should flip between light/dark app theme. */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --color-accent: var(--app-accent);
+  --color-accent-foreground: var(--app-accent-foreground);
+  --color-panel-dark: var(--app-panel-dark);
+  --color-panel-dark-foreground: var(--app-panel-dark-foreground);
+  /* 24px -- "nothing is sharp" per the design spec (cards 24-28px,
+     tables 20px, buttons/tabs fully pill via rounded-full instead). */
+  --radius-card: 1.5rem;
+  /* Design-system shadow scale -- applied via shadow-card-sm etc utilities,
+     e.g. Card uses sm (the spec's signature "soft lift" shadow), Modal uses xl. */
+  --shadow-card-sm: 0 8px 30px rgba(0,0,0,0.05);
+  --shadow-card-md: 0 8px 24px rgba(0,0,0,0.06);
+  --shadow-card-lg: 0 16px 40px rgba(0,0,0,0.08);
+  --shadow-card-xl: 0 24px 60px rgba(0,0,0,0.10);
+}
+
 /* Semantic layout tokens used by Sidebar/MobileNav/Layout. These were
    referenced (var(--color-background-primary) etc.) but never actually
    defined anywhere, so the sidebar/nav rendered with no background/border/
@@ -24,10 +50,15 @@
   --color-border-primary: #e5e7eb;
   --color-border-secondary: #e5e7eb;
   --color-border-tertiary: #e5e7eb;
-  --color-text-primary: #111827;
-  --color-text-secondary: #4b5563;
-  --color-text-tertiary: #9ca3af;
+  --color-text-primary: #1b1b1b;
+  --color-text-secondary: #6e6e73;
+  --color-text-tertiary: #a3a3a3;
   --color-text-info: #1d4ed8;
+
+  --app-accent: #e8ff2d;
+  --app-accent-foreground: #1b1b1b;
+  --app-panel-dark: #232323;
+  --app-panel-dark-foreground: #f5f6f2;
 }
 
 .dark {
@@ -61,6 +92,13 @@
   --color-text-secondary: #b4bac3;
   --color-text-tertiary: #838a94;
   --color-text-info: #60a5fa;
+
+  /* Same lime accent / dark panel in both app themes -- these are fixed
+     brand colors, not part of the light/dark neutral flip above. */
+  --app-accent: #e8ff2d;
+  --app-accent-foreground: #1b1b1b;
+  --app-panel-dark: #232323;
+  --app-panel-dark-foreground: #f5f6f2;
 }
 
 /* `white` is used for two different jobs in this codebase: card/table/
@@ -97,6 +135,7 @@
 body {
   background-color: var(--color-background-tertiary);
   color: var(--color-text-primary);
+  font-family: var(--font-sans);
 }
 
 @keyframes fadeInUp {
@@ -110,6 +149,20 @@ body {
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(0.97); }
   to { opacity: 1; transform: scale(1); }
+}
+@keyframes slideReveal {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Staggered entrance for list rows -- each row sets --stagger-index (its
+   position in the list) inline; this delays fadeInUp by a small amount per
+   row so a freshly-loaded table cascades in instead of popping in at once.
+   `backwards` fill-mode keeps the row invisible during its own delay
+   instead of flashing at full opacity first. */
+.stagger-row {
+  animation: fadeInUp 0.3s ease-out backwards;
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
 }
 
 /* App-wide interaction polish: smooth color/border/shadow changes on every

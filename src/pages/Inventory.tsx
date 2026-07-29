@@ -7,6 +7,10 @@ import { usePageState } from '../lib/pageState'
 import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
 import { SearchableSelect } from '../components/SearchableSelect'
 import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock } from 'lucide-react'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 function LiveClock() {
   const [now, setNow] = useState(new Date())
@@ -15,7 +19,7 @@ function LiveClock() {
     return () => clearInterval(id)
   }, [])
   return (
-    <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-gray-900 border border-blue-100 dark:border-blue-900/40 shadow-sm">
+    <div className="flex items-center gap-3 px-3.5 py-2 rounded-card bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-gray-900 border border-blue-100 dark:border-blue-900/40 shadow-sm">
       <div className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
         <Calendar size={13} className="text-blue-400 shrink-0" />
         {now.toLocaleDateString('en-ET', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
@@ -72,7 +76,7 @@ function AdjustStockForm({ products, warehouses, onDone, onCancel }: {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-2.5">
+    <Card padded className="mb-4 space-y-2.5">
       <p className="text-xs font-medium text-amber-700 flex items-center gap-1"><ShieldAlert size={12} /> Manual stock adjustment</p>
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="flex gap-2">
@@ -103,13 +107,12 @@ function AdjustStockForm({ products, warehouses, onDone, onCancel }: {
         placeholder="Reason (e.g. physical count correction, damaged stock, opening balance)"
         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
       <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200">Cancel</button>
-        <button onClick={submit} disabled={saving}
-          className="px-3 py-1.5 text-xs rounded-lg bg-amber-600 text-white disabled:opacity-50">
-          {saving ? 'Saving…' : 'Record adjustment'}
-        </button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit} className="bg-amber-600 text-white hover:brightness-95">
+          Record adjustment
+        </Button>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -134,13 +137,13 @@ interface Movement {
 const N = (n: number) =>
   new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 
-const MOVE_COLOR: Record<string, string> = {
-  SHIPMENT_RECEIVED:   'text-green-700',
-  PRODUCTION_OUTPUT:   'text-green-700',
-  SALE:                'text-red-600',
-  ADJUSTMENT:          'text-amber-700',
-  DAMAGE:              'text-red-600',
-  PRODUCTION_CONSUMED: 'text-amber-700',
+const MOVE_BADGE: Record<string, 'success' | 'danger' | 'warning' | 'neutral'> = {
+  SHIPMENT_RECEIVED:   'success',
+  PRODUCTION_OUTPUT:   'success',
+  SALE:                'danger',
+  ADJUSTMENT:          'warning',
+  DAMAGE:              'danger',
+  PRODUCTION_CONSUMED: 'warning',
 }
 
 export function Inventory() {
@@ -313,39 +316,31 @@ export function Inventory() {
   return (
     <div className="p-5 max-w-5xl mx-auto">
 
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Inventory</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {inventory.length} products ·{' '}
-            <span className="font-medium text-blue-700">{N(totalValue)} ETB</span>
-            {' '}total value
-          </p>
-        </div>
-        <LiveClock />
-      </div>
+      <PageHeader
+        title="Inventory"
+        subtitle={<>{inventory.length} products · <span className="font-medium text-blue-700">{N(totalValue)} ETB</span> total value</>}
+        actions={<LiveClock />}
+      />
 
       <div className="flex items-center justify-end mb-5 -mt-3">
         <div className="flex gap-2">
-          <button
+          <Button
             onClick={() => setShowAdjustForm(v => !v)}
-            className="px-3 py-1.5 text-xs rounded-lg bg-amber-600 text-white flex items-center gap-1"
+            className="bg-amber-600 text-white hover:brightness-95"
+            icon={showAdjustForm ? <X size={12} /> : <Plus size={12} />}
           >
-            {showAdjustForm ? <X size={12} /> : <Plus size={12} />} Adjust stock
-          </button>
+            Adjust stock
+          </Button>
           {(['stock', 'warehouses', 'forecast', 'movements'] as const).map(t => (
-            <button
+            <Button
               key={t}
+              variant={tab === t ? 'primary' : 'secondary'}
               onClick={() => setTab(t)}
-              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors capitalize flex items-center gap-1
-                ${tab === t
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              icon={t === 'warehouses' ? <LayoutGrid size={12} /> : t === 'forecast' ? <Gauge size={12} /> : undefined}
+              className="capitalize"
             >
-              {t === 'warehouses' && <LayoutGrid size={12} />}
-              {t === 'forecast' && <Gauge size={12} />}
               {t === 'stock' ? 'Stock levels' : t === 'warehouses' ? 'Warehouse view' : t === 'forecast' ? 'Forecast' : 'Movement history'}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -366,14 +361,14 @@ export function Inventory() {
       )}
 
       {!loading && error && (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mb-4 rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {!loading && outOfStock.length > 0 && (
         <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200
-                        rounded-xl text-xs text-red-700 mb-2">
+                        rounded-card text-xs text-red-700 mb-2">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>
             <strong>{outOfStock.length} products</strong> out of stock:{' '}
@@ -384,7 +379,7 @@ export function Inventory() {
 
       {!loading && lowStock.length > 0 && (
         <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200
-                        rounded-xl text-xs text-amber-700 mb-4">
+                        rounded-card text-xs text-amber-700 mb-4">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>
             <strong>{lowStock.length} products</strong> below safety stock:{' '}
@@ -428,7 +423,7 @@ export function Inventory() {
               {visibleStock.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 text-sm">No products match this filter.</div>
               ) : (
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <Card>
               <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                               bg-gray-50 border-b border-gray-100
                               text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -444,12 +439,14 @@ export function Inventory() {
                 const isOut       = item.quantity_on_hand <= 0
                 const isCritical  = !isOut && item.quantity_on_hand < 5
                 const isLow       = !isOut && !isCritical && item.quantity_on_hand < 20
+                const rail = isOut || isCritical ? 'border-l-red-400' : isLow ? 'border-l-amber-400' : 'border-l-green-400'
                 return (
                   <div
                     key={`${item.product_id}:${item.warehouse_id ?? ''}`}
-                    className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
-                                items-center
+                    className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
+                                items-center border-l-[3px] ${rail} ${i % 2 === 1 ? 'bg-gray-50/40' : ''}
                                 ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}
+                    style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                   >
                     <div>
                       <p className="text-sm font-medium">{item.product_name}</p>
@@ -472,16 +469,9 @@ export function Inventory() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                        ${isOut
-                          ? 'bg-red-100 text-red-700'
-                          : isCritical
-                            ? 'bg-red-50 text-red-700'
-                            : isLow
-                              ? 'bg-amber-50 text-amber-700'
-                              : 'bg-green-50 text-green-700'}`}>
+                      <Badge variant={isOut || isCritical ? 'danger' : isLow ? 'warning' : 'success'}>
                         {isOut ? 'Out of stock' : isCritical ? 'Critical' : isLow ? 'Low' : 'OK'}
-                      </span>
+                      </Badge>
                     </div>
                   </div>
                 )
@@ -502,7 +492,7 @@ export function Inventory() {
                 </div>
                 <div />
               </div>
-              </div>
+              </Card>
               )}
             </>
           )}
@@ -535,7 +525,7 @@ export function Inventory() {
                   {buildable.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {buildable.map(b => (
-                        <div key={b.bomId} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200">
+                        <div key={b.bomId} className="flex items-center gap-2 px-3 py-2 rounded-card bg-violet-50 border border-violet-200">
                           <Wrench size={14} className="text-violet-600 shrink-0" />
                           <div>
                             <p className="text-xs text-violet-700 font-medium leading-tight">Can build {N(b.buildable)} × {b.productName}</p>
@@ -547,7 +537,7 @@ export function Inventory() {
                   )}
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {group.items.map(item => {
+                    {group.items.map((item, i) => {
                       const isOut      = item.quantity_on_hand <= 0
                       const isCritical = !isOut && item.quantity_on_hand < 5
                       const isLow      = !isOut && !isCritical && item.quantity_on_hand < 20
@@ -555,7 +545,12 @@ export function Inventory() {
                       const barColor = isOut ? 'bg-red-400' : isCritical ? 'bg-red-400' : isLow ? 'bg-amber-400' : 'bg-green-500'
                       const ringColor = isOut ? 'border-red-200' : isCritical ? 'border-red-200' : isLow ? 'border-amber-200' : 'border-gray-200'
                       return (
-                        <div key={`${whId}:${item.product_id}`} className={`bg-white border ${ringColor} rounded-xl p-3 flex flex-col gap-2`}>
+                        <Card
+                          key={`${whId}:${item.product_id}`}
+                          padded
+                          className={`stagger-row !border ${ringColor} flex flex-col gap-2`}
+                          style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
+                        >
                           <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center shrink-0 overflow-hidden">
                               {meta?.imageUrl
@@ -578,7 +573,7 @@ export function Inventory() {
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(4, (item.quantity_on_hand / maxQty) * 100)}%` }} />
                           </div>
-                        </div>
+                        </Card>
                       )
                     })}
                   </div>
@@ -599,7 +594,7 @@ export function Inventory() {
             <p className="text-xs text-gray-400">Forecasts need at least some sales in the last 60 days to estimate demand.</p>
           </div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <Card>
             <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                             bg-gray-50 border-b border-gray-100
                             text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -615,8 +610,9 @@ export function Inventory() {
               const urgent = f.daysUntilStockout !== null && f.daysUntilStockout <= STOCKOUT_WARNING_DAYS
               return (
                 <div key={f.productId}
-                  className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 items-center
-                              ${i < forecastRows.length - 1 ? 'border-b border-gray-50' : ''} ${urgent ? 'bg-red-50/40' : ''}`}>
+                  className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 items-center
+                              ${i < forecastRows.length - 1 ? 'border-b border-gray-50' : ''} ${urgent ? 'bg-red-50/40' : ''}`}
+                  style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
                   <div>
                     <p className="text-sm font-medium">{meta?.name ?? 'Unknown product'}</p>
                     <p className="text-xs font-mono text-gray-400">{meta?.sku ?? ''}</p>
@@ -647,7 +643,7 @@ export function Inventory() {
                 </div>
               )
             })}
-          </div>
+          </Card>
         )
       )}
 
@@ -676,7 +672,7 @@ export function Inventory() {
               No movements recorded yet.
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <Card>
               <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                               bg-gray-50 border-b border-gray-100
                               text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -690,20 +686,22 @@ export function Inventory() {
               {moves.map((m, i) => {
                 const prod  = m.products as any
                 const isIn  = m.quantity > 0
-                const color = MOVE_COLOR[m.movement_type] ?? 'text-gray-500'
                 return (
                   <div
                     key={m.id}
-                    className={`grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
+                    className={`stagger-row grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                                 items-center
                                 ${i < moves.length - 1 ? 'border-b border-gray-50' : ''}`}
+                    style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                   >
                     <div>
                       <p className="text-sm font-medium">{prod?.name ?? '—'}</p>
                       {m.notes && <p className="text-xs text-gray-400 mt-0.5">{m.notes}</p>}
                     </div>
-                    <div className={`text-xs font-medium ${color}`}>
-                      {m.movement_type.replace(/_/g, ' ')}
+                    <div>
+                      <Badge variant={MOVE_BADGE[m.movement_type] ?? 'neutral'}>
+                        {m.movement_type.replace(/_/g, ' ')}
+                      </Badge>
                     </div>
                     <div className={`text-right text-sm font-mono font-medium
                       ${isIn ? 'text-green-700' : 'text-red-600'}`}>
@@ -718,7 +716,7 @@ export function Inventory() {
                   </div>
                 )
               })}
-            </div>
+            </Card>
           )}
         </div>
       )}

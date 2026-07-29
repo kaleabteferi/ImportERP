@@ -1,11 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Ship, X, Check, Loader2, AlertTriangle, Trash2, Search } from 'lucide-react'
+import { Plus, Ship, Check, Loader2, AlertTriangle, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { receiveShipmentAtDjibouti, resolveAssemblyType } from '../lib/inventoryReceive'
 import { fetchAliWarehouseId } from '../api/warehouseTransfers'
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { usePageState } from '../lib/pageState'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Card } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { Modal } from '../components/ui/Modal'
+import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
 interface Shipment {
   id: string
@@ -24,15 +30,15 @@ interface Shipment {
 interface Supplier { id: string; name: string }
 interface Company { id: string; name: string }
 
-const STATUS: Record<string, { label: string; cls: string }> = {
-  ORDERED:            { label: 'Ordered',       cls: 'bg-gray-100 text-gray-600'   },
-  IN_PRODUCTION:      { label: 'In production', cls: 'bg-gray-100 text-gray-600'   },
-  SHIPPED:            { label: 'Shipped',       cls: 'bg-blue-50 text-blue-700'    },
-  AT_DJIBOUTI:        { label: 'At Djibouti',  cls: 'bg-amber-50 text-amber-700'  },
-  IN_TRANSIT:         { label: 'In transit',    cls: 'bg-purple-50 text-purple-700'},
-  AT_CUSTOMS:         { label: 'At customs',    cls: 'bg-red-50 text-red-700'      },
-  WAREHOUSE_RECEIVED: { label: 'Received',      cls: 'bg-green-50 text-green-700'  },
-  COMPLETED:          { label: 'Completed',     cls: 'bg-green-50 text-green-700'  },
+const STATUS: Record<string, { label: string; variant: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' }> = {
+  ORDERED:            { label: 'Ordered',       variant: 'neutral' },
+  IN_PRODUCTION:      { label: 'In production', variant: 'neutral' },
+  SHIPPED:            { label: 'Shipped',       variant: 'info' },
+  AT_DJIBOUTI:        { label: 'At Djibouti',   variant: 'warning' },
+  IN_TRANSIT:         { label: 'In transit',    variant: 'accent' },
+  AT_CUSTOMS:         { label: 'At customs',    variant: 'danger' },
+  WAREHOUSE_RECEIVED: { label: 'Received',      variant: 'success' },
+  COMPLETED:          { label: 'Completed',     variant: 'success' },
 }
 
 const EMPTY_FORM = {
@@ -186,21 +192,15 @@ export function Shipments() {
   return (
     <div className="p-5 max-w-5xl mx-auto">
 
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-lg font-medium">Shipments</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {active.length} active · {completed.length} completed
-          </p>
-        </div>
-        <button
-          onClick={() => { setOpen(true); setError(null); setForm({ ...EMPTY_FORM }) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white
-                     text-xs rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={13} /> New shipment
-        </button>
-      </div>
+      <PageHeader
+        title="Shipments"
+        subtitle={`${active.length} active · ${completed.length} completed`}
+        actions={
+          <Button icon={<Plus size={13} />} onClick={() => { setOpen(true); setError(null); setForm({ ...EMPTY_FORM }) }}>
+            New shipment
+          </Button>
+        }
+      />
 
       {!open && error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -255,11 +255,9 @@ export function Shipments() {
           <p className="text-xs text-gray-400 mb-4">
             Create your first shipment to start tracking containers.
           </p>
-          <button onClick={() => setOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600
-                             text-white text-xs rounded-lg hover:bg-blue-700 transition-colors">
-            <Plus size={13} /> New shipment
-          </button>
+          <Button icon={<Plus size={13} />} onClick={() => setOpen(true)} className="mx-auto">
+            New shipment
+          </Button>
         </div>
       )}
 
@@ -276,7 +274,7 @@ export function Shipments() {
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
                 Active ({active.length})
               </p>
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <Card>
                 <div className="grid grid-cols-[1.5fr_1.2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5
                                 bg-gray-50 border-b border-gray-100
                                 text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -290,11 +288,12 @@ export function Shipments() {
                 {active.map((sh, i) => {
                   const st = STATUS[sh.status] ?? STATUS['ORDERED']
                   return (
+                    <SwipeToDelete key={sh.id} onDelete={() => setDeleteTarget(sh)}>
                     <div
-                      key={sh.id}
-                      className={`grid grid-cols-[1.5fr_1.2fr_1fr_1fr_1fr_auto] gap-3
-                                  px-4 py-3 items-center
+                      className={`stagger-row grid grid-cols-[1.5fr_1.2fr_1fr_1fr_1fr_auto] gap-3
+                                  px-4 py-3 items-center bg-white
                                   ${i < active.length - 1 ? 'border-b border-gray-50' : ''}`}
+                      style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                     >
                       <div>
                         <div className="flex items-center gap-2">
@@ -315,10 +314,7 @@ export function Shipments() {
                         {sh.eta_djibouti ?? '—'}
                       </div>
                       <div>
-                        <span className={`inline-flex px-2 py-0.5 rounded-full
-                                          text-xs font-medium ${st.cls}`}>
-                          {st.label}
-                        </span>
+                        <Badge variant={st.variant}>{st.label}</Badge>
                       </div>
                       <div className="text-xs text-gray-400">{sh.allocation_method}</div>
                       <div className="flex items-center gap-2">
@@ -340,18 +336,12 @@ export function Shipments() {
                         >
                           Open →
                         </Link>
-                        <button
-                          onClick={() => setDeleteTarget(sh)}
-                          title="Delete shipment"
-                          className="p-1.5 text-gray-300 hover:text-red-600 transition-colors shrink-0"
-                        >
-                          <Trash2 size={13} />
-                        </button>
                       </div>
                     </div>
+                    </SwipeToDelete>
                   )
                 })}
-              </div>
+              </Card>
             </div>
           )}
 
@@ -361,15 +351,16 @@ export function Shipments() {
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
                 Completed ({completed.length})
               </p>
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden opacity-70">
+              <Card className="opacity-70">
                 {completed.map((sh, i) => {
                   const st = STATUS[sh.status] ?? STATUS['COMPLETED']
                   return (
+                    <SwipeToDelete key={sh.id} onDelete={() => setDeleteTarget(sh)}>
                     <div
-                      key={sh.id}
-                      className={`grid grid-cols-[1.5fr_1.2fr_1fr_1fr_auto] gap-3
-                                  px-4 py-3 items-center
+                      className={`stagger-row grid grid-cols-[1.5fr_1.2fr_1fr_1fr_auto] gap-3
+                                  px-4 py-3 items-center bg-white
                                   ${i < completed.length - 1 ? 'border-b border-gray-50' : ''}`}
+                      style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                     >
                       <div>
                         <p className="text-sm font-medium">{sh.shipment_number}</p>
@@ -385,10 +376,7 @@ export function Shipments() {
                         {sh.arrived_addis_date ?? sh.eta_djibouti ?? '—'}
                       </div>
                       <div>
-                        <span className={`inline-flex px-2 py-0.5 rounded-full
-                                          text-xs font-medium ${st.cls}`}>
-                          {st.label}
-                        </span>
+                        <Badge variant={st.variant}>{st.label}</Badge>
                       </div>
                       <div className="flex items-center gap-2">
                         <Link
@@ -398,18 +386,12 @@ export function Shipments() {
                         >
                           Open →
                         </Link>
-                        <button
-                          onClick={() => setDeleteTarget(sh)}
-                          title="Delete shipment"
-                          className="p-1.5 text-gray-300 hover:text-red-600 transition-colors shrink-0"
-                        >
-                          <Trash2 size={13} />
-                        </button>
                       </div>
                     </div>
+                    </SwipeToDelete>
                   )
                 })}
-              </div>
+              </Card>
             </div>
           )}
         </div>
@@ -430,24 +412,17 @@ export function Shipments() {
       )}
 
       {/* Modal */}
-      {open && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={e => e.target === e.currentTarget && setOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh]
-                          overflow-auto shadow-xl">
-
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">New shipment</h2>
-              <button onClick={() => setOpen(false)}
-                      className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-4">
-
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="New shipment"
+        footer={<>
+          <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button loading={saving} icon={<Check size={12} />} onClick={save} className="min-w-[130px]">
+            Create shipment
+          </Button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">
                   Supplier <span className="text-red-400">*</span>
@@ -576,33 +551,7 @@ export function Shipments() {
                   {error}
                 </div>
               )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-4
-                            border-t border-gray-100">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 text-xs text-gray-600 border border-gray-200
-                           rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white
-                           text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50
-                           transition-colors min-w-[130px] justify-center"
-              >
-                {saving
-                  ? <><Loader2 size={12} className="animate-spin" /> Saving…</>
-                  : <><Check size={12} /> Create shipment</>
-                }
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }
