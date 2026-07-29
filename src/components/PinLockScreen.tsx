@@ -134,11 +134,11 @@ export function PinLockScreen() {
     : 'Enter it once more'
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-900 p-4">
-      <div className={`w-full max-w-sm bg-white border border-gray-100 rounded-3xl shadow-xl px-6 py-8 ${shake ? 'animate-[shake_0.4s]' : ''}`}
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-900 p-4">
+      <div className={`w-full max-w-sm bg-white border border-gray-100 rounded-card shadow-[var(--shadow-card-xl)] px-6 py-8 ${shake ? 'animate-[shake_0.4s]' : ''}`}
         style={shake ? { animation: 'shake 0.4s' } : undefined}>
-        <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto mb-4">
-          {mode === 'verify' ? <Lock size={20} className="text-white" /> : <ShieldCheck size={20} className="text-white" />}
+        <div className="w-12 h-12 rounded-card bg-panel-dark flex items-center justify-center mx-auto mb-4">
+          {mode === 'verify' ? <Lock size={20} className="text-accent" /> : <ShieldCheck size={20} className="text-accent" />}
         </div>
         <h1 className="text-base font-medium text-center">{title}</h1>
         <p className="text-xs text-gray-400 text-center mt-1">{subtitle}</p>
@@ -153,10 +153,10 @@ export function PinLockScreen() {
               onKeyDown={e => e.key === 'Enter' && submitPassword()}
               placeholder="Account password"
               autoFocus
-              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400"
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
             />
             <button onClick={submitPassword} disabled={busy || !password}
-              className="w-full py-2.5 text-sm rounded-xl bg-blue-600 text-white font-medium disabled:opacity-50">
+              className="w-full py-2.5 text-sm rounded-full bg-accent text-accent-foreground font-medium disabled:opacity-50 hover:brightness-95 transition">
               {busy ? 'Checking…' : 'Continue'}
             </button>
             <button onClick={() => { setMode('verify'); setError(null); setPassword('') }}
@@ -172,7 +172,7 @@ export function PinLockScreen() {
             {mode === 'verify' && (
               <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
                 <button onClick={() => { setMode('forgot-password'); setEntry(''); setError(null) }}
-                  className="text-xs text-blue-600 hover:underline">
+                  className="text-xs text-gray-500 hover:text-accent-foreground transition-colors">
                   Forgot PIN?
                 </button>
                 <button onClick={signOut} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">

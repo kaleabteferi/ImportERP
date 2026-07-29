@@ -4,7 +4,8 @@ import {
   Check, Clock, AlertTriangle, Truck,
   Anchor, Building2, RotateCcw, Save, Loader2, RefreshCw, Warehouse,
 } from 'lucide-react'
-import { hasPaidAutoExpense, markAutoExpensesPaid, syncDemurrageExpenses } from '../../lib/expenseSync'
+import { hasPaidAutoExpense, markAutoExpensesPaid, syncDemurrageExpenses, findAutoExpense } from '../../lib/expenseSync'
+import type { AutoExpenseSource } from '../../lib/expenseSync'
 import { DEFAULT_DEMURRAGE_RATES, computeDjiboutiCosts, type DemurrageRates as DemurrageRate } from '../../lib/djiboutiCost'
 
 interface TimelineEvent {
@@ -56,6 +57,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [showRates, setShowRates] = useState(false)
+  const [recorded, setRecorded] = useState<Record<string, { amountEtb: number; isPaid: boolean } | null>>({})
   const lastSyncKey = useRef('')
 
   async function load() {
@@ -73,7 +75,23 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
     }
     setEvents(evMap)
     if (rateRes.data) setRates(prev => ({ ...prev, ...rateRes.data }))
+    await loadRecorded()
     setLoading(false)
+  }
+
+  // What's actually saved on the shipment for each cost category right now
+  // -- compared against the live-recalculated figure below so a charge
+  // that was marked paid days ago (and so stopped auto-syncing) can still
+  // be checked against what it would cost today.
+  async function loadRecorded() {
+    const sources: AutoExpenseSource[] = ['demurrage', 'detention', 'port_fee', 'wh_fee']
+    const rows = await Promise.all(sources.map(s => findAutoExpense(shipmentId, s, containerId)))
+    const next: Record<string, { amountEtb: number; isPaid: boolean } | null> = {}
+    sources.forEach((s, i) => {
+      const row = rows[i]
+      next[s] = row ? { amountEtb: Number(row.amount_etb ?? 0), isPaid: !!row.is_paid } : null
+    })
+    setRecorded(next)
   }
 
   useEffect(() => { load() }, [shipmentId, containerId])
@@ -140,6 +158,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
         whUsd: whCostUsd,
       }, fxRate, undefined, containerId)
       setSyncMsg('Demurrage, port fee, detention & WH synced to expenses')
+      await loadRecorded()
     } catch (e: any) {
       setSyncMsg(`Sync failed: ${e.message}`)
     } finally {
@@ -184,6 +203,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
           whUsd: whCostUsd,
         }, fxRate, undefined, containerId)
         setSyncMsg('Djibouti costs auto-synced to expenses')
+        await loadRecorded()
       })
       .catch((e: Error) => setSyncMsg(`Sync failed: ${e.message}`))
   }, [demurrageCostUsd, detentionCostUsd, portFeeCostUsd, whCostUsd, arrivedDate, shipmentId, containerId, fxRate])
@@ -241,6 +261,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
           {[
             {
               label: 'Demurrage',
+              source: 'demurrage' as AutoExpenseSource,
               cost: demurrageCostUsd,
               days: daysAtPort,
               free: rates.dem_free_days,
@@ -248,6 +269,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
             },
             {
               label: 'Port fee',
+              source: 'port_fee' as AutoExpenseSource,
               cost: portFeeCostUsd,
               days: daysAtPort,
               free: rates.port_free_days,
@@ -255,6 +277,7 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
             },
             {
               label: 'WH (warehouse)',
+              source: 'wh_fee' as AutoExpenseSource,
               cost: whCostUsd,
               days: daysWh,
               free: rates.wh_free_days,
@@ -262,12 +285,22 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
             },
             {
               label: 'Detention',
+              source: 'detention' as AutoExpenseSource,
               cost: detentionCostUsd,
               days: daysDetention,
               free: rates.det_free_days,
               color: detentionCostUsd > 0 ? 'text-amber-600' : 'text-green-600',
             },
-          ].map(s => (
+          ].map(s => {
+            const rec = recorded[s.source]
+            const expectedEtb = s.cost * fxRate
+            // Once a category is marked paid, the auto-sync effect stops
+            // updating its row (see the `paid.some(Boolean)` guard below) —
+            // so the frozen paid amount and today's live recalculation can
+            // genuinely diverge, and that gap is exactly what's worth
+            // surfacing here.
+            const delta = rec?.isPaid ? Math.round(expectedEtb - rec.amountEtb) : 0
+            return (
             <div key={s.label}
                  className="bg-gray-50 rounded-xl px-3 py-2.5">
               <p className="text-xs text-gray-400 mb-1">{s.label}</p>
@@ -277,8 +310,19 @@ export function TimelinePanel({ shipmentId, containerId = null, fxRate, containe
               <p className="text-xs text-gray-400 mt-0.5">
                 Day {s.days} of {s.free} free
               </p>
+              {rec?.isPaid && (
+                <div className="mt-1.5 pt-1.5 border-t border-gray-200">
+                  <p className="text-xs text-gray-500">Paid: <span className="font-mono">{N(rec.amountEtb)} ETB</span></p>
+                  {Math.abs(delta) > 1 && (
+                    <p className={`text-xs font-medium ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      Now would be {N(Math.abs(delta))} ETB {delta > 0 ? 'more' : 'less'}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+            )
+          })}
           <div className="col-span-4 flex items-center justify-between pt-1">
             <p className="text-xs text-gray-400">
               Auto-synced to shipment expenses (updates existing rows, no duplicates)

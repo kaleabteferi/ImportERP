@@ -26,6 +26,12 @@ export interface AutoExpenseInput {
    * forwarder invoice, which is billed once per shipment regardless of how
    * many containers it holds. */
   containerId?: string | null
+  /** Distinguishes multiple rows that legitimately share one `source` --
+   * e.g. CustomsTab's FOB-uplift rows (Insurance/Freight/Handling/...) all
+   * use source='customs_fob_uplift', so without a per-row subKey they'd
+   * collide on the same auto_sync_key and a single batch insert of more
+   * than one would violate the unique constraint outright. */
+  subKey?: string
   category: string
   description: string
   amount: number
@@ -37,19 +43,23 @@ export interface AutoExpenseInput {
   detailNote?: string
 }
 
-// Untagged (no :container:<id> suffix) is reserved for the container-less
-// case, so existing pre-this-change rows keep matching exactly as before --
-// this is what makes the per-container split backward compatible.
-function autoTag(source: AutoExpenseSource, containerId?: string | null) {
-  return containerId ? `${AUTO_SYNC_PREFIX}${source}:container:${containerId}` : `${AUTO_SYNC_PREFIX}${source}`
+// Untagged (no :container:<id> / :row:<key> suffix) is reserved for the
+// simple single-row case, so existing pre-this-change rows keep matching
+// exactly as before -- this is what makes both the per-container split and
+// the per-row subKey backward compatible.
+function autoTag(source: AutoExpenseSource, containerId?: string | null, subKey?: string) {
+  let tag = AUTO_SYNC_PREFIX + source
+  if (containerId) tag += `:container:${containerId}`
+  if (subKey) tag += `:row:${subKey}`
+  return tag
 }
 
-export async function findAutoExpense(shipmentId: string, source: AutoExpenseSource, containerId?: string | null) {
+export async function findAutoExpense(shipmentId: string, source: AutoExpenseSource, containerId?: string | null, subKey?: string) {
   const { data } = await supabase
     .from('shipment_expenses')
     .select('id, amount, amount_etb, cost_status, is_paid, paid_at')
     .eq('shipment_id', shipmentId)
-    .eq('auto_sync_key', autoTag(source, containerId))
+    .eq('auto_sync_key', autoTag(source, containerId, subKey))
     .maybeSingle()
   return data
 }
@@ -92,8 +102,8 @@ export async function hasPaidAutoExpense(shipmentId: string, source: AutoExpense
  * atomic at the database level instead.
  */
 export async function upsertAutoExpense(input: AutoExpenseInput): Promise<void> {
-  const tag = autoTag(input.source, input.containerId)
-  const existing = await findAutoExpense(input.shipmentId, input.source, input.containerId)
+  const tag = autoTag(input.source, input.containerId, input.subKey)
+  const existing = await findAutoExpense(input.shipmentId, input.source, input.containerId, input.subKey)
 
   if (existing?.is_paid) {
     return
@@ -171,21 +181,24 @@ export async function replaceAutoExpenses(
 
   const toInsert = rows
     .filter(r => r.amountEtb > 0)
-    .map(r => ({
-      shipment_id:   shipmentId,
-      auto_sync_key: autoTag(r.source),
-      category:      r.category,
-      description:   r.description,
-      amount:        r.amount,
-      currency:      r.currency,
-      amount_etb:    Math.round(r.amountEtb * 100) / 100,
-      exchange_rate: r.fxRate,
-      vendor_name:   r.vendorName ?? null,
-      expense_date:  r.expenseDate ?? new Date().toISOString().split('T')[0],
-      receipt_ref:   null,
-      notes:         r.detailNote ? `${autoTag(r.source)}|${r.detailNote}` : autoTag(r.source),
-      cost_status:   'PROVISIONAL',
-    }))
+    .map(r => {
+      const tag = autoTag(r.source, r.containerId, r.subKey)
+      return {
+        shipment_id:   shipmentId,
+        auto_sync_key: tag,
+        category:      r.category,
+        description:   r.description,
+        amount:        r.amount,
+        currency:      r.currency,
+        amount_etb:    Math.round(r.amountEtb * 100) / 100,
+        exchange_rate: r.fxRate,
+        vendor_name:   r.vendorName ?? null,
+        expense_date:  r.expenseDate ?? new Date().toISOString().split('T')[0],
+        receipt_ref:   null,
+        notes:         r.detailNote ? `${tag}|${r.detailNote}` : tag,
+        cost_status:   'PROVISIONAL',
+      }
+    })
 
   if (toInsert.length) {
     const { error } = await supabase.from('shipment_expenses').insert(toInsert)

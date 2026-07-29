@@ -11,7 +11,7 @@ import {
 import type { WarehouseTransfer, AliStockRow, DjiboutiReconciliationLine } from '../api/warehouseTransfers'
 import { SearchableSelect } from '../components/SearchableSelect'
 import {
-  Truck, Loader2, Plus, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight,
+  Truck, Loader2, Plus, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight, Box, Calendar, Anchor,
 } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
@@ -51,6 +51,7 @@ export function DjiboutiForwarder() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('REQUESTED')
+  const [expandedStockProductId, setExpandedStockProductId] = useState<string | null>(null)
 
   const [reqOpen, setReqOpen] = useState(false)
   const [reqForm, setReqForm] = useState({ ...EMPTY_REQUEST_FORM })
@@ -214,7 +215,10 @@ export function DjiboutiForwarder() {
         </div>
       ) : (
         <>
-          {/* Stock with Ali */}
+          {/* Stock with Ali — each product expands to show exactly which
+              shipment(s)/container(s) it was received from and when, so
+              "which container is this actually sitting in" has a real
+              answer rather than just a bare total. */}
           <Card className="mb-5">
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-1.5">
               <Package size={13} className="text-gray-400" />
@@ -227,12 +231,56 @@ export function DjiboutiForwarder() {
               </div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {stock.map((s, i) => (
-                  <div key={s.product_id} className="stagger-row flex items-center justify-between px-4 py-2 text-sm" style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
-                    <span className="text-gray-700">{s.product_name} {s.sku && <span className="text-gray-400 font-mono text-xs">({s.sku})</span>}</span>
-                    <span className="font-mono font-medium">{N(s.quantity)}</span>
-                  </div>
-                ))}
+                {stock.map((s, i) => {
+                  const expanded = expandedStockProductId === s.product_id
+                  return (
+                    <div key={s.product_id} className="stagger-row" style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
+                      <button
+                        onClick={() => setExpandedStockProductId(expanded ? null : s.product_id)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-gray-50/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5 text-gray-700">
+                          {expanded ? <ChevronDown size={13} className="text-gray-300" /> : <ChevronRight size={13} className="text-gray-300" />}
+                          {s.product_name} {s.sku && <span className="text-gray-400 font-mono text-xs">({s.sku})</span>}
+                          {s.batches.length > 0 && (
+                            <span className="text-gray-400 font-normal">· from {s.batches.length} shipment{s.batches.length === 1 ? '' : 's'}</span>
+                          )}
+                        </span>
+                        <span className="font-mono font-medium">{N(s.quantity)}</span>
+                      </button>
+                      {expanded && (
+                        <div className="px-4 pb-3 pl-9 space-y-2">
+                          {s.batches.length === 0 ? (
+                            <p className="text-xs text-gray-400">No shipment-received history found for this item.</p>
+                          ) : s.batches.map((b, bi) => (
+                            <div key={bi} className="flex items-start gap-2.5 bg-gray-50 rounded-lg px-3 py-2 text-xs">
+                              <Box size={13} className="text-gray-400 shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-gray-700">{b.shipmentNumber}</p>
+                                <p className="text-gray-500 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  {b.containerNumbers.length > 0 ? (
+                                    b.containerNumbers.map(cn => (
+                                      <span key={cn} className="inline-flex items-center gap-1 font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5">
+                                        <Box size={10} /> {cn}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-gray-400 italic">No container number recorded</span>
+                                  )}
+                                  {b.vesselName && (
+                                    <span className="inline-flex items-center gap-1"><Anchor size={10} /> {b.vesselName}</span>
+                                  )}
+                                  <span className="inline-flex items-center gap-1"><Calendar size={10} /> Received {b.receivedDate ? new Date(b.receivedDate).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown date'}</span>
+                                </p>
+                              </div>
+                              <span className="font-mono font-medium text-gray-700 shrink-0">{N(b.quantity)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </Card>

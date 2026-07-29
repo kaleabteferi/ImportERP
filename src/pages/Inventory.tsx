@@ -6,7 +6,7 @@ import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
 import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
 import { SearchableSelect } from '../components/SearchableSelect'
-import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock } from 'lucide-react'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
@@ -131,7 +131,9 @@ interface Movement {
   notes: string | null
   warehouse_id: string | null
   warehouse_name: string | null
+  product_id: string | null
   products: { name: string; sku: string } | null
+  source_label: string | null
 }
 
 const N = (n: number) =>
@@ -156,6 +158,8 @@ export function Inventory() {
   const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
   const [filterWarehouse, setFilterWarehouse] = usePageState('inventory.filterWarehouse', '')
   const [stockSearch, setStockSearch] = usePageState('inventory.stockSearch', '')
+  const [stockSort, setStockSort] = usePageState<'value' | 'name' | 'date'>('inventory.stockSort', 'value')
+  const [expandedStockKey, setExpandedStockKey] = useState<string | null>(null)
   const [showAdjustForm, setShowAdjustForm] = useState(false)
   const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string }>>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
@@ -168,8 +172,8 @@ export function Inventory() {
 
     try {
       const [ledgerRes, moveRes, productRes, warehouseRes] = await Promise.all([
-        supabase.from('inventory_ledger').select('product_id, quantity, unit_cost_etb, warehouse_id'),
-        supabase.from('inventory_ledger').select('id, movement_type, quantity, unit_cost_etb, movement_date, notes, warehouse_id, product_id').order('movement_date', { ascending: false }).limit(100),
+        supabase.from('inventory_ledger').select('product_id, quantity, unit_cost_etb, warehouse_id, movement_date'),
+        supabase.from('inventory_ledger').select('id, movement_type, quantity, unit_cost_etb, movement_date, notes, warehouse_id, product_id, reference_id, reference_type').order('movement_date', { ascending: false }).limit(200),
         supabase.from('products').select('id, name, sku').order('name'),
         supabase.from('warehouses').select('id, name').order('name'),
       ])
@@ -188,11 +192,37 @@ export function Inventory() {
         warehouses: row.warehouse_id ? { name: warehousesById.get(row.warehouse_id)?.name ?? 'Main Warehouse' } : null,
       }))
 
-      const moveRows = (moveRes.data ?? []).map((row: any) => ({
-        ...row,
-        products: row.product_id ? { name: productsById.get(row.product_id)?.name ?? '—', sku: productsById.get(row.product_id)?.sku ?? '—' } : null,
-        warehouse_name: row.warehouse_id ? (warehousesById.get(row.warehouse_id)?.name ?? 'Main Warehouse') : null,
-      }))
+      // Trace "SHIPMENT_RECEIVED" movements back to which shipment/container
+      // they actually came from — reference_id on those rows is the
+      // shipment's id.
+      const shipmentIds = [...new Set(
+        (moveRes.data ?? []).filter((r: any) => r.movement_type === 'SHIPMENT_RECEIVED' && r.reference_type === 'shipment' && r.reference_id)
+          .map((r: any) => r.reference_id),
+      )]
+      const [{ data: shipmentRows }, { data: containerRows }] = shipmentIds.length > 0
+        ? await Promise.all([
+            supabase.from('shipments').select('id, shipment_number').in('id', shipmentIds),
+            supabase.from('containers').select('shipment_id, container_number').in('shipment_id', shipmentIds),
+          ])
+        : [{ data: [] }, { data: [] }]
+      const shipmentNumberById = new Map((shipmentRows ?? []).map((s: any) => [s.id, s.shipment_number]))
+      const containerNumbersByShipment = new Map<string, string[]>()
+      for (const c of containerRows ?? []) {
+        if (!containerNumbersByShipment.has(c.shipment_id)) containerNumbersByShipment.set(c.shipment_id, [])
+        if (c.container_number) containerNumbersByShipment.get(c.shipment_id)!.push(c.container_number)
+      }
+
+      const moveRows = (moveRes.data ?? []).map((row: any) => {
+        const isShipmentReceipt = row.movement_type === 'SHIPMENT_RECEIVED' && row.reference_type === 'shipment' && row.reference_id
+        const shipmentNumber = isShipmentReceipt ? shipmentNumberById.get(row.reference_id) : null
+        const containerNumbers = isShipmentReceipt ? (containerNumbersByShipment.get(row.reference_id) ?? []) : []
+        return {
+          ...row,
+          products: row.product_id ? { name: productsById.get(row.product_id)?.name ?? '—', sku: productsById.get(row.product_id)?.sku ?? '—' } : null,
+          warehouse_name: row.warehouse_id ? (warehousesById.get(row.warehouse_id)?.name ?? 'Main Warehouse') : null,
+          source_label: shipmentNumber ? `${shipmentNumber}${containerNumbers.length > 0 ? ` · ${containerNumbers.join(', ')}` : ''}` : null,
+        }
+      })
 
       const inv = calculateInventoryBalances(ledgerRows as any[])
 
@@ -312,6 +342,12 @@ export function Inventory() {
   const visibleStock = inventory
     .filter(i => !filterWarehouse || i.warehouse_id === filterWarehouse)
     .filter(i => !stockSearch || i.product_name.toLowerCase().includes(stockSearch.toLowerCase()) || i.sku.toLowerCase().includes(stockSearch.toLowerCase()))
+    .slice()
+    .sort((a, b) => {
+      if (stockSort === 'name') return a.product_name.localeCompare(b.product_name)
+      if (stockSort === 'date') return (b.last_movement_date ?? '').localeCompare(a.last_movement_date ?? '')
+      return b.total_value - a.total_value
+    })
 
   return (
     <div className="p-5 max-w-5xl mx-auto">
@@ -401,6 +437,10 @@ export function Inventory() {
             </div>
           ) : (
             <>
+              <p className="text-xs text-gray-400 mb-3">
+                Current on-hand quantity and value per product/warehouse. Click a row to see its recent
+                movements — including which shipment and container it was received from.
+              </p>
               <div className="flex items-center gap-2 mb-3">
                 <input
                   value={stockSearch}
@@ -418,13 +458,23 @@ export function Inventory() {
                   <option value="">All warehouses</option>
                   {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
+                <select
+                  value={stockSort}
+                  onChange={e => setStockSort(e.target.value as 'value' | 'name' | 'date')}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
+                             focus:outline-none focus:ring-1 focus:ring-blue-400"
+                >
+                  <option value="value">Sort: Total value</option>
+                  <option value="name">Sort: Product name</option>
+                  <option value="date">Sort: Last movement date</option>
+                </select>
               </div>
 
               {visibleStock.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 text-sm">No products match this filter.</div>
               ) : (
               <Card>
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5
                               bg-gray-50 border-b border-gray-100
                               text-xs font-medium text-gray-400 uppercase tracking-wide">
                 <div>Product</div>
@@ -432,6 +482,7 @@ export function Inventory() {
                 <div className="text-right">On hand</div>
                 <div className="text-right">Unit cost</div>
                 <div className="text-right">Total value</div>
+                <div className="text-right">Last movement</div>
                 <div className="text-right">Status</div>
               </div>
 
@@ -440,17 +491,26 @@ export function Inventory() {
                 const isCritical  = !isOut && item.quantity_on_hand < 5
                 const isLow       = !isOut && !isCritical && item.quantity_on_hand < 20
                 const rail = isOut || isCritical ? 'border-l-red-400' : isLow ? 'border-l-amber-400' : 'border-l-green-400'
+                const key = `${item.product_id}:${item.warehouse_id ?? ''}`
+                const expanded = expandedStockKey === key
+                const history = movements
+                  .filter(m => m.product_id === item.product_id && (m.warehouse_id ?? '') === (item.warehouse_id ?? ''))
+                  .slice(0, 8)
                 return (
-                  <div
-                    key={`${item.product_id}:${item.warehouse_id ?? ''}`}
-                    className={`stagger-row grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
-                                items-center border-l-[3px] ${rail} ${i % 2 === 1 ? 'bg-gray-50/40' : ''}
-                                ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}
+                  <div key={key}>
+                  <button
+                    onClick={() => setExpandedStockKey(expanded ? null : key)}
+                    className={`stagger-row w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 text-left
+                                items-center border-l-[3px] ${rail} hover:bg-gray-50/70 transition-colors ${i % 2 === 1 ? 'bg-gray-50/40' : ''}
+                                ${!expanded && i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}
                     style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                   >
-                    <div>
-                      <p className="text-sm font-medium">{item.product_name}</p>
-                      <p className="text-xs font-mono text-gray-400 mt-0.5">{item.sku}</p>
+                    <div className="flex items-center gap-1.5">
+                      {expanded ? <ChevronDown size={12} className="text-gray-300 shrink-0" /> : <ChevronRight size={12} className="text-gray-300 shrink-0" />}
+                      <div>
+                        <p className="text-sm font-medium">{item.product_name}</p>
+                        <p className="text-xs font-mono text-gray-400 mt-0.5">{item.sku}</p>
+                      </div>
                     </div>
                     <div className="text-sm text-gray-600">{item.warehouse_name}</div>
                     <div className="text-right">
@@ -468,17 +528,44 @@ export function Inventory() {
                         {N(item.total_value)} ETB
                       </p>
                     </div>
+                    <div className="text-right text-xs text-gray-400">
+                      {item.last_movement_date ? new Date(item.last_movement_date).toLocaleDateString('en', { month: 'short', day: 'numeric' }) : '—'}
+                    </div>
                     <div className="text-right">
                       <Badge variant={isOut || isCritical ? 'danger' : isLow ? 'warning' : 'success'}>
                         {isOut ? 'Out of stock' : isCritical ? 'Critical' : isLow ? 'Low' : 'OK'}
                       </Badge>
                     </div>
+                  </button>
+                  {expanded && (
+                    <div className={`px-4 pb-3 pl-9 bg-gray-50/50 ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                      {history.length === 0 ? (
+                        <p className="text-xs text-gray-400 py-2">No movement history found for this product/warehouse.</p>
+                      ) : (
+                        <div className="space-y-1 pt-2">
+                          {history.map(m => (
+                            <div key={m.id} className="flex items-center justify-between text-xs py-1">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Badge variant={MOVE_BADGE[m.movement_type] ?? 'neutral'}>{m.movement_type.replace(/_/g, ' ')}</Badge>
+                                <span className="text-gray-400">{new Date(m.movement_date).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                {m.source_label && <span className="text-gray-500 truncate">· {m.source_label}</span>}
+                                {m.notes && <span className="text-gray-400 truncate">· {m.notes}</span>}
+                              </div>
+                              <span className={`font-mono font-medium shrink-0 ${m.quantity >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                {m.quantity >= 0 ? '+' : ''}{N(m.quantity)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   </div>
                 )
               })}
 
               {/* Total */}
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3
                               bg-gray-50 border-t border-gray-100
                               text-sm font-medium">
                 <div className="text-gray-500 text-xs">Total</div>
@@ -490,6 +577,7 @@ export function Inventory() {
                 <div className="text-right font-mono text-blue-700">
                   {N(visibleStock.reduce((s, i) => s + i.total_value, 0))} ETB
                 </div>
+                <div />
                 <div />
               </div>
               </Card>

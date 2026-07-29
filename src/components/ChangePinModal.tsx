@@ -70,15 +70,15 @@ export function ChangePinModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-xs shadow-xl px-5 py-6">
+      <div className="bg-white rounded-card w-full max-w-xs shadow-[var(--shadow-card-xl)] px-5 py-6">
         <div className="flex items-center justify-between mb-4">
-          <span className="flex items-center gap-1.5 text-sm font-medium"><KeyRound size={15} className="text-blue-600" /> Change PIN</span>
+          <span className="flex items-center gap-1.5 text-sm font-medium"><KeyRound size={15} className="text-accent-foreground" /> Change PIN</span>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
         </div>
         <p className="text-xs text-gray-500 text-center">{title}</p>
         {error && <p className="text-xs text-red-600 text-center mt-1">{error}</p>}
         {step === 'done' ? (
-          <button onClick={onClose} className="w-full mt-6 py-2.5 text-sm rounded-xl bg-blue-600 text-white font-medium">Done</button>
+          <button onClick={onClose} className="w-full mt-6 py-2.5 text-sm rounded-full bg-accent text-accent-foreground font-medium hover:brightness-95 transition">Done</button>
         ) : (
           <>
             <Dots length={4} filled={entry.length} />

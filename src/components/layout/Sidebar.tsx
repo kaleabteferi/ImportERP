@@ -9,6 +9,12 @@ import { ChangePinModal } from '../ChangePinModal'
 
 const links = NAV_LINKS
 
+// The app's 5 highest-traffic, "run the business day-to-day" pages get a
+// subtly bolder treatment in the nav — a small accent dot plus bolder label
+// even when not the active page — so they read as the main pages at a
+// glance rather than blending into the rest of the list.
+const MAIN_PAGE_ROUTES = new Set(['/money-tracking', '/sales', '/inventory', '/proforma-invoices', '/production'])
+
 export function Sidebar() {
   const { profile, signOut } = useAuth()
   const role = profile?.role as Role | undefined
@@ -41,7 +47,9 @@ export function Sidebar() {
             }}>
               {group.section}
             </div>
-            {group.items.map(link => (
+            {group.items.map(link => {
+              const isMain = MAIN_PAGE_ROUTES.has(link.to)
+              return (
               <NavLink
                 key={link.to}
                 to={link.to}
@@ -51,15 +59,26 @@ export function Sidebar() {
                   padding: '7px 10px', borderRadius: '9999px', marginBottom: '2px',
                   fontSize: '12px', textDecoration: 'none',
                   background: isActive ? 'var(--color-accent)' : 'transparent',
-                  color: isActive ? 'var(--color-accent-foreground)' : 'rgba(245,246,242,0.75)',
-                  fontWeight: isActive ? 600 : 400,
+                  color: isActive ? 'var(--color-accent-foreground)' : (isMain ? 'rgba(245,246,242,0.92)' : 'rgba(245,246,242,0.75)'),
+                  fontWeight: isActive ? 600 : (isMain ? 600 : 400),
                   transition: 'background-color 150ms ease, color 150ms ease',
                 })}
               >
-                <link.icon size={15} strokeWidth={1.5} />
-                {link.label}
+                {({ isActive }) => (
+                  <>
+                    <link.icon size={15} strokeWidth={1.5} />
+                    {link.label}
+                    {isMain && !isActive && (
+                      <span style={{
+                        width: '5px', height: '5px', borderRadius: '9999px',
+                        background: 'var(--color-accent)', marginLeft: 'auto', flexShrink: 0,
+                      }} />
+                    )}
+                  </>
+                )}
               </NavLink>
-            ))}
+              )
+            })}
           </div>
         ))}
       </nav>

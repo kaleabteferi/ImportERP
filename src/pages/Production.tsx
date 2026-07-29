@@ -7,7 +7,7 @@ import type { DamageReport } from '../api/damageReports'
 import { produceAssembly, fetchComponentAvailability } from '../api/production'
 import type { ComponentAvailability } from '../api/production'
 import { usePageState } from '../lib/pageState'
-import { Plus, Wrench, X, Check, Loader2, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search } from 'lucide-react'
+import { Plus, Wrench, X, Check, Loader2, Package, AlertTriangle, ShieldAlert, Sticker, Boxes, ClipboardList, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
 import { StatCard } from '../components/ui/StatCard'
@@ -46,8 +46,12 @@ interface DailyLog {
   bom_header_id: string | null
   product_id: string | null
   warehouse_id: string | null
+  employee_id: string | null
   notes: string | null
   production_orders?: { order_number: string; bom_headers: { products: { name: string } | null } | null }
+  eff_warehouse_id?: string | null
+  eff_product_id?: string | null
+  capacity_rate?: number | null
 }
 
 interface DayMovement {
@@ -90,6 +94,8 @@ export function Production() {
   const [createOpen, setCreateOpen] = useState(false)
   const [creatingOrder, setCreatingOrder] = useState(false)
   const [bomOptions, setBomOptions] = useState<Array<{ id: string; product_id: string | null; name: string; product_name: string; sku: string; stage: BomStage; imageUrl: string | null }>>([])
+  const [bomLinesByHeader, setBomLinesByHeader] = useState<Record<string, { name: string; sku: string; qty: number }[]>>({})
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
   const [selectedBomId, setSelectedBomId] = useState('')
   const [targetQty, setTargetQty] = useState('10')
   const [dueDate, setDueDate] = useState('')
@@ -106,6 +112,8 @@ export function Production() {
   })
   const [bomQuery, setBomQuery] = useState('')
   const [damageQuery, setDamageQuery] = useState('')
+  const [factoryEmployees, setFactoryEmployees] = useState<Array<{ id: string; name: string }>>([])
+  const [logEmployeeId, setLogEmployeeId] = useState('')
   // "How many more can I actually assemble today?" -- live component-stock
   // preview for ASSEMBLY-stage rows in the log modal, same UX Assembly.tsx
   // already had (and Production's own manual multi-step path lacked).
@@ -117,7 +125,7 @@ export function Production() {
     const since = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
 
     try {
-      const [ordersRes, logsRes, moveRes, salesRes, productsRes, bomRes, warehouseRows, shipmentsRes, damageRows] = await Promise.all([
+      const [ordersRes, logsRes, moveRes, salesRes, productsRes, bomRes, warehouseRows, shipmentsRes, damageRows, capacityRes, bomLinesRes, employeeRows] = await Promise.all([
         supabase.from('production_orders')
           .select('id, order_number, product_id, target_quantity, completed_quantity, status, planned_start_date, due_date, labor_cost_etb, bom_header_id, warehouse_id, created_at, updated_at')
           .in('status', ['DRAFT', 'IN_PROGRESS'])
@@ -129,7 +137,7 @@ export function Production() {
         // for that BOM, making today's "Log production" entry look empty
         // even though output was already recorded.
         supabase.from('production_daily_logs')
-          .select('id, log_date, quantity_produced, production_order_id, bom_header_id, product_id, warehouse_id, notes, created_at, production_orders(order_number, bom_header_id, warehouse_id)')
+          .select('id, log_date, quantity_produced, production_order_id, bom_header_id, product_id, warehouse_id, employee_id, notes, created_at, production_orders(order_number, bom_header_id, warehouse_id)')
           .gte('log_date', since)
           .order('log_date', { ascending: false }),
         supabase.from('inventory_ledger')
@@ -146,6 +154,9 @@ export function Production() {
         fetchWarehousesList(),
         supabase.from('shipments').select('id, shipment_number').order('created_at', { ascending: false }).limit(100),
         fetchDamageReports(50),
+        supabase.from('production_capacity').select('warehouse_id, product_id, rated_capacity_per_day, effective_from'),
+        supabase.from('bom_lines').select('bom_header_id, component_product_id, quantity_required'),
+        supabase.from('employees').select('id, full_name').eq('department', 'manufacturing_sales').eq('is_active', true).order('full_name'),
       ])
 
       if (ordersRes.error) throw ordersRes.error
@@ -159,6 +170,14 @@ export function Production() {
       if (bomRes.error) throw bomRes.error
 
       const productsById = new Map((productsRes.data ?? []).map((p: any) => [p.id, p]))
+      const bomLinesMap: Record<string, { name: string; sku: string; qty: number }[]> = {}
+      for (const line of (bomLinesRes.data ?? []) as any[]) {
+        const product = productsById.get(line.component_product_id)
+        if (!bomLinesMap[line.bom_header_id]) bomLinesMap[line.bom_header_id] = []
+        bomLinesMap[line.bom_header_id].push({ name: product?.name ?? 'Unknown component', sku: product?.sku ?? '—', qty: Number(line.quantity_required ?? 0) })
+      }
+      setBomLinesByHeader(bomLinesMap)
+      setFactoryEmployees((employeeRows.data ?? []).map((e: any) => ({ id: e.id, name: e.full_name })))
       const bomRows = (bomRes.data ?? []).map((bom: any) => {
         const product = bom.product_id ? productsById.get(bom.product_id) : null
         return {
@@ -188,12 +207,27 @@ export function Production() {
 
       const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
+      // Same capacity-rate lookup ManufacturingPerformanceCard uses on the
+      // Dashboard — the latest rate effective on or before the log's date,
+      // for that exact warehouse+product.
+      const capacityRows = capacityRes.data ?? []
+      function capacityFor(warehouseId: string | null, productId: string | null, asOf: string): number | null {
+        if (!warehouseId || !productId) return null
+        const candidates = capacityRows.filter((c: any) =>
+          c.warehouse_id === warehouseId && c.product_id === productId && c.effective_from <= asOf)
+        if (candidates.length === 0) return null
+        candidates.sort((a: any, b: any) => b.effective_from.localeCompare(a.effective_from))
+        return Number(candidates[0].rated_capacity_per_day)
+      }
+
       const logsRows = (logsRes.data ?? []).map((log: any) => {
         const linkedOrder = one(log.production_orders)
         // Product display info resolved via bomRows (every active BOM,
         // unfiltered) rather than orderRows (DRAFT/IN_PROGRESS only) -- a
         // log's linked order may already be COMPLETED.
         const bom = linkedOrder ? bomRows.find(b => b.id === linkedOrder.bom_header_id) : null
+        const effWarehouseId = log.warehouse_id ?? linkedOrder?.warehouse_id ?? null
+        const effProductId = log.product_id ?? bom?.product_id ?? null
         return {
           ...log,
           production_orders: linkedOrder
@@ -202,6 +236,9 @@ export function Production() {
                 bom_headers: { products: bom ? { id: bom.product_id, name: bom.product_name, sku: bom.sku } : null },
               }
             : undefined,
+          eff_warehouse_id: effWarehouseId,
+          eff_product_id: effProductId,
+          capacity_rate: capacityFor(effWarehouseId, effProductId, log.log_date),
         }
       })
 
@@ -443,7 +480,7 @@ export function Production() {
           const delta = qty - prevQty
           if (delta === 0) continue
           if (delta < 0) throw new Error(`Cannot reduce ${bom.product_name}'s logged quantity below what's already recorded — remove the excess directly from the order instead.`)
-          await produceAssembly(selectedWarehouseId, bom.product_id, delta, undefined, logNotes || undefined, logDate)
+          await produceAssembly(selectedWarehouseId, bom.product_id, delta, undefined, logNotes || undefined, logDate, logEmployeeId || undefined)
           continue
         }
 
@@ -480,7 +517,7 @@ export function Production() {
 
         if (existing) {
           const { error: updErr } = await supabase.from('production_daily_logs')
-            .update({ quantity_produced: qty, notes: logNotes || null })
+            .update({ quantity_produced: qty, notes: logNotes || null, employee_id: logEmployeeId || null })
             .eq('id', existing.id)
           if (updErr) throw updErr
         } else {
@@ -492,6 +529,7 @@ export function Production() {
             log_date: logDate,
             quantity_produced: qty,
             notes: logNotes || null,
+            employee_id: logEmployeeId || null,
           })
           if (insErr) throw insErr
         }
@@ -535,6 +573,7 @@ export function Production() {
 
       setLogOpen(false)
       setLogNotes('')
+      setLogEmployeeId('')
       setEntries({})
       load()
     } catch (e: any) {
@@ -702,37 +741,63 @@ export function Production() {
                     const effPct = goal && goal > 0 ? Math.round(((todayLog?.quantity_produced ?? 0) / goal) * 100) : null
 
                     const rail = isLate(order) ? 'border-l-red-400' : pct >= 100 ? 'border-l-green-400' : pct >= 50 ? 'border-l-blue-400' : 'border-l-amber-400'
+                    const components = bomLinesByHeader[order.bom_header_id ?? ''] ?? []
+                    const orderExpanded = expandedOrderId === order.id
                     return (
                       <Card padded key={order.id} className={`border-l-[3px] ${rail}`}>
                         <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-sm font-medium">
-                                {prod?.name ?? 'Unknown product'}
-                              </span>
-                              <Badge variant={STATUS_VARIANT[order.status] ?? 'neutral'}>
-                                {STATUS_LABEL[order.status] ?? order.status}
-                              </Badge>
-                              {isLate(order) && (
-                                <Badge variant="danger" icon={<AlertTriangle size={10} />}>Late</Badge>
-                              )}
-                            </div>
-                            <p className="text-xs text-gray-400">
-                              {order.order_number}
-                              {prod?.sku && ` · ${prod.sku}`}
-                              {` · ${warehouses.find(w => w.id === order.warehouse_id)?.name ?? 'Unknown warehouse'}`}
-                              {order.due_date && (
-                                <span className={isLate(order) ? 'text-red-600 font-medium' : ''}>
-                                  {` · due ${order.due_date}`}
+                          <button
+                            onClick={() => setExpandedOrderId(orderExpanded ? null : order.id)}
+                            className="flex items-start gap-1.5 text-left"
+                          >
+                            {orderExpanded ? <ChevronDown size={14} className="text-gray-300 shrink-0 mt-0.5" /> : <ChevronRight size={14} className="text-gray-300 shrink-0 mt-0.5" />}
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-sm font-medium">
+                                  {prod?.name ?? 'Unknown product'}
                                 </span>
-                              )}
-                            </p>
-                          </div>
+                                <Badge variant={STATUS_VARIANT[order.status] ?? 'neutral'}>
+                                  {STATUS_LABEL[order.status] ?? order.status}
+                                </Badge>
+                                {isLate(order) && (
+                                  <Badge variant="danger" icon={<AlertTriangle size={10} />}>Late</Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-400">
+                                {order.order_number}
+                                {prod?.sku && ` · ${prod.sku}`}
+                                {` · ${warehouses.find(w => w.id === order.warehouse_id)?.name ?? 'Unknown warehouse'}`}
+                                {order.due_date && (
+                                  <span className={isLate(order) ? 'text-red-600 font-medium' : ''}>
+                                    {` · due ${order.due_date}`}
+                                  </span>
+                                )}
+                                {components.length > 0 && ` · ${components.length} component${components.length === 1 ? '' : 's'}`}
+                              </p>
+                            </div>
+                          </button>
                           <div className="text-right">
                             <p className="text-2xl font-medium font-mono text-blue-700">{pct}%</p>
                             <p className="text-xs text-gray-400">complete</p>
                           </div>
                         </div>
+                        {orderExpanded && (
+                          <div className="mb-3 bg-gray-50 rounded-lg px-3 py-2.5">
+                            <p className="text-xs font-medium text-gray-500 mb-1.5">Assembly components (per unit)</p>
+                            {components.length === 0 ? (
+                              <p className="text-xs text-gray-400">No BOM components recorded for this assembly.</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {components.map((c, ci) => (
+                                  <div key={ci} className="flex items-center justify-between text-xs">
+                                    <span className="text-gray-600">{c.name} <span className="text-gray-400 font-mono">({c.sku})</span></span>
+                                    <span className="font-mono text-gray-500">{c.qty} per unit</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-3">
                           <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
                                style={{ width: `${pct}%` }} />
@@ -774,23 +839,113 @@ export function Production() {
             <StatCard label="Damage reports (30d)" value={String(damageReports.length)} />
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <Card>
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
+                Efficiency by warehouse (last 30 days)
+              </div>
+              {(() => {
+                const byWarehouse = new Map<string, { name: string; units: number; effSum: number; effCount: number }>()
+                for (const l of logs) {
+                  const id = l.eff_warehouse_id ?? 'unknown'
+                  const name = warehouses.find(w => w.id === l.eff_warehouse_id)?.name ?? 'Unknown warehouse'
+                  const entry = byWarehouse.get(id) ?? { name, units: 0, effSum: 0, effCount: 0 }
+                  entry.units += l.quantity_produced
+                  if (l.capacity_rate && l.capacity_rate > 0) {
+                    entry.effSum += (l.quantity_produced / l.capacity_rate) * 100
+                    entry.effCount += 1
+                  }
+                  byWarehouse.set(id, entry)
+                }
+                const rows = [...byWarehouse.values()].sort((a, b) => b.units - a.units)
+                return rows.length === 0 ? (
+                  <p className="px-4 py-6 text-xs text-gray-400 text-center">No production logged in the last 30 days</p>
+                ) : rows.map((r, i) => (
+                  <div key={r.name} className={`flex items-center justify-between px-4 py-2.5 text-xs ${i < rows.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                    <span className="text-gray-700 font-medium">{r.name}</span>
+                    <div className="flex items-center gap-2">
+                      {r.effCount > 0 && (
+                        <Badge variant={r.effSum / r.effCount >= 100 ? 'success' : r.effSum / r.effCount >= 70 ? 'warning' : 'danger'}>
+                          {Math.round(r.effSum / r.effCount)}% avg eff.
+                        </Badge>
+                      )}
+                      <span className="font-mono font-medium">{N(r.units)} units</span>
+                    </div>
+                  </div>
+                ))
+              })()}
+            </Card>
+
+            <Card>
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
+                Output by worker (last 30 days)
+              </div>
+              {(() => {
+                const attributed = logs.filter(l => l.employee_id)
+                const byEmployee = new Map<string, { name: string; units: number; days: Set<string> }>()
+                for (const l of attributed) {
+                  const id = l.employee_id as string
+                  const name = factoryEmployees.find(e => e.id === id)?.name ?? 'Unknown worker'
+                  const entry = byEmployee.get(id) ?? { name, units: 0, days: new Set<string>() }
+                  entry.units += l.quantity_produced
+                  entry.days.add(l.log_date)
+                  byEmployee.set(id, entry)
+                }
+                const rows = [...byEmployee.values()].sort((a, b) => b.units - a.units)
+                return rows.length === 0 ? (
+                  <p className="px-4 py-6 text-xs text-gray-400 text-center">
+                    No logs attributed to a specific worker yet — pick a worker in "Log production" to start tracking this.
+                  </p>
+                ) : rows.map((r, i) => (
+                  <div key={r.name} className={`flex items-center justify-between px-4 py-2.5 text-xs ${i < rows.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                    <span className="text-gray-700 font-medium">{r.name}</span>
+                    <div className="text-right">
+                      <p className="font-mono font-medium">{N(r.units)} units</p>
+                      <p className="text-gray-400">{r.days.size} day{r.days.size === 1 ? '' : 's'} · {N(r.units / r.days.size)}/day avg</p>
+                    </div>
+                  </div>
+                ))
+              })()}
+            </Card>
+          </div>
+
           <Card>
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
-              Production logs (last 30 days)
+              Production logs (last 30 days) — with calculated efficiency vs. each warehouse/product's rated capacity
             </div>
             {logs.length === 0 ? (
               <p className="px-4 py-6 text-xs text-gray-400 text-center">No logs yet</p>
-            ) : logs.map((l, i) => (
-              <div key={l.id}
-                   className={`stagger-row flex items-center justify-between px-4 py-2.5 text-xs
-                     ${i < logs.length - 1 ? 'border-b border-gray-50' : ''}`}
-                   style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
-                <span className="text-gray-600">
-                  {l.log_date} · {(l.production_orders as any)?.bom_headers?.products?.name ?? '—'}
-                </span>
-                <span className="font-mono font-medium">{N(l.quantity_produced)} units</span>
-              </div>
-            ))}
+            ) : logs.map((l, i) => {
+              const rate = l.capacity_rate ?? null
+              const effPct = rate && rate > 0 ? Math.round((l.quantity_produced / rate) * 100) : null
+              const warehouseName = warehouses.find(w => w.id === l.eff_warehouse_id)?.name
+              const orderNumber = (l.production_orders as any)?.order_number
+              return (
+                <div key={l.id}
+                     className={`stagger-row flex items-center justify-between px-4 py-2.5 text-xs
+                       ${i < logs.length - 1 ? 'border-b border-gray-50' : ''}`}
+                     style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
+                  <div className="min-w-0">
+                    <span className="text-gray-700 font-medium">
+                      {(l.production_orders as any)?.bom_headers?.products?.name ?? '—'}
+                    </span>
+                    <p className="text-gray-400 mt-0.5">
+                      {l.log_date}
+                      {warehouseName && ` · ${warehouseName}`}
+                      {orderNumber && ` · ${orderNumber}`}
+                      {rate != null && ` · goal ${N(rate)}/day`}
+                      {l.notes && ` · ${l.notes}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {effPct !== null && (
+                      <Badge variant={effPct >= 100 ? 'success' : effPct >= 70 ? 'warning' : 'danger'}>{effPct}% eff.</Badge>
+                    )}
+                    <span className="font-mono font-medium">{N(l.quantity_produced)} units</span>
+                  </div>
+                </div>
+              )
+            })}
           </Card>
 
           <Card>
@@ -879,6 +1034,19 @@ export function Production() {
                     {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Worker (optional — for per-employee output tracking)</label>
+                <select
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white
+                             focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  value={logEmployeeId}
+                  onChange={e => setLogEmployeeId(e.target.value)}
+                >
+                  <option value="">Not attributed to one worker</option>
+                  {factoryEmployees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
               </div>
 
               {bomOptions.length === 0 ? (

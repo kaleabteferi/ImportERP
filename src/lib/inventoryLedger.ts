@@ -7,6 +7,7 @@ export interface InventoryBalance {
   quantity_on_hand: number
   avg_unit_cost_etb: number
   total_value: number
+  last_movement_date: string | null
 }
 
 interface InventoryLedgerLike {
@@ -14,6 +15,7 @@ interface InventoryLedgerLike {
   quantity: number | string | null | undefined
   unit_cost_etb?: number | string | null | undefined
   warehouse_id?: string | null | undefined
+  movement_date?: string | null | undefined
   products?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null
   warehouses?: { name?: string | null } | Array<{ name?: string | null }> | null
 }
@@ -42,12 +44,16 @@ export function calculateInventoryBalances<T extends InventoryLedgerLike>(rows: 
         quantity_on_hand: 0,
         avg_unit_cost_etb: 0,
         total_value: 0,
+        last_movement_date: null,
       })
     }
 
     const entry = map.get(key)!
     const qty = Number(row.quantity ?? 0)
     const cost = row.unit_cost_etb == null ? null : Number(row.unit_cost_etb)
+    if (row.movement_date && (!entry.last_movement_date || row.movement_date > entry.last_movement_date)) {
+      entry.last_movement_date = row.movement_date
+    }
 
     if (qty > 0) {
       const newQty = entry.quantity_on_hand + qty

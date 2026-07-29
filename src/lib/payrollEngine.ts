@@ -165,9 +165,39 @@ export interface PayrollCalcResult {
   netPayEtb: number
 }
 
+// Employees' `base_salary_etb` is entered as their NET take-home pay for a
+// normal month (no overtime, allowances, or extra deductions) -- the figure
+// a business owner actually agrees to pay someone, not the pre-tax number
+// payroll math starts from. Since PAYE is a progressive marginal-bracket
+// tax, there's no closed-form inverse; this binary-searches for the gross
+// base pay whose pension + PAYE deductions land on exactly that net figure.
+// Only ever called for permanent staff -- daily/casual pay is already a
+// per-day rate the owner sets directly, not a monthly net target.
+function netFromGrossBase(grossBase: number, pensionEligible: boolean): number {
+  const pensionEmployee = pensionEligible ? round2(grossBase * PENSION_EMPLOYEE_RATE) : 0
+  const taxable = Math.max(0, round2(grossBase - pensionEmployee))
+  const tax = calculatePAYE(taxable)
+  return round2(grossBase - pensionEmployee - tax)
+}
+
+export function grossFromNetBase(netBase: number, pensionEligible: boolean): number {
+  if (netBase <= 0) return 0
+  // The top PAYE bracket is 35% and pension is 7%, so gross can't need to
+  // exceed net / (1 - 0.35 - 0.07) — pad generously since this is a search
+  // bound, not a formula.
+  let low = netBase
+  let high = netBase * 2.5
+  for (let i = 0; i < 60; i++) {
+    const mid = (low + high) / 2
+    if (netFromGrossBase(mid, pensionEligible) < netBase) low = mid
+    else high = mid
+  }
+  return round2(high)
+}
+
 export function calculatePayrollEntry(input: PayrollCalcInput): PayrollCalcResult {
   const basePayEtb = input.employmentType === 'permanent'
-    ? round2(input.baseSalaryEtb ?? 0)
+    ? grossFromNetBase(round2(input.baseSalaryEtb ?? 0), input.pensionEligible)
     : round2((input.dailyRateEtb ?? 0) * (input.daysWorked ?? 0))
 
   const overtimeLines = calculateOvertimeLines(input, input.overtimeLines)

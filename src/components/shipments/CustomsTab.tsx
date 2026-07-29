@@ -106,20 +106,26 @@ export function CustomsTab({ shipmentId, shipmentItems, fxRate, freightUsd, insu
   async function save() {
     setSaving(true); setError(null)
     try {
-      const components: { source: AutoExpenseSource; desc: string; amount: number; note: string }[] = []
+      const components: { source: AutoExpenseSource; subKey?: string; desc: string; amount: number; note: string }[] = []
 
-      for (const row of uplift) {
+      // Every uplift row (Insurance/Freight allowance/Handling/... — there
+      // are 3 by default, all nonzero) shares the same source, so each
+      // needs its own subKey or a batch insert of more than one would
+      // collide on the same auto_sync_key and violate the unique
+      // constraint outright.
+      uplift.forEach((row, i) => {
         const pct = Number(row.pct) || 0
         const usd = totalFobUsd * (pct / 100)
         if (usd > 0) {
           components.push({
             source: 'customs_fob_uplift',
+            subKey: String(i),
             desc: `FOB uplift — ${row.label.trim() || 'Uplift'} (${pct}%)`,
             amount: Math.round(usd * fxRate),
             note: `${pct}% × FOB $${N(totalFobUsd)}`,
           })
         }
-      }
+      })
       if (calc.duty > 0) components.push({ source: 'customs_duty', desc: 'Customs duty', amount: calc.duty, note: `${dutyRate}% × CIF ${N(calc.cifEtb)} ETB` })
       if (calc.excise > 0) components.push({ source: 'customs_excise', desc: 'Excise tax', amount: calc.excise, note: `${exciseRate}% × (CIF + Duty)` })
       if (applySurtax && calc.surtax > 0) components.push({ source: 'customs_surtax', desc: 'Surtax (10%)', amount: calc.surtax, note: '10% × (CIF + Duty + Excise)' })
@@ -134,7 +140,7 @@ export function CustomsTab({ shipmentId, shipmentItems, fxRate, freightUsd, insu
       }
 
       await replaceAutoExpenses(shipmentId, 'customs', components.map(c => ({
-        source: c.source, category: 'ETHIOPIA_CUSTOMS', description: c.desc, amount: c.amount,
+        source: c.source, subKey: c.subKey, category: 'ETHIOPIA_CUSTOMS', description: c.desc, amount: c.amount,
         currency: 'ETB' as const, amountEtb: c.amount, fxRate, vendorName: vendorName || 'ERCA',
         expenseDate, detailNote: c.note,
       })))

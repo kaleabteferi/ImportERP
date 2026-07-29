@@ -8,20 +8,18 @@ import { fetchCreditAccounts, recordCreditTransaction, fetchOutstandingCreditOrd
 import type { OutstandingCreditOrder } from '../api/credit'
 import { fetchSupplierPayables, recordSupplierPayment } from '../api/supplierPayables'
 import type { SupplierPayableListRow } from '../api/supplierPayables'
-import { fetchAccounts, fetchAccountBalances } from '../api/accounts'
+import { fetchAccounts, fetchAccountBalances, createAccount } from '../api/accounts'
 import type { Account } from '../api/accounts'
 import { updateTransaction, deleteTransaction } from '../api/transactions'
 import { usePageState } from '../lib/pageState'
 import { detectAnomalies } from '../lib/anomalyDetection'
 import {
-  Banknote, Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
+  Loader2, ShieldAlert, ArrowDownLeft, ArrowUpRight,
   Search, Plus, X, Pencil, Trash2, Sparkles, Copy, TrendingUp, ChevronDown, ChevronRight, ArrowUpDown,
-  Wallet, ChevronLeft,
+  Wallet, ChevronLeft, RefreshCw, Download, Landmark, CircleDollarSign, Ellipsis,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue, computeHawalaAmount } from '../components/HawalaFields'
-import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
-import { StatCard } from '../components/ui/StatCard'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 
@@ -62,6 +60,15 @@ const SOURCE_LABEL: Record<Txn['source'], string> = {
   expense: 'Company expense', shipment_expense: 'Shipment expense', supplier_payment: 'Supplier payment',
 }
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+
+// A rough "≈ x ETB" hint next to a foreign-currency amount — not real
+// accounting (that's what the hawala ETB breakdown / account statement are
+// for), just enough for a quick read of what a USD figure means in ETB
+// terms. No live CNY rate exists in forex_rates, so CNY amounts get no hint.
+function etbHint(amount: number, currency: string, usdToEtbRate: number | null): string | null {
+  if (currency === 'ETB' || currency !== 'USD' || !usdToEtbRate) return null
+  return `≈ ${N(amount * usdToEtbRate)} ETB`
+}
 
 // "Jul 23" for anything more than a few weeks old reads fine on a
 // statement, but for anything recent -- which is most of what shows up in
@@ -777,6 +784,60 @@ function TxnExpandDetails({ t, saleLineItems, saleLineItemsLoading, runningBalan
   )
 }
 
+function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [name, setName] = useState('')
+  const [type, setType] = useState<'cash' | 'bank'>('bank')
+  const [currency, setCurrency] = useState('ETB')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    if (!name.trim()) { setError('Enter an account name.'); return }
+    setSaving(true); setError(null)
+    try {
+      await createAccount({ name: name.trim(), type, currency })
+      onDone()
+    } catch (e: any) {
+      setError(e?.message ?? 'Unable to create the account.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="money-account-form">
+      <div>
+        <span className="money-kicker">New wallet</span>
+        <h3>Add a cash or bank account</h3>
+      </div>
+      <label>
+        <span>Account name</span>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Main cash till" autoFocus />
+      </label>
+      <label>
+        <span>Account type</span>
+        <select value={type} onChange={e => setType(e.target.value as 'cash' | 'bank')}>
+          <option value="bank">Bank account</option>
+          <option value="cash">Cash account</option>
+        </select>
+      </label>
+      <label>
+        <span>Currency</span>
+        <select value={currency} onChange={e => setCurrency(e.target.value)}>
+          <option value="ETB">ETB</option>
+          <option value="USD">USD</option>
+          <option value="CNY">CNY</option>
+        </select>
+      </label>
+      {error && <p className="money-form-error">{error}</p>}
+      <div className="money-account-form__actions">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button loading={saving} onClick={submit}>Create account</Button>
+      </div>
+    </div>
+  )
+}
+
 export function MoneyTracking() {
   const [txns, setTxns] = useState<Txn[]>([])
   const [credit, setCredit] = useState<CreditAccount[]>([])
@@ -788,6 +849,9 @@ export function MoneyTracking() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountBalances, setAccountBalances] = useState<Record<string, number>>({})
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  // Latest known USD->ETB rate, purely to show a small "≈ x ETB" hint next
+  // to foreign-currency amounts — not used for any real accounting math.
+  const [usdToEtbRate, setUsdToEtbRate] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [direction, setDirection] = usePageState<'all' | Direction>('moneyTracking.direction', 'all')
@@ -799,18 +863,25 @@ export function MoneyTracking() {
   const [activeForm, setActiveForm] = useState<'income' | 'expense' | null>(null)
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null)
   const [insightsOpen, setInsightsOpen] = usePageState('moneyTracking.insightsOpen', false)
+  const [hoveredDay, setHoveredDay] = useState<string | null>(null)
   const [expandedTxnId, setExpandedTxnId] = useState<string | null>(null)
   const [saleLineItems, setSaleLineItems] = useState<Record<string, SaleLineItem[]>>({})
   const [saleLineItemsLoading, setSaleLineItemsLoading] = useState<string | null>(null)
   const [expandedCreditId, setExpandedCreditId] = useState<string | null>(null)
   const [creditHistory, setCreditHistory] = useState<Record<string, CreditTxnHistory[]>>({})
   const [creditHistoryLoading, setCreditHistoryLoading] = useState(false)
+  const [flowRange, setFlowRange] = useState<14 | 30 | 90>(14)
+  const [showAccountForm, setShowAccountForm] = useState(false)
 
   const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
+      supabase.from('forex_rates').select('rate').eq('from_currency', 'USD').eq('to_currency', 'ETB')
+        .order('effective_date', { ascending: false }).limit(1).maybeSingle()
+        .then(({ data }) => setUsdToEtbRate(data ? Number(data.rate) : null), () => setUsdToEtbRate(null))
+
       const [salesRes, supplierPayRes, creditTxRes, expenseRes, shipExpRes, creditAcctRows, customerRows, warehouseRows, companyRows, employeeRows, accountRows, supplierRows] =
         await Promise.all([
           supabase.from('sales_payments').select('id, amount_etb, method, sensitive_flag, notes, payment_date, account_id, sales_orders(id, order_number, customers(name))').order('payment_date', { ascending: false }).limit(200),
@@ -818,7 +889,7 @@ export function MoneyTracking() {
           // created a purchase_orders row, so that table was always empty.
           // supplier_payments is the real "money paid to a supplier" ledger,
           // including hawala (route/rate carried in hawala_route).
-          supabase.from('supplier_payments').select('id, amount, method, sensitive_flag, notes, payment_date, account_id, hawala_route, supplier_payables(reference, currency, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
+          supabase.from('supplier_payments').select('id, amount, method, sensitive_flag, notes, payment_date, account_id, hawala_route, etb_amount, supplier_payables(reference, currency, suppliers(name))').order('payment_date', { ascending: false }).limit(200),
           supabase.from('credit_transactions').select('id, type, amount, method, sensitive_flag, notes, transaction_date, account_id, sales_orders(order_number), credit_accounts(customer_id, customers(name))').eq('type', 'repayment').order('transaction_date', { ascending: false }).limit(200),
           supabase.from('company_expenses').select('id, description, amount, currency, method, sensitive_flag, notes, expense_date, vendor_name, account_id, category').order('expense_date', { ascending: false }).limit(200),
           // Shipment expenses paid via Payables -> "Mark as paid" — otherwise
@@ -986,19 +1057,20 @@ export function MoneyTracking() {
     return result
   }, [txns])
 
-  // Last 14 days, net cash per day — a quick "is the trend healthy" glance
-  // without leaving the page.
+  // User-selectable cash-flow window, aggregated directly from the unified
+  // real transaction ledger above.
   const dailyTrend = useMemo(() => {
-    const days: { date: string; net: number }[] = []
-    for (let i = 13; i >= 0; i--) {
+    const days: { date: string; net: number; in: number; out: number }[] = []
+    for (let i = flowRange - 1; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i)
       const iso = d.toISOString().slice(0, 10)
       const dayTxns = txns.filter(t => t.currency === 'ETB' && (t.date ?? '').slice(0, 10) === iso)
-      const net = dayTxns.reduce((s, t) => s + (t.direction === 'in' ? t.amount : -t.amount), 0)
-      days.push({ date: iso, net })
+      const cashIn = dayTxns.filter(t => t.direction === 'in').reduce((s, t) => s + t.amount, 0)
+      const cashOut = dayTxns.filter(t => t.direction === 'out').reduce((s, t) => s + t.amount, 0)
+      days.push({ date: iso, net: cashIn - cashOut, in: cashIn, out: cashOut })
     }
     return days
-  }, [txns])
+  }, [txns, flowRange])
 
   // Lazy-loads which products a sale actually contained the first time its
   // row is expanded (not eagerly for all 200 rows up front) -- a Txn only
@@ -1074,20 +1146,63 @@ export function MoneyTracking() {
     return map
   }, [anomalies])
   const highSeverityCount = anomalies.filter(a => a.severity === 'high').length
+  const etbAccounts = accounts.filter(account => account.currency === 'ETB')
+  const trackedEtbBalance = etbAccounts.length > 0
+    ? etbAccounts.reduce((sum, account) => sum + (accountBalances[account.id] ?? 0), 0)
+    : totals.inEtb - totals.outEtb
+  const flowTotals = dailyTrend.reduce((sum, day) => ({
+    incoming: sum.incoming + day.in,
+    outgoing: sum.outgoing + day.out,
+  }), { incoming: 0, outgoing: 0 })
+
+  function exportFilteredTransactions() {
+    const csvCell = (value: string | number | null) => `"${String(value ?? '').replaceAll('"', '""')}"`
+    const rows = [
+      ['Date', 'Direction', 'Party', 'Source', 'Method', 'Amount', 'Currency', 'Account', 'Details'],
+      ...filtered.map(transaction => [
+        transaction.date?.slice(0, 10) ?? '',
+        transaction.direction,
+        transaction.party,
+        SOURCE_LABEL[transaction.source],
+        METHOD_LABEL[transaction.method] ?? transaction.method,
+        transaction.amount,
+        transaction.currency,
+        transaction.accountName ?? '',
+        transaction.detail ?? transaction.notes ?? '',
+      ]),
+    ]
+    const blob = new Blob([rows.map(row => row.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `money-tracking-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
 
   return (
-    <div className="p-5 max-w-5xl mx-auto">
-      <PageHeader
-        icon={<Banknote size={18} />}
-        title="Money tracking"
-        subtitle="Every payment in and out — who, how much, how, and why"
-        actions={<>
-          <Button className="!bg-green-600 !text-white hover:!brightness-95" icon={activeForm === 'income' ? <X size={12} /> : <Plus size={12} />}
-            onClick={() => setActiveForm(activeForm === 'income' ? null : 'income')}>Add income</Button>
-          <Button className="!bg-red-600 !text-white hover:!brightness-95" icon={activeForm === 'expense' ? <X size={12} /> : <Plus size={12} />}
+    <div className="money-shell">
+      <header className="money-header">
+        <div>
+          <span className="money-kicker"><i /> Finance workspace</span>
+          <h1>Money tracking</h1>
+          <p>Every payment in and out, tied to the real account it moved through.</p>
+        </div>
+        <div className="money-header__actions">
+          <button className="money-icon-button" onClick={exportFilteredTransactions} aria-label="Export filtered transactions" title="Export filtered transactions">
+            <Download size={15} />
+          </button>
+          <button className="money-icon-button" onClick={load} aria-label="Refresh money tracking" title="Refresh money tracking">
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <Button variant="secondary" icon={activeForm === 'expense' ? <X size={12} /> : <ArrowUpRight size={12} />}
             onClick={() => setActiveForm(activeForm === 'expense' ? null : 'expense')}>Add expense</Button>
-        </>}
-      />
+          <Button icon={activeForm === 'income' ? <X size={12} /> : <ArrowDownLeft size={12} />}
+            onClick={() => setActiveForm(activeForm === 'income' ? null : 'income')}>Add income</Button>
+        </div>
+      </header>
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
@@ -1099,6 +1214,7 @@ export function MoneyTracking() {
         <AddExpenseForm companies={companies} employees={employees} accounts={accounts} suppliers={suppliers}
           onCancel={() => setActiveForm(null)} onDone={() => { setActiveForm(null); load() }} />
       )}
+      {showAccountForm && <AddAccountForm onCancel={() => setShowAccountForm(false)} onDone={() => { setShowAccountForm(false); load() }} />}
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
@@ -1106,46 +1222,109 @@ export function MoneyTracking() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <StatCard label="Received (ETB)" value={<span className="text-green-700">{N(totals.inEtb)}</span>} />
-            <StatCard label="Paid out" value={<span className="text-red-700">{N(totals.outEtb)} ETB</span>}
-              hint={[totals.outUsd > 0 ? `$${N(totals.outUsd)}` : null, totals.outCny > 0 ? `¥${N(totals.outCny)}` : null].filter(Boolean).join(' · ') || undefined} />
-            <StatCard label="Credit outstanding" value={<span className="text-amber-700">{N(totals.outstandingCredit)}</span>} />
-            <StatCard label="Sensitive flagged" value={<span className="text-amber-700">{totals.sensitiveCount}</span>} />
-          </div>
+          <section className="money-summary-grid" aria-label="Money summary">
+            <button className="money-summary-card is-primary" onClick={() => setSelectedAccountId(null)}>
+              <span className="money-summary-card__icon"><Wallet size={15} /></span>
+              <p>Tracked ETB balance</p>
+              <strong>{N(trackedEtbBalance)} <small>ETB</small></strong>
+              <span>{etbAccounts.length ? `Across ${etbAccounts.length} ETB account${etbAccounts.length > 1 ? 's' : ''}` : 'Net of recorded ETB movement'}</span>
+              <i>Open all transactions <ArrowUpRight size={13} /></i>
+            </button>
+            <button className="money-summary-card" onClick={() => setDirection('in')}>
+              <span className="money-summary-card__icon"><ArrowDownLeft size={15} /></span>
+              <p>Received</p>
+              <strong>{N(totals.inEtb)} <small>ETB</small></strong>
+              <span>Sales and credit repayments</span>
+              <i>Filter incoming <ArrowUpRight size={13} /></i>
+            </button>
+            <button className="money-summary-card" onClick={() => setDirection('out')}>
+              <span className="money-summary-card__icon"><ArrowUpRight size={15} /></span>
+              <p>Paid out</p>
+              <strong>{N(totals.outEtb)} <small>ETB</small></strong>
+              <span>{[totals.outUsd > 0 ? `$${N(totals.outUsd)}` : null, totals.outCny > 0 ? `¥${N(totals.outCny)}` : null].filter(Boolean).join(' · ') || 'No foreign-currency outflow'}</span>
+              <i>Filter outgoing <ArrowUpRight size={13} /></i>
+            </button>
+            <Link className="money-summary-card" to="/credit-accounts">
+              <span className="money-summary-card__icon"><CircleDollarSign size={15} /></span>
+              <p>Credit outstanding</p>
+              <strong>{N(totals.outstandingCredit)} <small>ETB</small></strong>
+              <span>{credit.length} credit account{credit.length === 1 ? '' : 's'} · {totals.sensitiveCount} sensitive flagged</span>
+              <i>Manage credit <ArrowUpRight size={13} /></i>
+            </Link>
+          </section>
 
-          {accounts.length > 0 && (
-            <div className="mb-5">
-              <p className="text-xs font-medium text-gray-500 mb-2">Accounts — who's holding what, and where it came from</p>
-              <div className="flex gap-2.5 overflow-x-auto pb-1">
-                {accounts.map(a => {
-                  const bal = accountBalances[a.id] ?? 0
-                  const selected = selectedAccountId === a.id
+          <section className="money-overview-grid">
+            <div className="money-panel money-wallet-panel">
+              <div className="money-panel__header">
+                <div><span className="money-kicker">My wallet</span><h2>Accounts</h2></div>
+                <button onClick={() => setShowAccountForm(true)}><Plus size={13} /> Add account</button>
+              </div>
+              {accounts.length === 0 ? (
+                <div className="money-empty-wallet"><Wallet size={23} /><strong>No accounts yet</strong><span>Add where cash and bank payments move.</span></div>
+              ) : (
+                <div className="money-account-grid">
+                  {accounts.map(account => {
+                    const balance = accountBalances[account.id] ?? 0
+                    const selected = selectedAccountId === account.id
+                    return (
+                      <button key={account.id} onClick={() => setSelectedAccountId(selected ? null : account.id)}
+                        className={`money-account-card ${selected ? 'is-selected' : ''}`}>
+                        <span className="money-account-card__icon">{account.type === 'bank' ? <Landmark size={14} /> : <Wallet size={14} />}</span>
+                        <span className="money-account-card__menu"><Ellipsis size={14} /></span>
+                        <p>{account.name}</p>
+                        <strong className={balance < 0 ? 'is-negative' : ''}>{N(balance)} <small>{account.currency}</small></strong>
+                        <span>{account.type} · Active</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="money-panel money-flow-panel">
+              <div className="money-panel__header">
+                <div><span className="money-kicker">Cash flow</span><h2>{N(flowTotals.incoming - flowTotals.outgoing)} <small>ETB net</small></h2></div>
+                <div className="money-range-tabs" aria-label="Cash flow range">
+                  {([14, 30, 90] as const).map(range => (
+                    <button key={range} onClick={() => setFlowRange(range)} className={flowRange === range ? 'is-active' : ''}>{range}d</button>
+                  ))}
+                </div>
+              </div>
+              <div className="money-flow-legend">
+                <span><i className="is-in" /> {N(flowTotals.incoming)} in</span>
+                <span><i className="is-out" /> {N(flowTotals.outgoing)} out</span>
+              </div>
+              <div className="money-flow-chart" aria-label={`Net ETB cash flow over ${flowRange} days`}>
+                {(() => {
+                  const maxAbs = Math.max(...dailyTrend.map(day => Math.abs(day.net)), 1)
+                  const hovered = dailyTrend.find(day => day.date === hoveredDay)
                   return (
-                    <button key={a.id} onClick={() => setSelectedAccountId(selected ? null : a.id)}
-                      className={`shrink-0 w-44 text-left px-3.5 py-3 rounded-card border transition-colors shadow-[var(--shadow-card-sm)] ${
-                        selected ? 'border-accent bg-accent/10 ring-1 ring-accent' : 'border-gray-200 bg-white hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${a.type === 'cash' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
-                          <Wallet size={13} />
+                    <>
+                      {hovered && (
+                        <div className="money-flow-tooltip" style={{
+                          left: `${Math.min(90, Math.max(10, (dailyTrend.findIndex(day => day.date === hoveredDay) + 0.5) / dailyTrend.length * 100))}%`,
+                        }}>
+                          <strong>{new Date(hovered.date).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}</strong>
+                          <span>In {N(hovered.in)} ETB</span><span>Out {N(hovered.out)} ETB</span>
+                          <b>Net {hovered.net >= 0 ? '+' : ''}{N(hovered.net)} ETB</b>
                         </div>
-                        <p className="text-xs font-medium truncate">{a.name}</p>
-                      </div>
-                      <p className={`text-sm font-mono font-medium ${bal < 0 ? 'text-red-600' : 'text-gray-800'}`}>
-                        {Math.round(bal).toLocaleString()} {a.currency}
-                      </p>
-                      <p className="text-[10px] text-gray-400 capitalize">{a.type} · tap for statement</p>
-                    </button>
+                      )}
+                      {dailyTrend.map((day, index) => (
+                        <div key={day.date} className={`money-flow-bar ${day.net < 0 ? 'is-negative' : ''}`}
+                          onMouseEnter={() => setHoveredDay(day.date)} onMouseLeave={() => setHoveredDay(null)}>
+                          <i style={{ height: `${Math.max(6, (Math.abs(day.net) / maxAbs) * 100)}%` }} />
+                          {(flowRange === 14 || index % Math.ceil(flowRange / 7) === 0) && <span>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</span>}
+                        </div>
+                      ))}
+                    </>
                   )
-                })}
+                })()}
               </div>
             </div>
-          )}
+          </section>
 
           {anomalies.length > 0 && (
-            <div className="bg-white border border-amber-200 rounded-card overflow-hidden mb-5">
+            <div className="money-anomaly-panel bg-white border border-amber-200 rounded-card overflow-hidden mb-5">
               <button onClick={() => setInsightsOpen(v => !v)}
                 className="w-full flex items-center justify-between px-4 py-3 text-left">
                 <span className="flex items-center gap-2 text-sm font-medium text-amber-800">
@@ -1176,30 +1355,13 @@ export function MoneyTracking() {
             </div>
           )}
 
-          <div className="bg-white border border-gray-200 rounded-card p-4 mb-5">
-            <p className="text-xs font-medium text-gray-500 mb-3">Net cash, last 14 days</p>
-            <div className="flex items-end gap-1.5" style={{ height: 64 }}>
-              {(() => {
-                const maxAbs = Math.max(...dailyTrend.map(d => Math.abs(d.net)), 1)
-                return dailyTrend.map(d => {
-                  const h = Math.max(3, (Math.abs(d.net) / maxAbs) * 56)
-                  return (
-                    <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.date}: ${d.net >= 0 ? '+' : ''}${N(d.net)} ETB`}>
-                      <div className={`w-full rounded-sm ${d.net >= 0 ? 'bg-green-500' : 'bg-red-400'}`} style={{ height: h }} />
-                    </div>
-                  )
-                })
-              })()}
-            </div>
-          </div>
-
           {selectedAccount ? (
             <>
               <button onClick={() => setSelectedAccountId(null)}
-                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2">
+                className="money-back flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2">
                 <ChevronLeft size={13} /> All transactions
               </button>
-              <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
+              <div className="money-statement-panel bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
                 <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium">{selectedAccount.name}</p>
@@ -1261,8 +1423,8 @@ export function MoneyTracking() {
             </>
           ) : (
             <>
-          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-            <div className="text-xs font-medium text-gray-500">Transactions</div>
+          <div className="money-activity-header flex items-center justify-between mb-2 gap-2 flex-wrap">
+            <div><span className="money-kicker">Recent activity</span><h2>Transactions</h2></div>
             <div className="flex items-center gap-2 flex-wrap">
               <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
                 className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
@@ -1303,7 +1465,7 @@ export function MoneyTracking() {
             </div>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
+          <div className="money-activity-panel bg-white border border-gray-200 rounded-card overflow-hidden mb-6">
             {filtered.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No transactions found. Use "Add income" or "Add expense" above to record one.</p>
             ) : filtered.slice(0, 50).map((t, i, arr) => (
@@ -1327,8 +1489,13 @@ export function MoneyTracking() {
                       {formatRelativeDate(t.date)} · {METHOD_LABEL[t.method] ?? t.method}{t.detail && ` · ${t.detail}`}{t.accountName && ` · ${t.accountName}`}
                     </p>
                   </div>
-                  <div className={`font-mono font-medium shrink-0 ${t.direction === 'in' ? 'text-green-700' : 'text-red-600'}`}>
-                    {t.direction === 'in' ? '+' : '−'}{N(t.amount)} {t.currency}
+                  <div className="text-right shrink-0">
+                    <div className={`font-mono font-medium ${t.direction === 'in' ? 'text-green-700' : 'text-red-600'}`}>
+                      {t.direction === 'in' ? '+' : '−'}{N(t.amount)} {t.currency}
+                    </div>
+                    {etbHint(t.amount, t.currency, usdToEtbRate) && (
+                      <div className="text-[10px] text-gray-400 font-mono">{etbHint(t.amount, t.currency, usdToEtbRate)}</div>
+                    )}
                   </div>
                   {/* shipment_expense and supplier_payment are managed on
                       their own pages (Payables / Supplier Payments) — editing
@@ -1355,13 +1522,13 @@ export function MoneyTracking() {
             </>
           )}
 
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-medium text-gray-500">Credit — what's owed, and by whom</div>
+          <div className="money-credit-header flex items-center justify-between mb-2">
+            <div><span className="money-kicker">Receivables</span><h2>Credit — what's owed, and by whom</h2></div>
             <Link to="/credit-accounts" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
               Record a repayment <ChevronRight size={12} />
             </Link>
           </div>
-          <div className="bg-white border border-gray-200 rounded-card overflow-hidden">
+          <div className="money-credit-panel bg-white border border-gray-200 rounded-card overflow-hidden">
             {credit.length === 0 ? (
               <p className="px-4 py-8 text-xs text-gray-400 text-center">No open credit accounts.</p>
             ) : credit.map((c, i, arr) => (

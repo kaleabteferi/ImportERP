@@ -170,14 +170,26 @@ export async function fetchAliWarehouseId(): Promise<string> {
 }
 
 // "How much of each product is currently sitting with the forwarder" —
-// current balance at any is_forwarder warehouse.
-export interface AliStockRow { product_id: string; product_name: string; sku: string; quantity: number }
+// current balance at any is_forwarder warehouse, plus which shipment(s) and
+// container(s) it was actually received from and when — so "which container
+// is this stock sitting in" has a real answer instead of just a bare total.
+export interface AliStockBatch {
+  shipmentId: string
+  shipmentNumber: string
+  containerNumbers: string[]
+  vesselName: string | null
+  receivedDate: string | null
+  quantity: number
+}
+export interface AliStockRow { product_id: string; product_name: string; sku: string; quantity: number; batches: AliStockBatch[] }
 
 export async function fetchAliStock(): Promise<AliStockRow[]> {
   const aliWarehouseId = await fetchAliWarehouseId()
 
   const [{ data: ledgerRows, error: ledgerError }, { data: products, error: productsError }] = await Promise.all([
-    supabase.from('inventory_ledger').select('product_id, quantity').eq('warehouse_id', aliWarehouseId),
+    supabase.from('inventory_ledger')
+      .select('product_id, quantity, movement_type, reference_id, movement_date')
+      .eq('warehouse_id', aliWarehouseId),
     supabase.from('products').select('id, name, sku'),
   ])
   if (ledgerError) throw new Error(ledgerError.message)
@@ -185,8 +197,38 @@ export async function fetchAliStock(): Promise<AliStockRow[]> {
 
   const nameBySku = new Map((products ?? []).map((p: any) => [p.id, { name: p.name, sku: p.sku }]))
   const balances = new Map<string, number>()
+  const receivedRows = (ledgerRows ?? []).filter((r: any) => r.movement_type === 'SHIPMENT_RECEIVED')
   for (const r of ledgerRows ?? []) {
     balances.set(r.product_id, (balances.get(r.product_id) ?? 0) + Number(r.quantity ?? 0))
+  }
+
+  const shipmentIds = [...new Set(receivedRows.map((r: any) => r.reference_id).filter(Boolean))]
+  const [{ data: shipmentRows }, { data: containerRows }] = shipmentIds.length > 0
+    ? await Promise.all([
+        supabase.from('shipments').select('id, shipment_number').in('id', shipmentIds),
+        supabase.from('containers').select('shipment_id, container_number, vessel_name').in('shipment_id', shipmentIds),
+      ])
+    : [{ data: [] }, { data: [] }]
+  const shipmentById = new Map((shipmentRows ?? []).map((s: any) => [s.id, s]))
+  const containersByShipment = new Map<string, { container_number: string; vessel_name: string | null }[]>()
+  for (const c of containerRows ?? []) {
+    if (!containersByShipment.has(c.shipment_id)) containersByShipment.set(c.shipment_id, [])
+    containersByShipment.get(c.shipment_id)!.push(c)
+  }
+
+  const batchesByProduct = new Map<string, AliStockBatch[]>()
+  for (const r of receivedRows) {
+    const containers = containersByShipment.get(r.reference_id) ?? []
+    const batch: AliStockBatch = {
+      shipmentId: r.reference_id,
+      shipmentNumber: shipmentById.get(r.reference_id)?.shipment_number ?? 'Unknown shipment',
+      containerNumbers: containers.map(c => c.container_number).filter(Boolean),
+      vesselName: containers.find(c => c.vessel_name)?.vessel_name ?? null,
+      receivedDate: r.movement_date,
+      quantity: Number(r.quantity ?? 0),
+    }
+    if (!batchesByProduct.has(r.product_id)) batchesByProduct.set(r.product_id, [])
+    batchesByProduct.get(r.product_id)!.push(batch)
   }
 
   return [...balances.entries()]
@@ -196,6 +238,7 @@ export async function fetchAliStock(): Promise<AliStockRow[]> {
       product_name: nameBySku.get(productId)?.name ?? 'Unknown product',
       sku: nameBySku.get(productId)?.sku ?? '',
       quantity: qty,
+      batches: (batchesByProduct.get(productId) ?? []).sort((a, b) => (b.receivedDate ?? '').localeCompare(a.receivedDate ?? '')),
     }))
     .sort((a, b) => a.product_name.localeCompare(b.product_name))
 }

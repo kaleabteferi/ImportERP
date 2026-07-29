@@ -22,6 +22,13 @@ type Category =
   | 'ETHIOPIA_CUSTOMS'
   | 'OTHER'
 
+// Categories that are conventionally billed per-container in this trade
+// (ocean freight, port handling, trucking) rather than as one flat number —
+// letting the user enter a per-container rate and multiplying by the
+// shipment's actual container count avoids manual arithmetic (and the
+// mistakes that come with it) every time a shipment has more than one box.
+const PER_CONTAINER_CATEGORIES: Category[] = ['OCEAN_FREIGHT', 'DJIBOUTI_PORT', 'TRUCKING']
+
 export function ExpenseForm({
   shipmentId, fxRate, onSave, onClose, editExpense,
 }: ExpenseFormProps) {
@@ -34,6 +41,14 @@ export function ExpenseForm({
   const [receiptRef, setReceiptRef]   = useState('')
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState<string | null>(null)
+  const [containerCount, setContainerCount] = useState(0)
+  const [perContainer, setPerContainer] = useState(false)
+  const [ratePerContainer, setRatePerContainer] = useState('')
+
+  useEffect(() => {
+    supabase.from('containers').select('id', { count: 'exact', head: true }).eq('shipment_id', shipmentId)
+      .then(({ count }) => setContainerCount(count ?? 0))
+  }, [shipmentId])
 
   // Pre-fill when editing
   useEffect(() => {
@@ -47,6 +62,13 @@ export function ExpenseForm({
       setReceiptRef(editExpense.receipt_ref ?? '')
     }
   }, [editExpense])
+
+  // Keep the total in sync with rate × container count while the toggle is on.
+  useEffect(() => {
+    if (!perContainer || containerCount <= 0) return
+    const rate = parseFloat(ratePerContainer)
+    if (rate > 0) setAmount(String(Math.round(rate * containerCount * 100) / 100))
+  }, [perContainer, ratePerContainer, containerCount])
 
   async function save() {
     if (!description) {
@@ -177,6 +199,10 @@ export function ExpenseForm({
             receiptRef={receiptRef} setReceiptRef={setReceiptRef}
             fxRate={fxRate} suggestions={SUGGESTIONS[category]}
             categoryHints={CAT_HINTS[category]}
+            containerCount={containerCount}
+            allowPerContainer={PER_CONTAINER_CATEGORIES.includes(category)}
+            perContainer={perContainer} setPerContainer={setPerContainer}
+            ratePerContainer={ratePerContainer} setRatePerContainer={setRatePerContainer}
           />
 
 
@@ -229,15 +255,28 @@ function ManualEntry({
   currency, setCurrency, vendorName, setVendorName,
   expenseDate, setExpenseDate, receiptRef, setReceiptRef,
   fxRate, suggestions, categoryHints,
+  containerCount, allowPerContainer, perContainer, setPerContainer,
+  ratePerContainer, setRatePerContainer,
 }: any) {
+  const [showHint, setShowHint] = useState(false)
   return (
     <div className="space-y-3">
       {categoryHints && (
-        <div className="flex items-start gap-2 px-3 py-2 bg-blue-50 border
-                        border-blue-100 rounded-lg text-xs text-blue-700">
-          <Info size={12} className="shrink-0 mt-0.5" />
-          <span>{categoryHints}</span>
-        </div>
+        showHint ? (
+          <div className="flex items-start gap-2 px-3 py-2 bg-blue-50 border
+                          border-blue-100 rounded-lg text-xs text-blue-700">
+            <Info size={12} className="shrink-0 mt-0.5" />
+            <span>{categoryHints}</span>
+            <button onClick={() => setShowHint(false)} className="ml-auto text-blue-300 hover:text-blue-500 shrink-0">
+              <X size={11} />
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setShowHint(true)} type="button"
+            className="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-700">
+            <Info size={12} /> What counts here?
+          </button>
+        )
       )}
 
       <div>
@@ -257,6 +296,47 @@ function ManualEntry({
         </datalist>
       </div>
 
+      {allowPerContainer && containerCount > 0 && (
+        <label className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg text-xs text-gray-600 cursor-pointer">
+          <input type="checkbox" checked={perContainer} onChange={e => setPerContainer(e.target.checked)} />
+          Bill per container — this shipment has <span className="font-medium">{containerCount}</span> container{containerCount === 1 ? '' : 's'}
+        </label>
+      )}
+
+      {allowPerContainer && perContainer && containerCount > 0 ? (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Rate per container <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="number" step="0.01"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                         focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+              value={ratePerContainer}
+              onChange={e => setRatePerContainer(e.target.value)}
+              placeholder="0.00"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Currency</label>
+            <select
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg
+                         focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              value={currency}
+              onChange={e => setCurrency(e.target.value as any)}
+            >
+              <option value="ETB">ETB — Birr</option>
+              <option value="USD">USD — Dollar</option>
+              <option value="CNY">CNY — Yuan</option>
+            </select>
+          </div>
+          <div className="col-span-2 flex items-center justify-between px-3 py-2 bg-blue-50 rounded-lg text-xs text-blue-700">
+            <span>{ratePerContainer || 0} × {containerCount} container{containerCount === 1 ? '' : 's'}</span>
+            <span className="font-mono font-medium">Total: {amount || 0} {currency}</span>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-gray-500 mb-1">
@@ -285,6 +365,7 @@ function ManualEntry({
           </select>
         </div>
       </div>
+      )}
 
       {amount && currency !== 'ETB' && (
         <div className="flex items-center justify-between px-3 py-2

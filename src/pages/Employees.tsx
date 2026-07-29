@@ -25,7 +25,7 @@ const EMPLOYEE_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'title', label: 'Title', width: '120px' },
   { key: 'department', label: 'Department', width: '110px' },
   { key: 'employment_type', label: 'Employment type', width: '110px' },
-  { key: 'base_salary_etb', label: 'Base salary (ETB)', width: '100px' },
+  { key: 'base_salary_etb', label: 'Net salary (ETB)', width: '100px' },
   { key: 'daily_rate_etb', label: 'Daily rate (ETB)', width: '100px' },
   { key: 'hire_date', label: 'Hire date', width: '100px' },
   { key: 'phone', label: 'Phone', width: '110px' },
@@ -121,7 +121,8 @@ function EmployeeForm({ initial, warehouses, onCancel, onSaved }: {
           </label>
           {form.employment_type === 'permanent' ? (
             <input type="number" value={form.base_salary_etb ?? ''} onChange={e => set('base_salary_etb', e.target.value ? Number(e.target.value) : null)}
-              placeholder="Monthly base salary (ETB)" className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+              placeholder="Monthly NET salary (take-home, ETB)" title="What they actually take home before overtime/allowances — payroll calculates the gross needed to net this amount after tax and pension"
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
           ) : (
             <input type="number" value={form.daily_rate_etb ?? ''} onChange={e => set('daily_rate_etb', e.target.value ? Number(e.target.value) : null)}
               placeholder="Daily rate (ETB)" className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
@@ -307,7 +308,7 @@ export function Employees() {
               <div className="w-32 text-center"><Badge>{e.employment_type.replace('_', ' ')}</Badge></div>
               <div className="text-right w-28">
                 <p className="text-xs font-mono font-medium text-gray-700">
-                  {e.employment_type === 'permanent' ? `${N(e.base_salary_etb ?? 0)}/mo` : `${N(e.daily_rate_etb ?? 0)}/day`}
+                  {e.employment_type === 'permanent' ? `${N(e.base_salary_etb ?? 0)}/mo net` : `${N(e.daily_rate_etb ?? 0)}/day`}
                 </p>
                 {!e.pension_eligible && <p className="text-xs text-amber-600">No pension</p>}
               </div>

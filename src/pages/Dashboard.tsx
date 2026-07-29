@@ -1,395 +1,432 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
-import { useAuth } from '../lib/auth'
-import { QuickActions } from '../components/dashboard/QuickActions'
-import { ManufacturingPerformanceCard } from '../components/dashboard/ManufacturingPerformanceCard'
-import { GlobalSearchBar } from '../components/GlobalSearchBar'
 import {
-  Sparkles, TrendingUp, TrendingDown, ChevronDown, ChevronRight,
-  Loader2, ArrowRight, CheckCircle2, Wallet, Landmark, CreditCard,
-  Package, Users, RefreshCw,
+  ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, ChevronRight,
+  CircleAlert, Clock3, CreditCard, Landmark, Loader2, PackageCheck,
+  RefreshCw, Sparkles, TrendingDown, TrendingUp, Users, Wallet,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { PageHeader } from '../components/ui/PageHeader'
+import { GlobalSearchBar } from '../components/GlobalSearchBar'
+import { ManufacturingPerformanceCard } from '../components/dashboard/ManufacturingPerformanceCard'
+import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
+import { useAuth } from '../lib/auth'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
-const pctChange = (current: number, prev: number) =>
-  prev === 0 ? (current > 0 ? 100 : 0) : ((current - prev) / prev) * 100
+const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
+const PREVIOUS_LABEL: Record<Period, string> = { day: 'yesterday', week: 'last week', month: 'last month' }
+const pctChange = (current: number, previous: number) =>
+  previous === 0 ? (current > 0 ? 100 : 0) : ((current - previous) / previous) * 100
 
 function greeting() {
-  const h = new Date().getHours()
-  if (h < 12) return 'Good morning'
-  if (h < 18) return 'Good afternoon'
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
   return 'Good evening'
 }
 
-function timeAgo(d: Date | null) {
-  if (!d) return ''
-  const secs = Math.floor((Date.now() - d.getTime()) / 1000)
-  if (secs < 60) return 'just now'
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
-  return `${Math.floor(secs / 3600)}h ago`
+function timeAgo(date: Date | null) {
+  if (!date) return 'waiting for sync'
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (seconds < 60) return 'synced just now'
+  if (seconds < 3600) return `synced ${Math.floor(seconds / 60)}m ago`
+  return `synced ${Math.floor(seconds / 3600)}h ago`
 }
 
-const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
-const PERIOD_PREV_LABEL: Record<Period, string> = { day: 'yesterday', week: 'last week', month: 'last month' }
-
-function CardSparkline({ points, good }: { points: DayPoint[]; good: boolean }) {
-  const max = Math.max(1, ...points.map(p => p.value))
+function TrendPill({ value, period }: { value: number; period: Period }) {
+  const positive = value >= 0
   return (
-    <div className="flex items-end gap-[2px] h-6 mt-2">
-      {points.map(p => (
-        <div key={p.date}
-          className={`flex-1 rounded-t ${good ? 'bg-green-400/70' : 'bg-red-400/70'}`}
-          style={{ height: `${Math.max(8, (p.value / max) * 100)}%` }}
-          title={`${p.date}: ${p.value}`}
-        />
-      ))}
-    </div>
+    <span className={`dashboard-trend ${positive ? 'is-positive' : 'is-negative'}`}>
+      {positive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      {Math.abs(value).toFixed(0)}% vs {PREVIOUS_LABEL[period]}
+    </span>
   )
 }
 
-function KpiCard({ label, value, sub, trend, icon: Icon, tone, to, index = 0, sparkline }: {
-  label: string; value: string; sub?: string; trend?: number; icon: LucideIcon; tone?: 'warn' | 'good'; to?: string; index?: number
-  sparkline?: DayPoint[]
+function Sparkline({ points, tone = 'lime' }: { points: DayPoint[]; tone?: 'lime' | 'blue' }) {
+  if (points.length < 2) return <div className="dashboard-chart-empty">Trend builds as data arrives</div>
+  const values = points.map(point => point.value)
+  const max = Math.max(...values, 1)
+  const min = Math.min(...values)
+  const range = Math.max(max - min, 1)
+  const coordinates = points.map((point, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * 100
+    const y = 46 - ((point.value - min) / range) * 38
+    return `${x},${y}`
+  }).join(' ')
+  const area = `0,52 ${coordinates} 100,52`
+  return (
+    <svg className={`dashboard-sparkline is-${tone}`} viewBox="0 0 100 54" preserveAspectRatio="none" aria-label="Value trend">
+      <defs>
+        <linearGradient id={`trend-${tone}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity=".26" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill={`url(#trend-${tone})`} />
+      <polyline points={coordinates} fill="none" stroke="currentColor" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+
+function MetricCard({ label, value, detail, icon: Icon, to, tone = 'neutral' }: {
+  label: string
+  value: string
+  detail: string
+  icon: LucideIcon
+  to: string
+  tone?: 'neutral' | 'lime' | 'amber'
 }) {
-  const body = (
-    <>
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1.5 text-gray-400">
-          <Icon size={12} />
-          <p className="text-xs">{label}</p>
-        </div>
-        {to && <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />}
+  return (
+    <Link to={to} className={`dashboard-metric is-${tone}`}>
+      <div className="dashboard-metric__top">
+        <span className="dashboard-metric__icon"><Icon size={15} /></span>
+        <ChevronRight size={15} className="dashboard-metric__arrow" />
       </div>
-      <p className={`text-xl font-medium ${tone === 'warn' ? 'text-amber-600' : tone === 'good' ? 'text-green-700' : ''}`}>{value}</p>
-      {trend !== undefined ? (
-        <p className={`text-xs mt-1 flex items-center gap-1 ${trend >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-          {trend >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-          {Math.abs(trend).toFixed(0)}%{sub ? ` ${sub}` : ''}
-        </p>
-      ) : sub ? (
-        <p className="text-xs mt-1 text-gray-400">{sub}</p>
-      ) : null}
-      {sparkline && sparkline.length > 1 && <CardSparkline points={sparkline} good={(trend ?? 0) >= 0} />}
-    </>
-  )
-  const cls = 'stagger-row group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)]'
-  const style = { '--stagger-index': index } as React.CSSProperties
-  return to ? (
-    <Link to={to} style={style} className={`${cls} hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent`}>{body}</Link>
-  ) : (
-    <div className={cls} style={style}>{body}</div>
+      <p>{label}</p>
+      <strong>{value}</strong>
+      <span>{detail}</span>
+    </Link>
   )
 }
 
-function MiniTrend({ points, formatValue }: { points: DayPoint[]; formatValue: (n: number) => string }) {
-  const max = Math.max(1, ...points.map(p => p.value))
-  const best = Math.max(...points.map(p => p.value))
-  const avg = points.reduce((s, p) => s + p.value, 0) / Math.max(points.length, 1)
-  const showLabels = points.length <= 14
+function CashBreakdown({ title, value, items, direction }: {
+  title: string
+  value: number
+  items: { label: string; amountEtb: number; to: string }[]
+  direction: 'in' | 'out'
+}) {
   return (
-    <div>
-      <div className="flex items-end gap-1 h-20 mb-2">
-        {points.map(p => (
-          <div key={p.date} className="flex-1 flex flex-col items-center justify-end gap-1">
-            <div
-              className="w-full rounded-t bg-gradient-to-t from-indigo-600 to-indigo-400"
-              style={{ height: `${Math.max(4, (p.value / max) * 100)}%` }}
-              title={`${p.date}: ${formatValue(p.value)}`}
-            />
-            {showLabels && <span className="text-[9px] text-gray-400">{new Date(p.date).toLocaleDateString('en', { weekday: 'narrow' })}</span>}
-          </div>
+    <div className="cash-breakdown">
+      <div className="cash-breakdown__header">
+        <div>
+          <span>{title}</span>
+          <strong>{N(value)} <small>ETB</small></strong>
+        </div>
+        <span className={`cash-direction is-${direction}`}>
+          {direction === 'in' ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+        </span>
+      </div>
+      <div className="cash-breakdown__rows">
+        {items.length === 0 ? <p className="dashboard-empty">No movement in this period</p> : items.map(item => (
+          <Link to={item.to} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{N(item.amountEtb)}</strong>
+          </Link>
         ))}
       </div>
-      <div className="flex justify-between text-xs text-gray-400 border-t border-gray-100 pt-2">
-        <span>Best day <span className="text-gray-600 font-medium">{formatValue(best)}</span></span>
-        <span>Average <span className="text-gray-600 font-medium">{formatValue(avg)}</span></span>
-      </div>
     </div>
   )
 }
 
-function QuestionCard({ question, children, viewAllTo, viewAllLabel, defaultOpen }: {
-  question: string; children: React.ReactNode; viewAllTo?: string; viewAllLabel?: string; defaultOpen?: boolean
+function TrendPanel({ title, value, unit, points, change, period, to, tone }: {
+  title: string
+  value: string
+  unit: string
+  points: DayPoint[]
+  change: number
+  period: Period
+  to: string
+  tone: 'lime' | 'blue'
 }) {
-  const [open, setOpen] = useState(!!defaultOpen)
+  const values = points.map(point => point.value)
+  const best = values.length ? Math.max(...values) : 0
+  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
   return (
-    <div className="bg-white dark:border dark:border-gray-700 rounded-card overflow-hidden shadow-[var(--shadow-card-sm)]">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors duration-150"
-      >
-        <span className="text-sm font-medium">{question}</span>
-        {open ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
-      </button>
-      {open && (
-        <div className="px-4 pb-4 border-t border-gray-100 pt-3">
-          {children}
-          {viewAllTo && (
-            <Link to={viewAllTo} className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline w-fit">
-              {viewAllLabel ?? 'View all'} <ArrowRight size={11} />
-            </Link>
-          )}
-        </div>
-      )}
-    </div>
+    <Link to={to} className="dashboard-trend-panel">
+      <div className="dashboard-section-label">
+        <span>{title}</span>
+        <TrendPill value={change} period={period} />
+      </div>
+      <div className="dashboard-trend-panel__value"><strong>{value}</strong><span>{unit}</span></div>
+      <div className="dashboard-trend-panel__chart"><Sparkline points={points} tone={tone} /></div>
+      <div className="dashboard-trend-panel__foot">
+        <span>Best <strong>{N(best)}</strong></span>
+        <span>Daily average <strong>{N(average)}</strong></span>
+        <ArrowRight size={14} />
+      </div>
+    </Link>
   )
 }
 
-function AdviceNote({ text }: { text: string }) {
+function BusinessQuestion({ title, eyebrow, to, children, className = '' }: {
+  title: string
+  eyebrow: string
+  to: string
+  children: React.ReactNode
+  className?: string
+}) {
   return (
-    <div className="mt-3 flex gap-2 text-xs text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2">
-      <Sparkles size={13} className="shrink-0 mt-0.5" />
-      <p className="italic">{text}</p>
-    </div>
+    <article className={`dashboard-question ${className}`}>
+      <div className="dashboard-question__header">
+        <div><span className="dashboard-kicker">{eyebrow}</span><h3>{title}</h3></div>
+        <Link to={to} aria-label={`Open ${title}`}><ArrowRight size={14} /></Link>
+      </div>
+      <div className="dashboard-question__body">{children}</div>
+    </article>
   )
 }
 
 export function Dashboard() {
   const { profile } = useAuth()
   const [period, setPeriod] = useState<Period>('day')
-  const d = useDashboardData(period)
+  const [opsTab, setOpsTab] = useState<'sales' | 'margin' | 'production'>('sales')
+  const data = useDashboardData(period)
   const firstName = (profile?.full_name ?? '').split(' ')[0] || 'there'
+  const revenueChange = pctChange(data.revenueEtb, data.revenuePrevEtb)
+  const productionChange = pctChange(data.producedUnits, data.producedPrevUnits)
+  const netCash = data.cashInEtb - data.cashOutEtb
 
-  const revenueChangePct = pctChange(d.revenueEtb, d.revenuePrevEtb)
-  const productionChangePct = pctChange(d.producedUnits, d.producedPrevUnits)
-  const netCashEtb = d.cashInEtb - d.cashOutEtb
-
-  if (d.loading && !d.lastUpdated) {
+  if (data.loading && !data.lastUpdated) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center text-gray-400 gap-2">
-        <Loader2 size={18} className="animate-spin" /> Getting the numbers…
+      <div className="dashboard-loading">
+        <Loader2 size={18} className="animate-spin" />
+        Opening your operations desk…
       </div>
     )
   }
 
   return (
-    <div className="p-5 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5 items-start">
-    <div className="space-y-5 min-w-0">
-      {/* Header */}
-      <PageHeader
-        title={`${greeting()}, ${firstName}`}
-        subtitle={<span className="flex items-center gap-1.5">
-          {new Date().toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' })}
-          <span className="text-gray-300">·</span>
-          <RefreshCw size={10} className={d.loading ? 'animate-spin' : ''} />
-          Updated {timeAgo(d.lastUpdated)}
-        </span>}
-        actions={
-          <div className="flex gap-1">
-            {(['day', 'week', 'month'] as Period[]).map(p => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors
-                  ${period === p ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-              >
-                {PERIOD_LABEL[p]}
-              </button>
+    <div className="dashboard-shell">
+      <header className="dashboard-header">
+        <div>
+          <div className="dashboard-eyebrow"><span /> Operations overview</div>
+          <h1>{greeting()}, {firstName}</h1>
+          <p>{new Date().toLocaleDateString('en', { weekday: 'long', month: 'long', day: 'numeric' })} · {timeAgo(data.lastUpdated)}</p>
+        </div>
+        <div className="dashboard-header__tools">
+          <GlobalSearchBar placeholder="Search the business…" />
+          <button className="dashboard-refresh" onClick={data.refresh} aria-label="Refresh dashboard" title="Refresh dashboard">
+            <RefreshCw size={16} className={data.loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </header>
+
+      <nav className="dashboard-periods" aria-label="Dashboard period">
+        {(['day', 'week', 'month'] as Period[]).map(option => (
+          <button key={option} onClick={() => setPeriod(option)} className={period === option ? 'is-active' : ''}>
+            {PERIOD_LABEL[option]}
+          </button>
+        ))}
+      </nav>
+
+      {data.error && <div className="dashboard-error"><CircleAlert size={15} /> {data.error}</div>}
+
+      <section className="dashboard-hero">
+        <div className="dashboard-hero__main">
+          <div className="dashboard-section-label">
+            <span>Revenue</span>
+            <TrendPill value={revenueChange} period={period} />
+          </div>
+          <div className="dashboard-hero__value"><strong>{N(data.revenueEtb)}</strong><span>ETB</span></div>
+          <Sparkline points={data.revenueTrend} />
+          <div className="dashboard-hero__foot">
+            <span>Sales performance · {PERIOD_LABEL[period].toLowerCase()}</span>
+            <Link to="/sales">Open sales <ArrowRight size={13} /></Link>
+          </div>
+        </div>
+
+        <div className="dashboard-pulse">
+          <div className="dashboard-section-label">
+            <span>Operating pulse</span>
+            <span className="dashboard-live"><i /> Live</span>
+          </div>
+          <div className="dashboard-pulse__score">
+            <span>{data.todoToday.length === 0 ? 'Clear' : `${data.todoToday.length} to do`}</span>
+            <div className="dashboard-pulse__orb">
+              <span>{data.unusualTransactionCount + data.stockoutRiskCount}</span><small>risks</small>
+            </div>
+          </div>
+          <div className="dashboard-advice">
+            <Sparkles size={15} />
+            <p>{data.topAdvice?.text ?? 'Your operating picture is up to date.'}</p>
+          </div>
+          <Link to={data.todoToday[0]?.link ?? '/reports'} className="dashboard-pulse__action">
+            {data.todoToday.length ? 'Review first priority' : 'View business report'} <ArrowRight size={14} />
+          </Link>
+        </div>
+      </section>
+
+      <section className="dashboard-metrics" aria-label="Key business metrics">
+        <MetricCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} value={`${N(data.revenueEtb)} ETB`}
+          detail={`${Math.abs(revenueChange).toFixed(0)}% vs ${PREVIOUS_LABEL[period]}`} icon={TrendingUp} to="/sales" tone={revenueChange >= 0 ? 'lime' : 'amber'} />
+        <MetricCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} value={`${N(data.producedUnits)} units`}
+          detail={`${Math.abs(productionChange).toFixed(0)}% vs ${PREVIOUS_LABEL[period]}`} icon={PackageCheck} to="/production" tone={productionChange >= 0 ? 'neutral' : 'amber'} />
+        <MetricCard label="Net cash" value={`${netCash >= 0 ? '+' : ''}${N(netCash)} ETB`}
+          detail={`${N(data.cashInEtb)} in · ${N(data.cashOutEtb)} out`} icon={Wallet} to="/money-tracking" tone={netCash >= 0 ? 'lime' : 'amber'} />
+        <MetricCard label="Stock cover" value={data.daysOfStock === null ? 'No run rate' : `${data.daysOfStock.toFixed(0)} days`}
+          detail={`${N(data.inventoryValueEtb)} ETB on hand`} icon={Boxes} to="/inventory" tone={data.daysOfStock !== null && data.daysOfStock < 7 ? 'amber' : 'neutral'} />
+        <MetricCard label="Customers owe you" value={`${N(data.receivablesEtb)} ETB`}
+          detail="Open customer balances" icon={CreditCard} to="/receivables" tone={data.receivablesEtb > 0 ? 'amber' : 'neutral'} />
+        <MetricCard label="You owe suppliers" value={`${N(data.payablesEtb)} ETB`}
+          detail={[data.payablesUsd > 0 ? `$${N(data.payablesUsd)} USD` : null, data.payablesCny > 0 ? `¥${N(data.payablesCny)} CNY` : null].filter(Boolean).join(' · ') || 'No foreign balance'} icon={Landmark} to="/supplier-payments" tone={data.payablesEtb > 0 || data.payablesUsd > 0 || data.payablesCny > 0 ? 'amber' : 'neutral'} />
+        <MetricCard label="Active customers" value={String(data.activeCustomers)}
+          detail={PERIOD_LABEL[period].toLowerCase()} icon={Users} to="/customers" />
+        <MetricCard label="Frequent customers" value={String(data.frequentCustomers)}
+          detail="2+ orders in 30 days" icon={Users} to="/customers" />
+      </section>
+
+      <section className="dashboard-grid">
+        <div className="dashboard-panel cash-panel">
+          <div className="dashboard-panel__header">
+            <div><span className="dashboard-kicker">Payments & cash</span><h2>Where money moved</h2></div>
+            <span className="ledger-live"><i /> Live ledgers</span>
+            <Link to="/money-tracking">All transactions <ArrowRight size={13} /></Link>
+          </div>
+          <div className="cash-grid">
+            <CashBreakdown title="Cash in" value={data.cashInEtb} items={data.cashInBreakdown} direction="in" />
+            <CashBreakdown title="Cash out" value={data.cashOutEtb} items={data.cashOutBreakdown} direction="out" />
+          </div>
+          <div className="cash-obligations">
+            <Link to="/receivables"><CreditCard size={14} /><span>Customers owe</span><strong>{N(data.receivablesEtb)} ETB</strong></Link>
+            <Link to="/supplier-payments"><Landmark size={14} /><span>Supplier payables</span><strong>{N(data.payablesEtb)} ETB</strong></Link>
+          </div>
+        </div>
+
+        <div className="dashboard-panel action-panel">
+          <div className="dashboard-panel__header">
+            <div><span className="dashboard-kicker">Action queue</span><h2>What needs attention</h2></div>
+            <span className="action-count">{data.todoToday.length}</span>
+          </div>
+          <div className="action-list">
+            {data.todoToday.length === 0 ? (
+              <div className="action-clear"><PackageCheck size={24} /><strong>Nothing urgent</strong><span>Your operation is on track.</span></div>
+            ) : data.todoToday.slice(0, 4).map((item, index) => (
+              <Link to={item.link ?? '/'} key={`${item.text}-${index}`}>
+                <span className="action-index">{String(index + 1).padStart(2, '0')}</span>
+                <p>{item.text}</p>
+                <ChevronRight size={15} />
+              </Link>
             ))}
           </div>
-        }
-      />
-
-      <GlobalSearchBar />
-
-      {d.error && (
-        <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{d.error}</div>
-      )}
-
-      {/* Top advice */}
-      {d.topAdvice && (
-        <div className="bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 text-white rounded-card p-5 shadow-[var(--shadow-card-md)]">
-          <div className="flex items-center gap-2 mb-2 text-indigo-200 text-xs uppercase tracking-wide font-medium">
-            <Sparkles size={13} /> {PERIOD_LABEL[period]}'s advice
-          </div>
-          <p className="text-lg leading-snug">{d.topAdvice.text}</p>
-          {d.secondaryAdvice && (
-            <p className="text-sm text-indigo-200 mt-3 flex items-start gap-1.5">
-              <ArrowRight size={14} className="shrink-0 mt-0.5" /> {d.secondaryAdvice.text}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Tier 1 — headline KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard index={0} label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} icon={TrendingUp} to="/sales"
-          value={`${N(d.revenueEtb)} ETB`} trend={revenueChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} sparkline={d.revenueTrend} />
-        <KpiCard index={1} label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} icon={Package} to="/production"
-          value={`${N(d.producedUnits)} units`} trend={productionChangePct} sub={`vs ${PERIOD_PREV_LABEL[period]}`} sparkline={d.productionTrend} />
-        <KpiCard index={2} label="Net cash" icon={Wallet} to="/money-tracking"
-          value={`${netCashEtb >= 0 ? '+' : ''}${N(netCashEtb)} ETB`}
-          sub={`${N(d.cashInEtb)} in · ${N(d.cashOutEtb)} out`}
-          tone={netCashEtb >= 0 ? 'good' : 'warn'} />
-        <KpiCard index={3} label="Days of stock" icon={Package} to="/inventory"
-          value={d.daysOfStock !== null ? `${d.daysOfStock.toFixed(0)} days` : '—'}
-          sub={`${N(d.inventoryValueEtb)} ETB on hand`}
-          tone={d.daysOfStock !== null && d.daysOfStock < 7 ? 'warn' : undefined} />
-        <KpiCard index={4} label="Customers owe you" icon={CreditCard} to="/receivables"
-          value={`${N(d.receivablesEtb)} ETB`}
-          tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
-        <KpiCard index={5} label="You owe suppliers" icon={Landmark} to="/supplier-payments"
-          value={`${N(d.payablesEtb)} ETB`}
-          sub={[d.payablesUsd > 0 ? `$${N(d.payablesUsd)} USD` : null, d.payablesCny > 0 ? `¥${N(d.payablesCny)} CNY` : null].filter(Boolean).join(' · ') || undefined}
-          tone={d.payablesEtb > 0 || d.payablesUsd > 0 || d.payablesCny > 0 ? 'warn' : undefined} />
-        <KpiCard index={6} label="Active customers" icon={Users} to="/customers"
-          value={String(d.activeCustomers)}
-          sub={`${PERIOD_LABEL[period].toLowerCase()}`} />
-        <KpiCard index={7} label="Frequent customers" icon={Users} to="/customers"
-          value={String(d.frequentCustomers)}
-          sub="2+ orders in 30 days" />
-      </div>
-
-      {/* Cash flow — what actually made up "Net cash" above */}
-      {(d.cashInBreakdown.length > 0 || d.cashOutBreakdown.length > 0) && (
-        <div className="bg-white dark:border dark:border-gray-700 rounded-card p-4 shadow-[var(--shadow-card-sm)]">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-gray-500">Cash flow · {PERIOD_LABEL[period].toLowerCase()}</p>
-            <Link to="/money-tracking" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-              Every transaction <ChevronRight size={12} />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs font-medium text-green-700 mb-1.5">In · {N(d.cashInEtb)} ETB</p>
-              {d.cashInBreakdown.length === 0 ? (
-                <p className="text-xs text-gray-300">Nothing in yet</p>
-              ) : (
-                <div className="space-y-1">
-                  {d.cashInBreakdown.map(c => (
-                    <Link key={c.label} to={c.to} className="flex items-center justify-between text-xs group/row">
-                      <span className="text-gray-500 group-hover/row:text-gray-700">{c.label}</span>
-                      <span className="font-mono text-green-700">{N(c.amountEtb)}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-red-600 mb-1.5">Out · {N(d.cashOutEtb)} ETB</p>
-              {d.cashOutBreakdown.length === 0 ? (
-                <p className="text-xs text-gray-300">Nothing out yet</p>
-              ) : (
-                <div className="space-y-1">
-                  {d.cashOutBreakdown.map(c => (
-                    <Link key={c.label} to={c.to} className="flex items-center justify-between text-xs group/row">
-                      <span className="text-gray-500 group-hover/row:text-gray-700">{c.label}</span>
-                      <span className="font-mono text-red-600">{N(c.amountEtb)}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="action-signals">
+            <span><CircleAlert size={13} /> {data.unusualTransactionCount} unusual transactions</span>
+            <span><Clock3 size={13} /> {data.stockoutRiskCount} stock risks</span>
           </div>
         </div>
-      )}
+      </section>
 
-      {/* Tier 2 — trends */}
-      <div className="grid grid-cols-2 gap-3">
-        <Link to="/sales" className="group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)] hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-gray-500">Revenue trend</p>
-            <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />
+      <section className="dashboard-panel intelligence-panel">
+        <div className="dashboard-panel__header intelligence-header">
+          <div><span className="dashboard-kicker">Business intelligence</span><h2>Read the operation</h2></div>
+          <div className="intelligence-tabs" role="tablist">
+            <button onClick={() => setOpsTab('sales')} className={opsTab === 'sales' ? 'is-active' : ''}>Best sellers</button>
+            <button onClick={() => setOpsTab('margin')} className={opsTab === 'margin' ? 'is-active' : ''}>Margin watch</button>
+            <button onClick={() => setOpsTab('production')} className={opsTab === 'production' ? 'is-active' : ''}>Production</button>
           </div>
-          <MiniTrend points={d.revenueTrend} formatValue={n => `${N(n)} ETB`} />
-        </Link>
-        <Link to="/production" className="group bg-white dark:border dark:border-gray-700 rounded-card p-4 block transition-all duration-150 shadow-[var(--shadow-card-sm)] hover:shadow-[var(--shadow-card-md)] hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-gray-500">Production trend</p>
-            <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-150" />
+        </div>
+
+        {opsTab === 'sales' && (
+          <div className="intelligence-list">
+            {data.topProducts.length === 0 ? <p className="dashboard-empty">No sales recorded in this period yet.</p> :
+              data.topProducts.map((product, index) => {
+                const maxRevenue = Math.max(...data.topProducts.map(item => item.revenue), 1)
+                return (
+                  <Link to="/sales" key={product.name} className="intelligence-row">
+                    <span className="intelligence-rank">{String(index + 1).padStart(2, '0')}</span>
+                    <div><strong>{product.name}</strong><span>{N(product.quantity)} units sold</span></div>
+                    <div className="intelligence-bar"><i style={{ width: `${(product.revenue / maxRevenue) * 100}%` }} /></div>
+                    <strong>{N(product.revenue)} <small>ETB</small></strong>
+                  </Link>
+                )
+              })}
           </div>
-          <MiniTrend points={d.productionTrend} formatValue={n => `${N(n)} units`} />
-        </Link>
-      </div>
+        )}
+        {opsTab === 'margin' && (
+          <div className="intelligence-list">
+            {data.lowMarginProducts.length === 0 ? <p className="dashboard-empty">Not enough sales data to calculate margins.</p> :
+              data.lowMarginProducts.map((product, index) => (
+                <Link to="/products" key={product.name} className="intelligence-row">
+                  <span className="intelligence-rank">{String(index + 1).padStart(2, '0')}</span>
+                  <div><strong>{product.name}</strong><span>Review landed cost and sales price</span></div>
+                  <div className="intelligence-bar"><i className={product.marginPct < 20 ? 'is-risk' : ''} style={{ width: `${Math.max(3, Math.min(product.marginPct, 100))}%` }} /></div>
+                  <strong>{product.marginPct.toFixed(0)}<small>% margin</small></strong>
+                </Link>
+              ))}
+          </div>
+        )}
+        {opsTab === 'production' && <div className="production-panel"><ManufacturingPerformanceCard /></div>}
+      </section>
 
-      {/* Tier 3 — drill-down */}
-      <div>
-        <p className="text-xs font-medium text-gray-500 mb-2">Ask the business</p>
-        <div className="space-y-2">
-          <QuestionCard question="What sold best?" viewAllTo="/sales" viewAllLabel="Go to Sales" defaultOpen>
-            {d.topProducts.length === 0 ? (
-              <p className="text-sm text-gray-400">No sales recorded in this period yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {d.topProducts.map((p, i) => (
-                  <div key={p.name} className="flex items-center gap-3 text-sm">
-                    <span className="text-gray-300 font-medium w-4">{i + 1}.</span>
-                    <span className="flex-1">{p.name}</span>
-                    <span className="text-gray-500">{N(p.quantity)} sold</span>
-                    <span className="font-medium w-28 text-right">{N(p.revenue)} ETB</span>
+      <section className="dashboard-trends-section">
+        <div className="dashboard-section-heading">
+          <div><span className="dashboard-kicker">Period history</span><h2>Revenue and production trends</h2></div>
+          <span>Real sales orders and production logs</span>
+        </div>
+        <div className="dashboard-trends-grid">
+          <TrendPanel title="Revenue trend" value={N(data.revenueEtb)} unit="ETB" points={data.revenueTrend}
+            change={revenueChange} period={period} to="/sales" tone="lime" />
+          <TrendPanel title="Production trend" value={N(data.producedUnits)} unit="units" points={data.productionTrend}
+            change={productionChange} period={period} to="/production" tone="blue" />
+        </div>
+      </section>
+
+      <section className="dashboard-decisions">
+        <div className="dashboard-section-heading">
+          <div><span className="dashboard-kicker">Ask the business</span><h2>Answers from your operating data</h2></div>
+          <span>No sample or placeholder figures</span>
+        </div>
+        <div className="dashboard-questions-grid">
+          <BusinessQuestion title="What sold best?" eyebrow="Sales mix" to="/sales">
+            {data.topProducts.length === 0 ? <p className="dashboard-empty">No sales recorded in this period yet.</p> : (
+              <>
+                <div className="question-list">
+                  {data.topProducts.map((product, index) => (
+                    <div key={product.name}>
+                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      <p><strong>{product.name}</strong><small>{N(product.quantity)} sold</small></p>
+                      <b>{N(product.revenue)} ETB</b>
+                    </div>
+                  ))}
+                </div>
+                {data.topProducts[0] && data.revenueEtb > 0 && (
+                  <div className="question-advice"><Sparkles size={13} />
+                    <p>{data.topProducts[0].name} contributes {Math.round((data.topProducts[0].revenue / data.revenueEtb) * 100)}% of revenue this {period}. Prioritize its supply chain and production schedule.</p>
                   </div>
-                ))}
-                {d.topProducts[0] && d.revenueEtb > 0 && (
-                  <AdviceNote text={`${d.topProducts[0].name} contributes ${Math.round((d.topProducts[0].revenue / d.revenueEtb) * 100)}% of revenue this ${period} — prioritize its supply chain and production schedule.`} />
                 )}
-              </div>
+              </>
             )}
-          </QuestionCard>
+          </BusinessQuestion>
 
-          <QuestionCard question="Where are we losing money?" viewAllTo="/products" viewAllLabel="Go to Products">
-            {d.lowMarginProducts.length === 0 ? (
-              <p className="text-sm text-gray-400">Not enough sales data yet to check margins.</p>
-            ) : (
-              <div className="space-y-2">
-                {d.lowMarginProducts.map(p => (
-                  <div key={p.name} className="flex justify-between text-sm">
-                    <span>{p.name}</span>
-                    <span className={`font-medium ${p.marginPct < 20 ? 'text-red-500' : 'text-gray-600'}`}>
-                      {p.marginPct.toFixed(0)}% margin
-                    </span>
+          <BusinessQuestion title="Where are we losing money?" eyebrow="Margin watch" to="/products">
+            {data.lowMarginProducts.length === 0 ? <p className="dashboard-empty">Not enough sales data yet to check margins.</p> : (
+              <>
+                <div className="margin-list">
+                  {data.lowMarginProducts.map(product => (
+                    <div key={product.name}>
+                      <span><strong>{product.name}</strong><small>Cost vs sales price</small></span>
+                      <b className={product.marginPct < 20 ? 'is-risk' : ''}>{product.marginPct.toFixed(0)}%</b>
+                    </div>
+                  ))}
+                </div>
+                {data.lowMarginProducts[0].marginPct < 20 && (
+                  <div className="question-advice"><Sparkles size={13} />
+                    <p>Review {data.lowMarginProducts[0].name}. Check its BOM cost and consider a price adjustment.</p>
                   </div>
-                ))}
-                {d.lowMarginProducts[0].marginPct < 20 && (
-                  <AdviceNote text={`Review "${d.lowMarginProducts[0].name}" — its cost or price needs attention. Check its BOM cost and consider a price adjustment.`} />
                 )}
-              </div>
+              </>
             )}
-          </QuestionCard>
+          </BusinessQuestion>
 
-          <QuestionCard question="How efficient is production, and how much overtime is it costing?" viewAllTo="/production" viewAllLabel="Go to Production">
+          <BusinessQuestion title="How efficient is production?" eyebrow="Output & overtime" to="/production" className="is-wide">
             <ManufacturingPerformanceCard />
-          </QuestionCard>
+          </BusinessQuestion>
 
-          <QuestionCard question="What should I do today?" defaultOpen={d.todoToday.length > 0}>
-            {d.todoToday.length === 0 ? (
-              <p className="text-sm text-gray-400 flex items-center gap-2">
-                <CheckCircle2 size={14} className="text-green-500" /> Nothing urgent — everything's on track.
-              </p>
+          <BusinessQuestion title="What should I do today?" eyebrow="Priority list" to={data.todoToday[0]?.link ?? '/reports'} className="is-wide">
+            {data.todoToday.length === 0 ? (
+              <div className="action-clear is-compact"><PackageCheck size={24} /><strong>Nothing urgent</strong><span>Production and sales are on track.</span></div>
             ) : (
-              <ul className="space-y-1">
-                {d.todoToday.map((t, i) => (
-                  <li key={i}>
-                    {t.link ? (
-                      <Link to={t.link} className="flex items-start gap-2 text-sm -mx-2 px-2 py-1 rounded-lg hover:bg-gray-50 transition-colors duration-150 group">
-                        <span className="text-gray-300 mt-0.5">•</span>
-                        <span className="flex-1">{t.text}</span>
-                        <ChevronRight size={13} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                      </Link>
-                    ) : (
-                      <div className="flex items-start gap-2 text-sm px-2 py-1">
-                        <span className="text-gray-300 mt-0.5">•</span>
-                        <span>{t.text}</span>
-                      </div>
-                    )}
-                  </li>
+              <div className="question-todos">
+                {data.todoToday.map((item, index) => (
+                  <Link to={item.link ?? '/'} key={`${item.text}-${index}`}>
+                    <span>{String(index + 1).padStart(2, '0')}</span><p>{item.text}</p><ChevronRight size={14} />
+                  </Link>
                 ))}
-              </ul>
+              </div>
             )}
-          </QuestionCard>
+            {data.secondaryAdvice && <div className="question-advice"><Sparkles size={13} /><p>{data.secondaryAdvice.text}</p></div>}
+          </BusinessQuestion>
         </div>
-      </div>
-
-      <p className="text-center text-xs text-gray-300 pt-2">
-        Need the full picture? <Link to="/reports" className="text-indigo-500 hover:underline">See detailed reports</Link>
-      </p>
-    </div>
-
-    <div className="lg:sticky lg:top-5">
-      <QuickActions onChanged={d.refresh} />
-    </div>
+      </section>
     </div>
   )
 }
