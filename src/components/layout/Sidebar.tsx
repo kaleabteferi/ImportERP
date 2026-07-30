@@ -13,7 +13,7 @@ const links = NAV_LINKS
 // subtly bolder treatment in the nav — a small accent dot plus bolder label
 // even when not the active page — so they read as the main pages at a
 // glance rather than blending into the rest of the list.
-const MAIN_PAGE_ROUTES = new Set(['/money-tracking', '/sales', '/inventory', '/proforma-invoices', '/production'])
+const MAIN_PAGE_ROUTES = new Set(['/money-tracking', '/sales', '/inventory', '/proforma-invoices', '/warehouse-operations'])
 
 export function Sidebar() {
   const { profile, signOut } = useAuth()

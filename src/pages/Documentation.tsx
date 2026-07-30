@@ -38,7 +38,7 @@ const QUICK_START: { step: number; title: string; detail: React.ReactNode }[] = 
   {
     step: 3,
     title: 'If you assemble products, set up a BOM',
-    detail: <>On <Link to="/boms" className="text-blue-600 hover:underline">BOMs</Link>, define what components (and how many of each) go into one unit of a finished product. This unlocks <Link to="/production" className="text-blue-600 hover:underline">Production</Link> logging (Assembly is one of its stages). Skip this if you only resell imported goods as-is.</>,
+    detail: <>On <Link to="/boms" className="text-blue-600 hover:underline">BOMs</Link>, define what components (and how many of each) go into one unit of a finished product. This unlocks <Link to="/warehouse-operations" className="text-blue-600 hover:underline">Production</Link> logging (Assembly is one of its stages). Skip this if you only resell imported goods as-is.</>,
   },
   {
     step: 4,

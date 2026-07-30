@@ -6,7 +6,7 @@
 // Inventory, Finance pages, HR pages, Settings, ...) while in mobile mode.
 import {
   LayoutDashboard, Ship, Building2,
-  Wrench, Package, Calculator, BarChart3,
+  Package, Calculator, BarChart3, Factory,
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, ListTree, Truck, Anchor,
   ShoppingCart, Sigma, FileSearch, ArrowRightLeft, FileText,
   UserCog, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion,
@@ -36,7 +36,7 @@ export const NAV_LINKS: NavGroup[] = [
     { to: '/products',   icon: Tag,        label: 'Products',   allow: ['operations_marketing', 'manufacturing_sales'] },
   ]},
   { section: 'Operations', items: [
-    { to: '/production',  icon: Wrench,      label: 'Production', allow: ['manufacturing_sales'] },
+    { to: '/warehouse-operations', icon: Factory, label: 'Production', allow: ['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance'] },
     { to: '/boms',        icon: ListTree,    label: 'BOMs',       allow: ['manufacturing_sales'] },
     { to: '/inventory',   icon: Package,     label: 'Inventory',  allow: ['manufacturing_sales', 'operations_marketing'] },
     { to: '/warehouse-transfers', icon: Truck, label: 'Warehouse Transfers', allow: ['manufacturing_sales', 'operations_marketing'] },

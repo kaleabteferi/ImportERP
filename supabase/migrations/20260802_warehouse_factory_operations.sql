@@ -49,7 +49,11 @@ create table if not exists warehouse_user_assignments (
   is_active boolean not null default true,
   assigned_by uuid references profiles(id),
   created_at timestamptz not null default now(),
-  check (effective_to is null or effective_to >= effective_from)
+  check (effective_to is null or effective_to >= effective_from),
+  check (
+    (access_role = 'regional_manager' and operational_unit_id is null)
+    or (access_role <> 'regional_manager' and operational_unit_id is not null)
+  )
 );
 create unique index if not exists uq_warehouse_user_assignment
   on warehouse_user_assignments(profile_id, coalesce(operational_unit_id, '00000000-0000-0000-0000-000000000000'::uuid), access_role)
@@ -121,6 +125,21 @@ as $$
   select
     current_role_name() in ('full_access','hr_system')
     or has_warehouse_assignment(p_unit_id, array['warehouse_manager','payroll_officer']);
+$$;
+
+create or replace function user_can_view_unit_payroll(p_unit_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    current_role_name() in ('full_access','hr_system','accounting_finance')
+    or has_warehouse_assignment(
+      p_unit_id,
+      array['regional_manager','warehouse_manager','payroll_officer']
+    );
 $$;
 
 -- Reusable employee groups. Employees remain individual master records.
@@ -197,6 +216,8 @@ create table if not exists operational_task_types (
   check (standard_units_per_hour is null or standard_units_per_hour > 0),
   check (standard_minutes_per_unit is null or standard_minutes_per_unit > 0)
 );
+create unique index if not exists uq_global_operational_task_code
+  on operational_task_types(code) where operational_unit_id is null;
 
 create table if not exists production_batches (
   id uuid primary key default gen_random_uuid(),
@@ -369,6 +390,7 @@ create table if not exists payroll_scopes (
   salary_expense_account_code text not null default 'SALARY-EXPENSE',
   overtime_expense_account_code text not null default 'OVERTIME-EXPENSE',
   incentive_expense_account_code text not null default 'INCENTIVE-EXPENSE',
+  pension_expense_account_code text not null default 'PENSION-EXPENSE',
   tax_payable_account_code text not null default 'TAX-PAYABLE',
   pension_payable_account_code text not null default 'PENSION-PAYABLE',
   active boolean not null default true,
@@ -420,6 +442,9 @@ create table if not exists warehouse_payroll_runs (
   check (period_end >= period_start)
 );
 create index if not exists idx_warehouse_payroll_unit_period on warehouse_payroll_runs(operational_unit_id, period_end desc);
+create unique index if not exists uq_active_warehouse_payroll_period
+  on warehouse_payroll_runs(operational_unit_id, period_start, period_end)
+  where status <> 'rejected';
 
 create table if not exists warehouse_payroll_run_employees (
   id uuid primary key default gen_random_uuid(),
@@ -524,13 +549,19 @@ where not exists (
 );
 
 insert into operational_task_types(operational_unit_id, name, code, standard_units_per_hour, incentive_eligible)
-values
-  (null, 'Picking', 'PICKING', 100, true),
-  (null, 'Packing', 'PACKING', 100, true),
-  (null, 'Loading', 'LOADING', 75, false),
-  (null, 'Sorting', 'SORTING', 90, true),
-  (null, 'Assembly', 'ASSEMBLY', 50, true)
-on conflict(operational_unit_id, code) do nothing;
+select seed.operational_unit_id, seed.name, seed.code, seed.standard_units_per_hour, seed.incentive_eligible
+from (
+  values
+    (null::uuid, 'Picking', 'PICKING', 100::numeric, true),
+    (null::uuid, 'Packing', 'PACKING', 100::numeric, true),
+    (null::uuid, 'Loading', 'LOADING', 75::numeric, false),
+    (null::uuid, 'Sorting', 'SORTING', 90::numeric, true),
+    (null::uuid, 'Assembly', 'ASSEMBLY', 50::numeric, true)
+) as seed(operational_unit_id, name, code, standard_units_per_hour, incentive_eligible)
+where not exists (
+  select 1 from operational_task_types t
+  where t.operational_unit_id is null and t.code = seed.code
+);
 
 insert into overtime_types(name, code, multiplier, calculation_basis)
 values
@@ -540,13 +571,15 @@ values
   ('Public holiday overtime', 'PUBLIC_HOLIDAY', 2.50, 'hourly_salary')
 on conflict(code) do nothing;
 
--- Automatically scope login profiles linked to a warehouse employee.
+-- Automatically scope only the designated production manager. Other
+-- operational access is intentionally assigned by HR/System Control.
 insert into warehouse_user_assignments(profile_id, operational_unit_id, access_role, assigned_by)
-select p.id, ou.id, 'warehouse_manager', p.id
+select p.id, ou.id, 'warehouse_manager', null
 from profiles p
 join employees e on e.id = p.employee_id
 join operational_units ou on ou.warehouse_id = e.warehouse_id
-where current_role_name() is not null
+join warehouses w on w.id = ou.warehouse_id
+where w.production_manager_employee_id = e.id
   and not exists (
     select 1 from warehouse_user_assignments a
     where a.profile_id = p.id and a.operational_unit_id = ou.id and a.access_role = 'warehouse_manager' and a.is_active
@@ -708,7 +741,23 @@ begin
   set
     rolling_avg_7d = r.avg_eff,
     trend_flag = case when r.avg_eff > e.efficiency_pct + 2 then 'declining' when r.avg_eff + 2 < e.efficiency_pct then 'improving' else 'stable' end,
-    needs_attention = e.efficiency_pct < 80 or (r.avg_eff > e.efficiency_pct + 5)
+    needs_attention =
+      e.efficiency_pct < 80
+      or (r.avg_eff > e.efficiency_pct + 5)
+      or coalesce((
+        select
+          count(*) = 3
+          and count(*) filter (where recent.previous_efficiency is not null and recent.efficiency_pct < recent.previous_efficiency) = 2
+        from (
+          select
+            x.efficiency_pct,
+            lag(x.efficiency_pct) over(order by x.log_date) as previous_efficiency
+          from employee_daily_efficiency x
+          where x.employee_id = e.employee_id
+            and x.operational_unit_id = e.operational_unit_id
+            and x.log_date between v_batch.production_date - 2 and v_batch.production_date
+        ) recent
+      ), false)
   from (
     select employee_id, operational_unit_id, round(avg(efficiency_pct),2) avg_eff
     from employee_daily_efficiency
@@ -732,8 +781,11 @@ begin
     coalesce((select sum(w.regular_hours) from production_batch_workers w join production_batches b on b.id=w.production_batch_id where b.operational_unit_id=v_batch.operational_unit_id and b.production_date=v_batch.production_date and b.status='approved'),0),
     coalesce((select sum(w.overtime_hours) from production_batch_workers w join production_batches b on b.id=w.production_batch_id where b.operational_unit_id=v_batch.operational_unit_id and b.production_date=v_batch.production_date and b.status='approved'),0),
     coalesce((select sum(e.efficiency_pct*(e.regular_hours+e.overtime_hours))/nullif(sum(e.regular_hours+e.overtime_hours),0) from employee_daily_efficiency e where e.operational_unit_id=v_batch.operational_unit_id and e.log_date=v_batch.production_date),0),
-    coalesce((select sum(actual_units-rejected_units) from production_batches where operational_unit_id=v_batch.operational_unit_id and production_date=v_batch.production_date and status='approved'),0)
-      / nullif(coalesce((select sum(w.regular_hours+w.overtime_hours) from production_batch_workers w join production_batches b on b.id=w.production_batch_id where b.operational_unit_id=v_batch.operational_unit_id and b.production_date=v_batch.production_date and b.status='approved'),0),0),
+    coalesce(
+      coalesce((select sum(actual_units-rejected_units) from production_batches where operational_unit_id=v_batch.operational_unit_id and production_date=v_batch.production_date and status='approved'),0)
+        / nullif(coalesce((select sum(w.regular_hours+w.overtime_hours) from production_batch_workers w join production_batches b on b.id=w.production_batch_id where b.operational_unit_id=v_batch.operational_unit_id and b.production_date=v_batch.production_date and b.status='approved'),0),0),
+      0
+    ),
     coalesce((select sum(actual_units-rejected_units)/nullif(sum(target_units),0)*100 from production_batches where operational_unit_id=v_batch.operational_unit_id and production_date=v_batch.production_date and status='approved'),0),
     now()
   on conflict(operational_unit_id,log_date) do update set
@@ -747,6 +799,102 @@ begin
     from operational_unit_daily_rollups where log_date=v_batch.production_date
   )
   update operational_unit_daily_rollups u set rank_position=ranked.r from ranked where u.id=ranked.id;
+end;
+$$;
+
+-- Warehouse managers control the production lifecycle and can revise worker
+-- hours only until a batch is approved. Approval remains a separate role.
+create or replace function transition_production_batch(
+  p_batch_id uuid,
+  p_action text,
+  p_actual_units numeric default null,
+  p_rejected_units numeric default null,
+  p_notes text default null,
+  p_worker_updates jsonb default '[]'::jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_batch production_batches%rowtype;
+  v_worker jsonb;
+  v_actual numeric;
+  v_rejected numeric;
+begin
+  select * into v_batch from production_batches where id=p_batch_id for update;
+  if not found then raise exception 'Production batch not found'; end if;
+  if not user_can_manage_operational_unit(v_batch.operational_unit_id) then
+    raise exception 'Only the assigned warehouse manager can change this production batch';
+  end if;
+  if v_batch.status in ('approved','cancelled') then
+    raise exception 'Approved or cancelled production batches are locked';
+  end if;
+
+  if p_action='start' then
+    if v_batch.status<>'draft' then raise exception 'Only a draft batch can be started'; end if;
+    update production_batches
+    set status='active',started_at=coalesce(started_at,now()),updated_at=now()
+    where id=p_batch_id;
+  elsif p_action='submit' then
+    if v_batch.status not in ('draft','active','completed','submitted') then
+      raise exception 'This production batch cannot be submitted';
+    end if;
+    if not exists (
+      select 1 from production_batch_workers where production_batch_id=p_batch_id
+    ) then
+      raise exception 'Assign at least one worker before submitting production';
+    end if;
+
+    v_actual := coalesce(p_actual_units,v_batch.actual_units);
+    v_rejected := coalesce(p_rejected_units,v_batch.rejected_units);
+    if v_actual < 0 then raise exception 'Actual units cannot be negative'; end if;
+    if v_rejected < 0 or v_rejected > v_actual then
+      raise exception 'Rejected units must be between zero and actual units';
+    end if;
+
+    for v_worker in
+      select value from jsonb_array_elements(coalesce(p_worker_updates,'[]'::jsonb))
+    loop
+      if coalesce((v_worker->>'regular_hours')::numeric,0) < 0
+        or coalesce((v_worker->>'regular_hours')::numeric,0) > 24 then
+        raise exception 'Worker regular hours must be between zero and 24';
+      end if;
+      if coalesce((v_worker->>'overtime_hours')::numeric,0) < 0
+        or coalesce((v_worker->>'overtime_hours')::numeric,0) > 16 then
+        raise exception 'Worker overtime hours must be between zero and 16';
+      end if;
+      if coalesce(v_worker->>'attendance_status','') not in ('present','absent','partial','leave') then
+        raise exception 'Worker attendance status is invalid';
+      end if;
+
+      update production_batch_workers
+      set
+        regular_hours=coalesce((v_worker->>'regular_hours')::numeric,regular_hours),
+        overtime_hours=coalesce((v_worker->>'overtime_hours')::numeric,overtime_hours),
+        attendance_status=coalesce(v_worker->>'attendance_status',attendance_status)
+      where id=(v_worker->>'id')::uuid and production_batch_id=p_batch_id;
+      if not found then raise exception 'A worker update does not belong to this batch'; end if;
+    end loop;
+
+    update production_batches
+    set
+      actual_units=v_actual,
+      rejected_units=v_rejected,
+      notes=coalesce(p_notes,notes),
+      status='submitted',
+      started_at=coalesce(started_at,now()),
+      completed_at=coalesce(completed_at,now()),
+      updated_at=now()
+    where id=p_batch_id;
+  elsif p_action='cancel' then
+    update production_batches
+    set status='cancelled',notes=coalesce(p_notes,notes),updated_at=now()
+    where id=p_batch_id;
+  else
+    raise exception 'Unknown production batch action';
+  end if;
 end;
 $$;
 
@@ -767,6 +915,195 @@ begin
     approved_hours=case when p_approve then least(coalesce(p_hours,v.requested_hours),v.requested_hours) else 0 end,
     approved_by=auth.uid(),approved_at=now(),rejection_reason=case when p_approve then null else p_reason end
   where id=p_request_id;
+  update employee_attendance a
+  set
+    approved_overtime_hours=coalesce((
+      select sum(o.approved_hours)
+      from overtime_requests o
+      where o.employee_id=v.employee_id
+        and o.operational_unit_id=v.operational_unit_id
+        and o.overtime_date=v.overtime_date
+        and o.status='approved'
+    ),0),
+    updated_at=now()
+  where a.employee_id=v.employee_id
+    and a.operational_unit_id=v.operational_unit_id
+    and a.attendance_date=v.overtime_date;
+end;
+$$;
+
+-- Returns the blocking controls used by payroll preparation so payroll
+-- officers can resolve exceptions before attempting a calculation.
+create or replace function validate_warehouse_payroll(p_unit_id uuid, p_start date, p_end date)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_active_employees integer := 0;
+  v_missing_attendance integer := 0;
+  v_pending_ot integer := 0;
+  v_pending_batches integer := 0;
+  v_missing_salary integer := 0;
+  v_has_scope boolean := false;
+  v_has_existing_run boolean := false;
+  v_missing_attendance_items jsonb := '[]'::jsonb;
+  v_pending_ot_items jsonb := '[]'::jsonb;
+  v_pending_batch_items jsonb := '[]'::jsonb;
+  v_missing_salary_items jsonb := '[]'::jsonb;
+  v_scope_label text := 'No active payroll scope';
+  v_existing_run_label text := 'No duplicate payroll run';
+begin
+  if not user_can_view_unit_payroll(p_unit_id) then
+    raise exception 'Not allowed to inspect this warehouse payroll';
+  end if;
+  if p_end < p_start then
+    raise exception 'Payroll end date must be after start date';
+  end if;
+
+  select exists(
+    select 1 from payroll_scopes
+    where operational_unit_id=p_unit_id and active
+  ), coalesce((
+    select name from payroll_scopes
+    where operational_unit_id=p_unit_id and active
+    limit 1
+  ), 'No active payroll scope')
+  into v_has_scope, v_scope_label;
+
+  select exists(
+    select 1 from warehouse_payroll_runs
+    where operational_unit_id=p_unit_id
+      and period_start=p_start and period_end=p_end and status<>'rejected'
+  ), coalesce((
+    select run_number||' · '||replace(status,'_',' ')
+    from warehouse_payroll_runs
+    where operational_unit_id=p_unit_id
+      and period_start=p_start and period_end=p_end and status<>'rejected'
+    order by created_at desc limit 1
+  ), 'No duplicate payroll run')
+  into v_has_existing_run, v_existing_run_label;
+
+  with staff as (
+    select distinct e.id,e.full_name,e.employment_type,e.base_salary_etb,e.daily_rate_etb
+    from employees e
+    join operational_units ou on ou.id=p_unit_id
+    where e.is_active and (
+      e.warehouse_id=ou.warehouse_id or exists (
+        select 1
+        from workforce_group_members gm
+        join workforce_groups g on g.id=gm.workforce_group_id
+        where gm.employee_id=e.id and gm.is_active and g.is_active
+          and g.operational_unit_id=p_unit_id
+      )
+    )
+  ), missing as (
+    select s.id,s.full_name
+    from staff s
+    where not exists (
+      select 1 from employee_attendance a
+      where a.employee_id=s.id and a.operational_unit_id=p_unit_id
+        and a.attendance_date between p_start and p_end
+    )
+  )
+  select
+    (select count(*) from staff),
+    count(*),
+    coalesce(jsonb_agg(
+      jsonb_build_object(
+        'id',id,
+        'label',full_name,
+        'detail','No attendance in the selected period'
+      ) order by full_name
+    ), '[]'::jsonb)
+  into v_active_employees,v_missing_attendance,v_missing_attendance_items
+  from missing;
+
+  select count(*),coalesce(jsonb_agg(
+    jsonb_build_object(
+      'id',o.id,
+      'label',e.full_name,
+      'detail',trim(to_char(o.requested_hours,'FM999990.##'))||' h · '||replace(o.status,'_',' ')
+    ) order by o.overtime_date,e.full_name
+  ), '[]'::jsonb)
+  into v_pending_ot,v_pending_ot_items
+  from overtime_requests o
+  join employees e on e.id=o.employee_id
+  where o.operational_unit_id=p_unit_id
+    and o.overtime_date between p_start and p_end
+    and o.status in ('draft','submitted');
+
+  select count(*),coalesce(jsonb_agg(
+    jsonb_build_object(
+      'id',b.id,
+      'label',b.batch_number,
+      'detail',to_char(b.production_date,'Mon DD')||' · '||replace(b.status,'_',' ')
+    ) order by b.production_date,b.batch_number
+  ), '[]'::jsonb)
+  into v_pending_batches,v_pending_batch_items
+  from production_batches b
+  where b.operational_unit_id=p_unit_id
+    and b.production_date between p_start and p_end
+    and b.status not in ('approved','cancelled');
+
+  with staff as (
+    select distinct e.id,e.full_name,e.employment_type,e.base_salary_etb,e.daily_rate_etb
+    from employees e
+    join operational_units ou on ou.id=p_unit_id
+    where e.is_active and (
+      e.warehouse_id=ou.warehouse_id or exists (
+        select 1
+        from workforce_group_members gm
+        join workforce_groups g on g.id=gm.workforce_group_id
+        where gm.employee_id=e.id and gm.is_active and g.is_active
+          and g.operational_unit_id=p_unit_id
+      )
+    )
+  ), missing as (
+    select id,full_name,employment_type
+    from staff
+    where (employment_type='permanent' and coalesce(base_salary_etb,0)<=0)
+       or (employment_type<>'permanent' and coalesce(daily_rate_etb,0)<=0)
+  )
+  select count(*),coalesce(jsonb_agg(
+    jsonb_build_object(
+      'id',id,
+      'label',full_name,
+      'detail',replace(employment_type,'_',' ')||' pay structure missing'
+    ) order by full_name
+  ), '[]'::jsonb)
+  into v_missing_salary,v_missing_salary_items
+  from missing;
+
+  return jsonb_build_object(
+    'ready',
+      v_has_scope and not v_has_existing_run
+      and v_missing_attendance+v_pending_ot+v_pending_batches+v_missing_salary=0,
+    'blocking_count',
+      v_missing_attendance+v_pending_ot+v_pending_batches+v_missing_salary
+      + case when v_has_scope then 0 else 1 end
+      + case when v_has_existing_run then 1 else 0 end,
+    'active_employees',v_active_employees,
+    'missing_attendance',jsonb_build_object(
+      'count',v_missing_attendance,'items',v_missing_attendance_items
+    ),
+    'pending_overtime',jsonb_build_object(
+      'count',v_pending_ot,'items',v_pending_ot_items
+    ),
+    'unapproved_batches',jsonb_build_object(
+      'count',v_pending_batches,'items',v_pending_batch_items
+    ),
+    'missing_salary',jsonb_build_object(
+      'count',v_missing_salary,'items',v_missing_salary_items
+    ),
+    'payroll_scope',jsonb_build_object(
+      'configured',v_has_scope,'label',v_scope_label
+    ),
+    'existing_run',jsonb_build_object(
+      'exists',v_has_existing_run,'label',v_existing_run_label
+    )
+  );
 end;
 $$;
 
@@ -788,6 +1125,12 @@ declare
 begin
   if not user_can_process_unit_payroll(p_unit_id) then raise exception 'Not allowed to prepare this payroll'; end if;
   if p_end < p_start then raise exception 'Payroll end date must be after start date'; end if;
+  if exists (
+    select 1 from warehouse_payroll_runs
+    where operational_unit_id=p_unit_id and period_start=p_start and period_end=p_end and status<>'rejected'
+  ) then
+    raise exception 'An active payroll run already exists for this warehouse and period';
+  end if;
   select * into v_scope from payroll_scopes where operational_unit_id=p_unit_id and active;
   if not found then raise exception 'No active payroll scope is configured for this unit'; end if;
 
@@ -829,7 +1172,8 @@ begin
     payroll_scope_id,operational_unit_id,payroll_period_id,run_number,period_start,period_end,status,calculated_by
   ) values (
     v_scope.id,p_unit_id,p_payroll_period_id,
-    'WPR-'||to_char(now(),'YYYYMMDDHH24MISSMS'),p_start,p_end,'calculated',auth.uid()
+    'WPR-'||to_char(now(),'YYYYMMDDHH24MISSMS')||'-'||upper(substr(gen_random_uuid()::text,1,4)),
+    p_start,p_end,'calculated',auth.uid()
   ) returning id into v_run_id;
 
   insert into warehouse_payroll_run_employees(
@@ -850,7 +1194,7 @@ begin
   ), ot as (
     select o.employee_id,sum(o.approved_hours) hours,
       sum(o.approved_hours * t.multiplier * case when e.employment_type='permanent'
-        then warehouse_gross_from_net(coalesce(e.base_salary_etb,0),e.pension_eligible)/240
+        then coalesce(e.base_salary_etb,0)/240
         else coalesce(e.daily_rate_etb,0)/8 end) pay
     from overtime_requests o join overtime_types t on t.id=o.overtime_type_id join employees e on e.id=o.employee_id
     where o.operational_unit_id=p_unit_id and o.overtime_date between p_start and p_end and o.status='approved'
@@ -939,12 +1283,25 @@ begin
       (v_batch_id,v_scope.salary_expense_account_code,'Warehouse salary expense',v_run.gross_amount-v_run.overtime_amount-v_run.incentive_amount,0,v_run.run_number),
       (v_batch_id,v_scope.overtime_expense_account_code,'Warehouse overtime expense',v_run.overtime_amount,0,v_run.run_number),
       (v_batch_id,v_scope.incentive_expense_account_code,'Production incentive expense',v_run.incentive_amount,0,v_run.run_number),
-      (v_batch_id,v_scope.pension_payable_account_code,'Employer pension expense',v_run.employer_pension_amount,0,v_run.run_number),
+      (v_batch_id,v_scope.pension_expense_account_code,'Employer pension expense',v_run.employer_pension_amount,0,v_run.run_number),
       (v_batch_id,v_scope.payroll_payable_account_code,'Employee payroll payable',0,v_run.net_amount,v_run.run_number),
       (v_batch_id,v_scope.tax_payable_account_code,'Tax payable',0,v_run.tax_amount,v_run.run_number),
       (v_batch_id,v_scope.pension_payable_account_code,'Pension payable',0,v_run.pension_amount+v_run.employer_pension_amount,v_run.run_number),
       (v_batch_id,'OTHER-DEDUCTIONS-PAYABLE','Other deductions payable',0,v_run.deduction_amount,v_run.run_number);
+    update overtime_requests
+    set status='posted'
+    where operational_unit_id=v_run.operational_unit_id
+      and overtime_date between v_run.period_start and v_run.period_end
+      and status='approved';
     update warehouse_payroll_runs set status='posted',posted_at=now(),updated_at=now() where id=p_run_id;
+  elsif p_action='reject' then
+    if not (
+      (v_run.status='submitted' and current_role_name()='hr_system')
+      or (v_run.status='hr_approved' and current_role_name()='accounting_finance')
+    ) then raise exception 'Payroll cannot be rejected by this role at the current stage'; end if;
+    update warehouse_payroll_runs
+    set status='rejected',notes=concat_ws(E'\n',notes,'Rejected during approval workflow'),updated_at=now()
+    where id=p_run_id;
   else raise exception 'Unknown payroll action';
   end if;
 end;
@@ -966,7 +1323,7 @@ begin
   select p_unit_id,p_date,'unapproved_batch','high','Production batches unapproved',count(*)||' production batch(es) block payroll'
   from production_batches where operational_unit_id=p_unit_id and production_date<=p_date and status in ('draft','active','completed','submitted') having count(*)>0;
   insert into operational_alerts(operational_unit_id,alert_date,alert_type,severity,title,message)
-  select p_unit_id,p_date,'efficiency_decline','high','Employee efficiency declined',count(*)||' employee(s) need efficiency review'
+  select p_unit_id,p_date,'efficiency_decline','high','Employee efficiency needs review',count(*)||' employee(s) are below target or show a consecutive decline'
   from employee_daily_efficiency where operational_unit_id=p_unit_id and log_date=p_date and needs_attention having count(*)>0;
   insert into operational_alerts(operational_unit_id,alert_date,alert_type,severity,title,message)
   select p_unit_id,p_date,'missing_attendance','medium','Attendance missing',count(*)||' assigned employee(s) have no attendance record'
@@ -974,6 +1331,34 @@ begin
   where d.operational_unit_id=p_unit_id and not exists (
     select 1 from employee_attendance a where a.employee_id=d.id and a.operational_unit_id=p_unit_id and a.attendance_date=p_date
   ) having count(*)>0;
+  insert into operational_alerts(operational_unit_id,alert_date,alert_type,severity,title,message)
+  select
+    p_unit_id,p_date,'high_rejection','high','High production rejection rate',
+    round(sum(rejected_units)/nullif(sum(actual_units),0)*100,1)||'% of today''s recorded units were rejected'
+  from production_batches
+  where operational_unit_id=p_unit_id and production_date=p_date and status='approved'
+  having sum(actual_units)>0 and sum(rejected_units)/sum(actual_units)>.05;
+  insert into operational_alerts(operational_unit_id,alert_date,alert_type,severity,title,message)
+  select
+    p_unit_id,p_date,'payroll_blocker','critical','Salary structure is incomplete',
+    count(*)||' active employee(s) are missing the salary data required for payroll'
+  from employees e
+  join operational_units ou on ou.id=p_unit_id
+  where e.is_active
+    and (
+      e.warehouse_id=ou.warehouse_id
+      or exists (
+        select 1
+        from workforce_group_members gm
+        join workforce_groups g on g.id=gm.workforce_group_id
+        where gm.employee_id=e.id and gm.is_active and g.is_active and g.operational_unit_id=p_unit_id
+      )
+    )
+    and (
+      (e.employment_type='permanent' and coalesce(e.base_salary_etb,0)<=0)
+      or (e.employment_type<>'permanent' and coalesce(e.daily_rate_etb,0)<=0)
+    )
+  having count(*)>0;
 end;
 $$;
 
@@ -1039,7 +1424,9 @@ create policy "view_shifts" on operational_shifts for select using (user_can_vie
 create policy "manage_shifts" on operational_shifts for all using (user_can_manage_operational_unit(operational_unit_id)) with check (user_can_manage_operational_unit(operational_unit_id));
 create policy "view_shift_assignments" on employee_shift_assignments for select using (user_can_view_operational_unit(operational_unit_id));
 create policy "manage_shift_assignments" on employee_shift_assignments for all using (user_can_manage_operational_unit(operational_unit_id)) with check (user_can_manage_operational_unit(operational_unit_id));
-create policy "view_task_types" on operational_task_types for select using (operational_unit_id is null or user_can_view_operational_unit(operational_unit_id));
+create policy "view_task_types" on operational_task_types for select using (
+  has_active_role() and (operational_unit_id is null or user_can_view_operational_unit(operational_unit_id))
+);
 create policy "manage_task_types" on operational_task_types for all using (
   (operational_unit_id is not null and user_can_manage_operational_unit(operational_unit_id)) or current_role_name()='hr_system'
 ) with check (
@@ -1047,10 +1434,18 @@ create policy "manage_task_types" on operational_task_types for all using (
 );
 
 create policy "view_production_batches" on production_batches for select using (user_can_view_operational_unit(operational_unit_id));
-create policy "manage_production_batches" on production_batches for all using (
-  user_can_manage_operational_unit(operational_unit_id) or user_can_approve_operational_unit(operational_unit_id)
+create policy "create_production_batches" on production_batches for insert with check (
+  user_can_manage_operational_unit(operational_unit_id)
+  and status <> 'approved'
+  and entered_by = auth.uid()
+);
+create policy "update_unapproved_production_batches" on production_batches for update using (
+  user_can_manage_operational_unit(operational_unit_id) and status <> 'approved'
 ) with check (
-  user_can_manage_operational_unit(operational_unit_id) or user_can_approve_operational_unit(operational_unit_id)
+  user_can_manage_operational_unit(operational_unit_id) and status <> 'approved'
+);
+create policy "delete_unapproved_production_batches" on production_batches for delete using (
+  user_can_manage_operational_unit(operational_unit_id) and status <> 'approved'
 );
 create policy "view_batch_workers" on production_batch_workers for select using (
   exists(select 1 from production_batches b where b.id=production_batch_id and user_can_view_operational_unit(b.operational_unit_id))
@@ -1065,10 +1460,18 @@ create policy "manage_attendance" on employee_attendance for all using (user_can
 create policy "view_overtime_types" on overtime_types for select using (has_active_role());
 create policy "manage_overtime_types" on overtime_types for all using (current_role_name()='hr_system') with check (current_role_name()='hr_system');
 create policy "view_overtime_requests" on overtime_requests for select using (user_can_view_operational_unit(operational_unit_id));
-create policy "manage_overtime_requests" on overtime_requests for all using (
-  user_can_manage_operational_unit(operational_unit_id) or user_can_approve_operational_unit(operational_unit_id) or current_role_name()='hr_system'
+create policy "create_overtime_requests" on overtime_requests for insert with check (
+  user_can_manage_operational_unit(operational_unit_id)
+  and status in ('draft','submitted')
+  and requested_by = auth.uid()
+);
+create policy "update_pending_overtime_requests" on overtime_requests for update using (
+  user_can_manage_operational_unit(operational_unit_id) and status in ('draft','submitted')
 ) with check (
-  user_can_manage_operational_unit(operational_unit_id) or user_can_approve_operational_unit(operational_unit_id) or current_role_name()='hr_system'
+  user_can_manage_operational_unit(operational_unit_id) and status in ('draft','submitted')
+);
+create policy "delete_pending_overtime_requests" on overtime_requests for delete using (
+  user_can_manage_operational_unit(operational_unit_id) and status in ('draft','submitted')
 );
 create policy "view_employee_efficiency" on employee_daily_efficiency for select using (user_can_view_operational_unit(operational_unit_id));
 create policy "view_unit_rollups" on operational_unit_daily_rollups for select using (user_can_view_operational_unit(operational_unit_id));
@@ -1079,25 +1482,57 @@ create policy "manage_operational_alerts" on operational_alerts for all using (
   user_can_manage_operational_unit(operational_unit_id) or user_can_approve_operational_unit(operational_unit_id)
 );
 
-create policy "view_payroll_scopes" on payroll_scopes for select using (operational_unit_id is null or user_can_view_operational_unit(operational_unit_id));
+create policy "view_payroll_scopes" on payroll_scopes for select using (
+  has_active_role() and case
+    when operational_unit_id is null then current_role_name() in ('full_access','hr_system','accounting_finance')
+    else user_can_view_unit_payroll(operational_unit_id)
+  end
+);
 create policy "manage_payroll_scopes" on payroll_scopes for all using (current_role_name()='hr_system') with check (current_role_name()='hr_system');
 create policy "view_employee_payroll_assignments" on employee_payroll_assignments for select using (
-  exists(select 1 from payroll_scopes p where p.id=payroll_scope_id and user_can_view_operational_unit(p.operational_unit_id))
+  exists(
+    select 1 from payroll_scopes p
+    where p.id=payroll_scope_id
+      and p.operational_unit_id is not null
+      and user_can_view_unit_payroll(p.operational_unit_id)
+  )
 );
 create policy "manage_employee_payroll_assignments" on employee_payroll_assignments for all using (current_role_name()='hr_system') with check (current_role_name()='hr_system');
-create policy "view_warehouse_payroll_runs" on warehouse_payroll_runs for select using (user_can_view_operational_unit(operational_unit_id));
+create policy "view_warehouse_payroll_runs" on warehouse_payroll_runs for select using (user_can_view_unit_payroll(operational_unit_id));
 create policy "view_warehouse_payroll_items" on warehouse_payroll_run_employees for select using (
-  exists(select 1 from warehouse_payroll_runs r where r.id=payroll_run_id and user_can_view_operational_unit(r.operational_unit_id))
+  exists(select 1 from warehouse_payroll_runs r where r.id=payroll_run_id and user_can_view_unit_payroll(r.operational_unit_id))
 );
 create policy "view_accounting_batches" on payroll_accounting_batches for select using (
-  exists(select 1 from warehouse_payroll_runs r where r.id=payroll_run_id and user_can_view_operational_unit(r.operational_unit_id))
+  exists(select 1 from warehouse_payroll_runs r where r.id=payroll_run_id and user_can_view_unit_payroll(r.operational_unit_id))
 );
 create policy "view_accounting_lines" on payroll_accounting_lines for select using (
-  exists(select 1 from payroll_accounting_batches b join warehouse_payroll_runs r on r.id=b.payroll_run_id where b.id=accounting_batch_id and user_can_view_operational_unit(r.operational_unit_id))
+  exists(select 1 from payroll_accounting_batches b join warehouse_payroll_runs r on r.id=b.payroll_run_id where b.id=accounting_batch_id and user_can_view_unit_payroll(r.operational_unit_id))
 );
 
+revoke all on function has_warehouse_assignment(uuid,text[]) from public;
+revoke all on function user_can_view_operational_unit(uuid) from public;
+revoke all on function user_can_manage_operational_unit(uuid) from public;
+revoke all on function user_can_approve_operational_unit(uuid) from public;
+revoke all on function user_can_process_unit_payroll(uuid) from public;
+revoke all on function user_can_view_unit_payroll(uuid) from public;
+revoke all on function approve_production_batch(uuid) from public;
+revoke all on function transition_production_batch(uuid,text,numeric,numeric,text,jsonb) from public;
+revoke all on function decide_overtime_request(uuid,boolean,numeric,text) from public;
+revoke all on function validate_warehouse_payroll(uuid,date,date) from public;
+revoke all on function prepare_warehouse_payroll(uuid,date,date,uuid) from public;
+revoke all on function transition_warehouse_payroll(uuid,text) from public;
+revoke all on function refresh_operational_alerts(uuid,date) from public;
+
+grant execute on function has_warehouse_assignment(uuid,text[]) to authenticated;
+grant execute on function user_can_view_operational_unit(uuid) to authenticated;
+grant execute on function user_can_manage_operational_unit(uuid) to authenticated;
+grant execute on function user_can_approve_operational_unit(uuid) to authenticated;
+grant execute on function user_can_process_unit_payroll(uuid) to authenticated;
+grant execute on function user_can_view_unit_payroll(uuid) to authenticated;
 grant execute on function approve_production_batch(uuid) to authenticated;
+grant execute on function transition_production_batch(uuid,text,numeric,numeric,text,jsonb) to authenticated;
 grant execute on function decide_overtime_request(uuid,boolean,numeric,text) to authenticated;
+grant execute on function validate_warehouse_payroll(uuid,date,date) to authenticated;
 grant execute on function prepare_warehouse_payroll(uuid,date,date,uuid) to authenticated;
 grant execute on function transition_warehouse_payroll(uuid,text) to authenticated;
 grant execute on function refresh_operational_alerts(uuid,date) to authenticated;

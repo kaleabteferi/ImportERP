@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { lazy, Suspense, type ReactNode } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './lib/auth'
 import { ThemeProvider } from './lib/theme'
 import { ViewModeProvider, useViewMode } from './lib/viewMode'
@@ -21,7 +21,6 @@ import { ProformaInvoiceDetail } from './pages/ProformaInvoiceDetail'
 import { Rfqs }           from './pages/Rfqs'
 import { Suppliers }      from './pages/Suppliers'
 import { Products }       from './pages/Products'
-import { Production }     from './pages/Production'
 import { Inventory }      from './pages/Inventory'
 import { Reports }        from './pages/Reports'
 import { CostFinalization } from './pages/CostFinalization'
@@ -49,6 +48,7 @@ import { Calculator }         from './pages/Calculator'
 import { Documentation }      from './pages/Documentation'
 import { NotFound }           from './pages/NotFound'
 
+const WarehouseOperations = lazy(() => import('./pages/WarehouseOperations'))
 
 function PinGate({ children }: { children: ReactNode }) {
   const { status } = usePinLock()
@@ -119,7 +119,7 @@ export default function App() {
               } />
 
               <Route path="production" element={
-                <RequireRole allow={['manufacturing_sales']}><ModeRoute desktop={<Production />} mobile={<MobileProduction />} /></RequireRole>
+                <RequireRole allow={['manufacturing_sales']}><ModeRoute desktop={<Navigate to="/warehouse-operations" replace />} mobile={<MobileProduction />} /></RequireRole>
               } />
               <Route path="boms" element={
                 <RequireRole allow={['manufacturing_sales']}><Boms /></RequireRole>
@@ -129,6 +129,13 @@ export default function App() {
               } />
               <Route path="warehouse-transfers" element={
                 <RequireRole allow={['manufacturing_sales', 'operations_marketing']}><WarehouseTransfers /></RequireRole>
+              } />
+              <Route path="warehouse-operations" element={
+                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']}>
+                  <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading Warehouse Operations…</div>}>
+                    <WarehouseOperations />
+                  </Suspense>
+                </RequireRole>
               } />
               <Route path="djibouti" element={
                 <RequireRole allow={['operations_marketing', 'accounting_finance']}><DjiboutiForwarder /></RequireRole>

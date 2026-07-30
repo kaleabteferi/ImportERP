@@ -4,6 +4,8 @@ import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2 } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
+import { Modal } from '../components/ui/Modal'
+import { SelectMenu } from '../components/ui/SelectMenu'
 import {
   getProformaInvoice, listPiItems, addPiItem, updatePiItem, deletePiItem, fetchLastPiItemForProduct,
 } from '../api/proformaInvoices'
@@ -414,7 +416,7 @@ export function ProformaInvoiceDetail() {
     return <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
   }
   if (!pi) {
-    return <div className="p-5 text-sm text-gray-500">Proforma invoice not found. <Link to="/proforma-invoices" className="text-blue-600 underline">Back to list</Link></div>
+    return <div className="p-5 text-sm text-gray-500">Proforma invoice not found. <Link to="/proforma-invoices" className="text-accent-foreground underline">Back to list</Link></div>
   }
 
   const routed = pi.buyer_company && pi.final_company && pi.buyer_company.name !== pi.final_company.name
@@ -428,7 +430,8 @@ export function ProformaInvoiceDetail() {
       <PageHeader
         title={pi.pi_number}
         subtitle={<>
-          {pi.suppliers?.name ?? '—'} · {pi.incoterm} · {pi.port_of_loading ?? '—'} → {pi.port_of_discharge ?? '—'}
+          {pi.suppliers?.name ?? '—'} · {pi.incoterm}
+          {(pi.port_of_loading || pi.port_of_discharge) && <> · {pi.port_of_loading ?? 'origin TBD'} → {pi.port_of_discharge ?? 'destination TBD'}</>}
           {routed
             ? <> · routed via {pi.buyer_company?.name} → {pi.final_company?.name}{pi.markup_pct ? ` (+${pi.markup_pct}%)` : ''}</>
             : <> · {pi.final_company?.name ?? 'no company set'}</>}
@@ -617,19 +620,26 @@ export function ProformaInvoiceDetail() {
       )}
 
       {/* Add/edit item modal */}
-      {itemOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setItemOpen(false)}>
-          <div className="bg-white rounded-card w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">{editingItemId ? 'Edit line item' : 'Add line item'}</h2>
-              <button onClick={() => setItemOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4 space-y-4">
+      <Modal
+        open={itemOpen}
+        onClose={() => setItemOpen(false)}
+        title={editingItemId ? 'Edit line item' : 'Add line item'}
+        maxWidth="max-w-lg"
+        footer={<>
+          <button onClick={() => setItemOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={saveItem} disabled={savingItem}
+            className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
+            {savingItem ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingItemId ? 'Save changes' : 'Add item'}</>}
+          </button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Product (optional until packing)</label>
-                <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                  value={itemForm.product_id} onChange={e => {
-                    const productId = e.target.value
+                <SelectMenu
+                  ariaLabel="Product"
+                  searchable
+                  value={itemForm.product_id}
+                  onChange={productId => {
                     const product = products.find(p => p.id === productId)
                     setItemForm(p => ({
                       ...p,
@@ -654,130 +664,118 @@ export function ProformaInvoiceDetail() {
                         country_of_origin: (!p.country_of_origin || p.country_of_origin === EMPTY_ITEM.country_of_origin) ? last.country_of_origin : p.country_of_origin,
                       }))
                     }).catch(() => {})
-                  }}>
-                  <option value="">— not linked yet —</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}
-                </select>
+                  }}
+                  options={products.map(p => ({ value: p.id, label: p.name, description: p.sku }))}
+                  placeholder="— not linked yet —"
+                />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Description <span className="text-red-400">*</span></label>
-                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                   value={itemForm.item_description} onChange={e => setItemForm(p => ({ ...p, item_description: e.target.value }))} placeholder="e.g. Plastic chair, stackable" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">HS code <span className="text-red-400">*</span></label>
-                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.hs_code} onChange={e => setItemForm(p => ({ ...p, hs_code: e.target.value }))} placeholder="9401.61" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Country of origin</label>
-                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.country_of_origin} onChange={e => setItemForm(p => ({ ...p, country_of_origin: e.target.value }))} />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Quantity <span className="text-red-400">*</span></label>
-                  <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.quantity} onChange={e => setItemForm(p => ({ ...p, quantity: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Unit</label>
-                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.unit_of_measure} onChange={e => setItemForm(p => ({ ...p, unit_of_measure: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Unit price (USD) <span className="text-red-400">*</span></label>
-                  <input type="number" step="0.01" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" step="0.01" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.unit_price} onChange={e => setItemForm(p => ({ ...p, unit_price: e.target.value }))} />
                 </div>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Customs (CD) value — editable, overrides invoice price for duty calc</label>
-                <input type="number" step="0.01" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                <input type="number" step="0.01" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                   value={itemForm.customs_value} onChange={e => setItemForm(p => ({ ...p, customs_value: e.target.value }))} placeholder="Leave blank to use unit price × qty" />
               </div>
               <div className="grid grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Duty %</label>
-                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.duty_rate_pct} onChange={e => setItemForm(p => ({ ...p, duty_rate_pct: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">VAT %</label>
-                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.vat_rate_pct} onChange={e => setItemForm(p => ({ ...p, vat_rate_pct: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Surtax %</label>
-                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.surtax_rate_pct} onChange={e => setItemForm(p => ({ ...p, surtax_rate_pct: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Excise %</label>
-                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="number" step="0.1" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={itemForm.excise_rate_pct} onChange={e => setItemForm(p => ({ ...p, excise_rate_pct: e.target.value }))} />
                 </div>
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setItemOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={saveItem} disabled={savingItem}
-                className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
-                {savingItem ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingItemId ? 'Save changes' : 'Add item'}</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* New container modal */}
-      {containerOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && setContainerOpen(false)}>
-          <div className="bg-white rounded-card w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-medium">{editingContainerId ? 'Edit container' : 'New container'}</h2>
-              <button onClick={() => setContainerOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
-            </div>
-            <div className="px-5 py-4 space-y-4">
+      <Modal
+        open={containerOpen}
+        onClose={() => setContainerOpen(false)}
+        title={editingContainerId ? 'Edit container' : 'New container'}
+        footer={<>
+          <button onClick={() => setContainerOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={saveContainer} disabled={savingContainer}
+            className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
+            {savingContainer ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingContainerId ? 'Save changes' : 'Create'}</>}
+          </button>
+        </>}
+      >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Container number <span className="text-red-400">*</span></label>
-                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                   value={containerForm.container_number} onChange={e => setContainerForm(p => ({ ...p, container_number: e.target.value }))} placeholder="e.g. CSNU4832156" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Type</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                    value={containerForm.container_type} onChange={e => setContainerForm(p => ({ ...p, container_type: e.target.value }))}>
-                    <option value="20GP">20GP</option>
-                    <option value="40GP">40GP</option>
-                    <option value="40HC">40HC</option>
-                  </select>
+                  <SelectMenu
+                    ariaLabel="Container type"
+                    value={containerForm.container_type}
+                    onChange={value => setContainerForm(p => ({ ...p, container_type: value }))}
+                    options={[
+                      { value: '20GP', label: '20GP' },
+                      { value: '40GP', label: '40GP' },
+                      { value: '40HC', label: '40HC' },
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">ETA Djibouti</label>
-                  <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={containerForm.eta_djibouti} onChange={e => setContainerForm(p => ({ ...p, eta_djibouti: e.target.value }))} />
                 </div>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Vessel name</label>
-                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                   value={containerForm.vessel_name} onChange={e => setContainerForm(p => ({ ...p, vessel_name: e.target.value }))} />
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100">
-              <button onClick={() => setContainerOpen(false)} className="px-4 py-2 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={saveContainer} disabled={savingContainer}
-                className="flex items-center gap-1.5 px-4 py-2 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 disabled:opacity-50 transition-colors min-w-[100px] justify-center">
-                {savingContainer ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : <><Check size={12} /> {editingContainerId ? 'Save changes' : 'Create'}</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   )
 }

@@ -1,10 +1,7 @@
-// src/lib/productionLogging.ts — single-BOM quick production log, used by
-// the mobile Production page. Mirrors Production.tsx's desktop logic
-// (validate every component has enough stock BEFORE writing anything,
-// prefer an existing open order, upsert the day's log by delta) so mobile
-// and desktop can't diverge into different bugs for the same operation.
+// Single-BOM quick production log used by the mobile Production page.
+// All validation, order/log updates, and inventory movements happen in one
+// database transaction so a failed write cannot leave partial production data.
 import { supabase } from './supabase'
-import { postInventoryMovement } from './inventoryReceive'
 
 export async function logProductionQuick(
   bomHeaderId: string,
@@ -12,105 +9,42 @@ export async function logProductionQuick(
   quantity: number,
   notes: string | undefined,
   logDate: string,
+  companyId?: string,
 ): Promise<void> {
   if (quantity <= 0) throw new Error('Enter a quantity greater than 0.')
 
-  const { data: bom, error: bomError } = await supabase
-    .from('bom_headers')
-    .select('id, product_id, finished_product_id, name')
-    .eq('id', bomHeaderId)
-    .single()
-  if (bomError) throw new Error(bomError.message)
-  const productId: string = bom.product_id ?? bom.finished_product_id
-
-  const { data: bomLines } = await supabase
-    .from('bom_lines')
-    .select('component_product_id, quantity_required')
-    .eq('bom_header_id', bomHeaderId)
-
-  // Validate every component has enough stock before any write.
-  for (const line of bomLines ?? []) {
-    const needed = Number(line.quantity_required ?? 0) * quantity
-    const { data: ledgerRows } = await supabase
-      .from('inventory_ledger')
-      .select('quantity')
-      .eq('product_id', line.component_product_id)
-      .eq('warehouse_id', warehouseId)
-    const available = (ledgerRows ?? []).reduce((s: number, r: any) => s + Number(r.quantity ?? 0), 0)
-    if (available < needed) {
-      throw new Error(`Not enough component stock at this warehouse — have ${available}, need ${needed}.`)
-    }
-  }
-
-  const { data: order } = await supabase
-    .from('production_orders')
-    .select('id, order_number, target_quantity, completed_quantity')
-    .eq('bom_header_id', bomHeaderId)
-    .eq('warehouse_id', warehouseId)
-    .in('status', ['DRAFT', 'IN_PROGRESS'])
-    .limit(1)
-    .maybeSingle()
-
-  let refId: string
-  let refType: 'production_order' | 'production_log'
-  let label: string
-
-  if (order) {
-    refId = order.id
-    refType = 'production_order'
-    label = order.order_number
-    const newCompleted = Math.min(order.target_quantity, order.completed_quantity + quantity)
-    const { error: ordErr } = await supabase.from('production_orders').update({
-      completed_quantity: newCompleted,
-      status: newCompleted >= order.target_quantity ? 'COMPLETED' : 'IN_PROGRESS',
-    }).eq('id', order.id)
-    if (ordErr) throw new Error(ordErr.message)
-
-    const { data: existingLog } = await supabase.from('production_daily_logs')
-      .select('id, quantity_produced').eq('production_order_id', order.id).eq('log_date', logDate).maybeSingle()
-    if (existingLog) {
-      const { error } = await supabase.from('production_daily_logs')
-        .update({ quantity_produced: Number(existingLog.quantity_produced) + quantity, notes: notes || null })
-        .eq('id', existingLog.id)
-      if (error) throw new Error(error.message)
-    } else {
-      const { error } = await supabase.from('production_daily_logs').insert({
-        production_order_id: order.id, log_date: logDate, quantity_produced: quantity, notes: notes || null,
-      })
-      if (error) throw new Error(error.message)
-    }
-  } else {
-    refId = bomHeaderId
-    refType = 'production_log'
-    label = `${bom.name} (${logDate})`
-
-    const { data: existingLog } = await supabase.from('production_daily_logs')
-      .select('id, quantity_produced').eq('bom_header_id', bomHeaderId).eq('warehouse_id', warehouseId)
-      .eq('log_date', logDate).is('production_order_id', null).maybeSingle()
-    if (existingLog) {
-      const { error } = await supabase.from('production_daily_logs')
-        .update({ quantity_produced: Number(existingLog.quantity_produced) + quantity, notes: notes || null })
-        .eq('id', existingLog.id)
-      if (error) throw new Error(error.message)
-    } else {
-      const { error } = await supabase.from('production_daily_logs').insert({
-        bom_header_id: bomHeaderId, product_id: productId, warehouse_id: warehouseId,
-        log_date: logDate, quantity_produced: quantity, notes: notes || null,
-      })
-      if (error) throw new Error(error.message)
-    }
-  }
-
-  await postInventoryMovement({
-    product_id: productId, quantity, movement_type: 'PRODUCTION_OUTPUT', movement_date: logDate,
-    warehouse_id: warehouseId, notes: `Quick log · ${label}`, reference_type: refType, reference_id: refId,
+  const { error } = await supabase.rpc('log_unmanaged_production', {
+    p_bom_header_id: bomHeaderId,
+    p_warehouse_id: warehouseId,
+    p_quantity: quantity,
+    p_notes: notes?.trim() || null,
+    p_log_date: logDate,
+    p_employee_id: null,
+    p_production_order_id: null,
+    p_company_id: companyId || null,
   })
 
-  for (const line of bomLines ?? []) {
-    const needed = Number(line.quantity_required ?? 0) * quantity
-    await postInventoryMovement({
-      product_id: line.component_product_id, quantity: -needed, movement_type: 'PRODUCTION_CONSUMED', movement_date: logDate,
-      warehouse_id: warehouseId, notes: `Withdrawn for ${label}`, reference_type: refType, reference_id: refId,
-    })
+  if (error) {
+    const diagnostic = [
+      error.code,
+      error.message,
+      error.details,
+      error.hint,
+    ].filter(Boolean).join(' ').toLowerCase()
+
+    if (
+      diagnostic.includes('warehouse operations')
+      || diagnostic.includes('managed production')
+      || diagnostic.includes('managed batch')
+    ) {
+      throw new Error(
+        'This production is managed in Warehouse Operations. Record its workers and output there so production and inventory are posted once.',
+      )
+    }
+    if (error.code === '42501' || diagnostic.includes('row-level security')) {
+      throw new Error('Production and company access are required to log output for this warehouse.')
+    }
+
+    throw new Error(error.message)
   }
 }

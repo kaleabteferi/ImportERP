@@ -250,7 +250,7 @@ export function Dashboard() {
         <MetricCard label={`Revenue · ${PERIOD_LABEL[period].toLowerCase()}`} value={`${N(data.revenueEtb)} ETB`}
           detail={`${Math.abs(revenueChange).toFixed(0)}% vs ${PREVIOUS_LABEL[period]}`} icon={TrendingUp} to="/sales" tone={revenueChange >= 0 ? 'lime' : 'amber'} />
         <MetricCard label={`Produced · ${PERIOD_LABEL[period].toLowerCase()}`} value={`${N(data.producedUnits)} units`}
-          detail={`${Math.abs(productionChange).toFixed(0)}% vs ${PREVIOUS_LABEL[period]}`} icon={PackageCheck} to="/production" tone={productionChange >= 0 ? 'neutral' : 'amber'} />
+          detail={`${Math.abs(productionChange).toFixed(0)}% vs ${PREVIOUS_LABEL[period]}`} icon={PackageCheck} to="/warehouse-operations" tone={productionChange >= 0 ? 'neutral' : 'amber'} />
         <MetricCard label="Net cash" value={`${netCash >= 0 ? '+' : ''}${N(netCash)} ETB`}
           detail={`${N(data.cashInEtb)} in · ${N(data.cashOutEtb)} out`} icon={Wallet} to="/money-tracking" tone={netCash >= 0 ? 'lime' : 'amber'} />
         <MetricCard label="Stock cover" value={data.daysOfStock === null ? 'No run rate' : `${data.daysOfStock.toFixed(0)} days`}
@@ -356,7 +356,7 @@ export function Dashboard() {
           <TrendPanel title="Revenue trend" value={N(data.revenueEtb)} unit="ETB" points={data.revenueTrend}
             change={revenueChange} period={period} to="/sales" tone="lime" />
           <TrendPanel title="Production trend" value={N(data.producedUnits)} unit="units" points={data.productionTrend}
-            change={productionChange} period={period} to="/production" tone="blue" />
+            change={productionChange} period={period} to="/warehouse-operations" tone="blue" />
         </div>
       </section>
 
@@ -407,7 +407,7 @@ export function Dashboard() {
             )}
           </BusinessQuestion>
 
-          <BusinessQuestion title="How efficient is production?" eyebrow="Output & overtime" to="/production" className="is-wide">
+          <BusinessQuestion title="How efficient is production?" eyebrow="Output & overtime" to="/warehouse-operations" className="is-wide">
             <ManufacturingPerformanceCard />
           </BusinessQuestion>
 

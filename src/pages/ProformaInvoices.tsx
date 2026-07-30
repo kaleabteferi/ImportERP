@@ -12,6 +12,7 @@ import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
+import { SelectMenu } from '../components/ui/SelectMenu'
 
 interface Row {
   id: string
@@ -135,7 +136,7 @@ export function ProformaInvoices() {
           <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search PI number, supplier"
-            className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
       )}
 
@@ -207,9 +208,11 @@ export function ProformaInvoices() {
       >
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Supplier <span className="text-red-400">*</span></label>
-                <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                  value={form.supplier_id} onChange={async e => {
-                    const supplierId = e.target.value
+                <SelectMenu
+                  ariaLabel="Supplier"
+                  searchable
+                  value={form.supplier_id}
+                  onChange={async supplierId => {
                     set('supplier_id', supplierId)
                     setShortages([])
                     if (!supplierId) return
@@ -219,10 +222,10 @@ export function ProformaInvoices() {
                     } finally {
                       setLoadingShortages(false)
                     }
-                  }}>
-                  <option value="">— select supplier —</option>
-                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                  }}
+                  options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+                  placeholder="— select supplier —"
+                />
               </div>
 
               {loadingShortages && (
@@ -256,20 +259,26 @@ export function ProformaInvoices() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Buyer of record</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                    value={form.buyer_company_id} onChange={e => set('buyer_company_id', e.target.value)}>
-                    <option value="">— same as final company —</option>
-                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <SelectMenu
+                    ariaLabel="Buyer of record"
+                    searchable
+                    value={form.buyer_company_id}
+                    onChange={value => set('buyer_company_id', value)}
+                    options={companies.map(c => ({ value: c.id, label: c.name }))}
+                    placeholder="— same as final company —"
+                  />
                   <p className="text-xs text-gray-400 mt-1">Who buys from the real supplier — pick ALPHA if it's routed through them.</p>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Final company <span className="text-red-400">*</span></label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                    value={form.final_company_id} onChange={e => set('final_company_id', e.target.value)}>
-                    <option value="">— select company —</option>
-                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <SelectMenu
+                    ariaLabel="Final company"
+                    searchable
+                    value={form.final_company_id}
+                    onChange={value => set('final_company_id', value)}
+                    options={companies.map(c => ({ value: c.id, label: c.name }))}
+                    placeholder="— select company —"
+                  />
                   <p className="text-xs text-gray-400 mt-1">Who the stock is ultimately for — can change until Djibouti arrival.</p>
                 </div>
               </div>
@@ -278,7 +287,7 @@ export function ProformaInvoices() {
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Markup % (buyer → final company)</label>
                   <input type="number" step="0.1"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={form.markup_pct} onChange={e => set('markup_pct', e.target.value)}
                     placeholder="e.g. 10" />
                 </div>
@@ -288,30 +297,34 @@ export function ProformaInvoices() {
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Issue date</label>
                   <input type="date"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={form.issue_date} onChange={e => set('issue_date', e.target.value)} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Incoterm</label>
-                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                    value={form.incoterm} onChange={e => set('incoterm', e.target.value)}>
-                    <option value="FOB">FOB</option>
-                    <option value="CIF">CIF</option>
-                    <option value="EXW">EXW</option>
-                    <option value="CFR">CFR</option>
-                  </select>
+                  <SelectMenu
+                    ariaLabel="Incoterm"
+                    value={form.incoterm}
+                    onChange={value => set('incoterm', value)}
+                    options={[
+                      { value: 'FOB', label: 'FOB' },
+                      { value: 'CIF', label: 'CIF' },
+                      { value: 'EXW', label: 'EXW' },
+                      { value: 'CFR', label: 'CFR' },
+                    ]}
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Port of loading</label>
-                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={form.port_of_loading} onChange={e => set('port_of_loading', e.target.value)} placeholder="e.g. Shenzhen" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Port of discharge</label>
-                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={form.port_of_discharge} onChange={e => set('port_of_discharge', e.target.value)} />
                 </div>
               </div>

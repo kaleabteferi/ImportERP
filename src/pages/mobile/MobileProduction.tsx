@@ -1,18 +1,36 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fetchWarehousesList } from '../../api/income'
 import { logProductionQuick } from '../../lib/productionLogging'
+import { fetchProductionPlanningCompanies } from '../../api/warehouseOperations'
+import type { OperationalCompany } from '../../api/warehouseOperations'
 import { Wrench, Loader2, Check, Package, AlertTriangle } from 'lucide-react'
+import { SelectMenu } from '../../components/ui/SelectMenu'
 
 interface BomOption { id: string; name: string; productName: string; stage: string }
 interface Option { id: string; name: string }
 interface RecentLog { id: string; log_date: string; quantity_produced: number; productName: string }
+interface BomRow { id: string; name: string; stage: string | null; product_id: string | null; finished_product_id: string | null }
+interface ProductRow { id: string; name: string }
+interface EmbeddedBom { product_id: string | null; finished_product_id: string | null }
+interface EmbeddedOrder { bom_headers: EmbeddedBom | EmbeddedBom[] | null }
+interface RecentLogRow {
+  id: string
+  log_date: string
+  quantity_produced: number | null
+  bom_header_id: string | null
+  production_orders: EmbeddedOrder | EmbeddedOrder[] | null
+}
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
+const one = <T,>(value: T | T[] | null | undefined): T | null => Array.isArray(value) ? (value[0] ?? null) : (value ?? null)
+const message = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
 export function MobileProduction() {
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [warehouseId, setWarehouseId] = useState('')
+  const [companies, setCompanies] = useState<OperationalCompany[]>([])
+  const [companyId, setCompanyId] = useState('')
   const [boms, setBoms] = useState<BomOption[]>([])
   const [recent, setRecent] = useState<RecentLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -21,62 +39,79 @@ export function MobileProduction() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [warehouseRows, bomRows] = await Promise.all([
+      const [warehouseRows, bomRows, companyRows] = await Promise.all([
         fetchWarehousesList(),
         supabase.from('bom_headers').select('id, name, stage, product_id, finished_product_id').eq('is_active', true),
+        fetchProductionPlanningCompanies().catch(() => []),
       ])
-      setWarehouses((warehouseRows ?? []).map((w: any) => ({ id: w.id, name: w.name })))
+      const warehouseOptions = (warehouseRows ?? []) as Option[]
+      setWarehouses(warehouseOptions.map(warehouse => ({ id: warehouse.id, name: warehouse.name })))
       setWarehouseId(prev => prev || (warehouseRows?.[0]?.id ?? ''))
+      setCompanies(companyRows)
+      setCompanyId(prev => (
+        companyRows.some(company => company.id === prev)
+          ? prev
+          : companyRows.find(company => company.is_primary)?.id ?? companyRows[0]?.id ?? ''
+      ))
 
-      const rows = bomRows.data ?? []
-      const productIds = [...new Set(rows.map((r: any) => r.product_id ?? r.finished_product_id).filter(Boolean))]
+      const rows = (bomRows.data ?? []) as BomRow[]
+      const productIds = [...new Set(rows
+        .map(row => row.product_id ?? row.finished_product_id)
+        .filter((id): id is string => Boolean(id)))]
       const { data: products } = productIds.length > 0
         ? await supabase.from('products').select('id, name').in('id', productIds)
         : { data: [] }
-      const nameById = new Map((products ?? []).map((p: any) => [p.id, p.name]))
-      setBoms(rows.map((r: any) => ({
-        id: r.id, name: r.name, stage: r.stage ?? 'ASSEMBLY',
-        productName: nameById.get(r.product_id ?? r.finished_product_id) ?? 'Unknown product',
-      })))
+      const nameById = new Map(((products ?? []) as ProductRow[]).map(product => [product.id, product.name]))
+      const bomOptions = rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        stage: row.stage ?? 'ASSEMBLY',
+        productName: nameById.get(row.product_id ?? row.finished_product_id ?? '') ?? 'Unknown product',
+      }))
+      setBoms(bomOptions)
 
       const { data: logs } = await supabase
         .from('production_daily_logs')
         .select('id, log_date, quantity_produced, bom_header_id, production_orders(bom_headers(product_id, finished_product_id))')
         .order('log_date', { ascending: false })
         .limit(10)
-      setRecent((logs ?? []).map((l: any) => {
-        const orderBom = Array.isArray(l.production_orders) ? l.production_orders[0] : l.production_orders
-        const bomHeaderId = l.bom_header_id ?? null
+      setRecent(((logs ?? []) as RecentLogRow[]).map(log => {
+        const orderBom = one(one(log.production_orders)?.bom_headers)
+        const bomHeaderId = log.bom_header_id ?? null
         const productName = bomHeaderId
-          ? boms.find(b => b.id === bomHeaderId)?.productName
-          : nameById.get(orderBom?.bom_headers?.product_id ?? orderBom?.bom_headers?.finished_product_id)
-        return { id: l.id, log_date: l.log_date, quantity_produced: Number(l.quantity_produced ?? 0), productName: productName ?? 'Production' }
+          ? bomOptions.find(bom => bom.id === bomHeaderId)?.productName
+          : nameById.get(orderBom?.product_id ?? orderBom?.finished_product_id ?? '')
+        return { id: log.id, log_date: log.log_date, quantity_produced: Number(log.quantity_produced ?? 0), productName: productName ?? 'Production' }
       }))
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load.')
+    } catch (caught) {
+      setError(message(caught, 'Failed to load.'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [load])
 
   async function logOne(bomId: string) {
     const qty = Number(entries[bomId] ?? '0')
     if (!warehouseId) { setError('Choose a warehouse first.'); return }
+    if (!companyId) { setError('Choose the company for this production log.'); return }
     if (!qty || qty <= 0) { setError('Enter a quantity greater than 0.'); return }
     setSavingId(bomId); setError(null); setSuccess(null)
     try {
-      await logProductionQuick(bomId, warehouseId, qty, undefined, new Date().toISOString().split('T')[0])
+      await logProductionQuick(bomId, warehouseId, qty, undefined, new Date().toISOString().split('T')[0], companyId)
       setEntries(prev => ({ ...prev, [bomId]: '' }))
       const bom = boms.find(b => b.id === bomId)
       setSuccess(`Logged ${qty} × ${bom?.productName ?? ''}`)
       await load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to log production.')
+    } catch (caught) {
+      setError(message(caught, 'Failed to log production.'))
     } finally {
       setSavingId(null)
     }
@@ -89,11 +124,32 @@ export function MobileProduction() {
         <p className="text-xs text-gray-400 mt-0.5">Tap a product, enter today's quantity, log it</p>
       </div>
 
-      <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
-        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card bg-white mb-3">
-        <option value="">Choose warehouse…</option>
-        {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-      </select>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <SelectMenu
+          ariaLabel="Mobile production warehouse"
+          searchable
+          value={warehouseId}
+          onChange={setWarehouseId}
+          options={[
+            { value: '', label: 'Choose warehouse' },
+            ...warehouses.map(warehouse => ({ value: warehouse.id, label: warehouse.name })),
+          ]}
+        />
+        <SelectMenu
+          ariaLabel="Mobile production company"
+          searchable
+          value={companyId}
+          onChange={setCompanyId}
+          options={[
+            { value: '', label: companies.length ? 'Choose company' : 'No company access', disabled: companies.length === 0 },
+            ...companies.map(company => ({
+              value: company.id,
+              label: company.name,
+              description: company.is_primary ? 'Primary company' : undefined,
+            })),
+          ]}
+        />
+      </div>
 
       {error && <div className="mb-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700"><AlertTriangle size={13} className="shrink-0 mt-0.5" />{error}</div>}
       {success && <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">{success}</div>}
