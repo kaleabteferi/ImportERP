@@ -22,7 +22,7 @@ export function Card({ variant = 'light', padded = false, className = '', childr
     ? 'bg-panel-dark text-panel-dark-foreground border border-black/10'
     : 'bg-white dark:border dark:border-gray-700'
   return (
-    <div className={`${base} rounded-card overflow-hidden shadow-[var(--shadow-card-sm)] ${padded ? 'p-6' : ''} ${className}`} {...rest}>
+    <div className={`app-card ${base} rounded-card overflow-hidden shadow-[var(--shadow-card-sm)] ${padded ? 'p-6' : ''} ${className}`} {...rest}>
       {children}
     </div>
   )

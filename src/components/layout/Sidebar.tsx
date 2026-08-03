@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
-import { LogOut, KeyRound } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { ChevronDown, LogOut, KeyRound } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
 import type { Role } from '../../lib/roles'
@@ -16,37 +16,47 @@ const links = NAV_LINKS
 const MAIN_PAGE_ROUTES = new Set(['/money-tracking', '/sales', '/inventory', '/proforma-invoices', '/warehouse-operations'])
 
 export function Sidebar() {
-  const { profile, signOut } = useAuth()
+  const { profile, warehouseAssignments, signOut } = useAuth()
   const role = profile?.role as Role | undefined
+  const location = useLocation()
   const [showChangePin, setShowChangePin] = useState(false)
   const visibleLinks = links
     .map(group => ({
       ...group,
-      items: group.items.filter(link => link.allow.length === 0 || hasAccess(role, link.allow)),
+      items: group.items.filter(link => hasAccess(role, link.allow, warehouseAssignments, link.warehouseScope)),
     }))
     .filter(group => group.items.length > 0)
+  const activeSection = visibleLinks.find(group => group.items.some(link => link.to === '/' ? location.pathname === '/' : location.pathname.startsWith(link.to)))?.section
+  const [openSections, setOpenSections] = useState<string[]>(() => ['Overview'])
+
+  function toggleSection(section: string) {
+    setOpenSections(current => current.includes(section) ? current.filter(item => item !== section) : [...current, section])
+  }
   return (
     <aside style={{
-      width: '208px', height: '100vh', background: 'var(--color-panel-dark)',
+      width: '224px', height: '100vh', background: 'var(--color-panel-dark)',
       color: 'var(--color-panel-dark-foreground)',
       borderRight: '1px solid rgba(255,255,255,0.06)',
-      display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto'
+      display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden'
     }}>
       <div style={{ padding: '18px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '-0.01em' }}>ImportERP</div>
-        <div style={{ fontSize: '11px', color: 'rgba(245,246,242,0.45)', marginTop: '2px' }}>
+        <div style={{ fontSize: '12px', color: 'rgba(245,246,242,0.62)', marginTop: '2px' }}>
           Addis Ababa · ETB/USD
         </div>
       </div>
-      <nav style={{ padding: '10px', flex: 1 }}>
+      <nav className="erp-sidebar-scroll" style={{ padding: '10px', flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {visibleLinks.map((group, gi) => (
           <div key={group.section} className="stagger-row" style={{ '--stagger-index': gi } as React.CSSProperties}>
-            <div style={{
-              fontSize: '10px', color: 'rgba(245,246,242,0.35)',
-              padding: '12px 8px 5px', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600,
+            <button type="button" onClick={() => toggleSection(group.section)} aria-expanded={openSections.includes(group.section) || activeSection === group.section} style={{
+              width: '100%', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              fontSize: '11px', color: activeSection === group.section ? 'rgba(245,246,242,0.92)' : 'rgba(245,246,242,0.58)',
+              padding: '10px 8px 5px', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 650,
+              background: 'transparent', border: 0, cursor: 'pointer',
             }}>
-              {group.section}
-            </div>
+              <span>{group.section}</span><ChevronDown size={14} style={{ transform: openSections.includes(group.section) || activeSection === group.section ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 180ms ease' }} />
+            </button>
+            <div hidden={!openSections.includes(group.section) && activeSection !== group.section}>
             {group.items.map(link => {
               const isMain = MAIN_PAGE_ROUTES.has(link.to)
               return (
@@ -56,8 +66,8 @@ export function Sidebar() {
                 end={link.to === '/'}
                 style={({ isActive }) => ({
                   display: 'flex', alignItems: 'center', gap: '9px',
-                  padding: '7px 10px', borderRadius: '9999px', marginBottom: '2px',
-                  fontSize: '12px', textDecoration: 'none',
+                  minHeight: '38px', padding: '8px 10px', borderRadius: '9999px', marginBottom: '2px',
+                  fontSize: '13px', textDecoration: 'none',
                   background: isActive ? 'var(--color-accent)' : 'transparent',
                   color: isActive ? 'var(--color-accent-foreground)' : (isMain ? 'rgba(245,246,242,0.92)' : 'rgba(245,246,242,0.75)'),
                   fontWeight: isActive ? 600 : (isMain ? 600 : 400),
@@ -79,19 +89,20 @@ export function Sidebar() {
               </NavLink>
               )
             })}
+            </div>
           </div>
         ))}
       </nav>
       <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ fontSize: '12px', fontWeight: 600 }}>{profile?.full_name ?? 'Unnamed'}</div>
-        <div style={{ fontSize: '10px', color: 'rgba(245,246,242,0.4)', marginBottom: '9px' }}>
+        <div style={{ fontSize: '11px', color: 'rgba(245,246,242,0.58)', marginBottom: '9px' }}>
           {role ? ROLE_LABELS[role] : profile?.role}
         </div>
         <button
           onClick={() => setShowChangePin(true)}
           style={{
-            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
-            color: 'rgba(245,246,242,0.55)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', minHeight: '32px',
+            color: 'rgba(245,246,242,0.72)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
             marginBottom: '8px', transition: 'color 150ms ease',
           }}
         >
@@ -100,8 +111,8 @@ export function Sidebar() {
         <button
           onClick={signOut}
           style={{
-            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
-            color: 'rgba(245,246,242,0.55)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', minHeight: '32px',
+            color: 'rgba(245,246,242,0.72)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
             transition: 'color 150ms ease',
           }}
         >

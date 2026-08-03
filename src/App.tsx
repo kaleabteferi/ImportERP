@@ -12,6 +12,7 @@ import { MobileHome } from './pages/mobile/MobileHome'
 import { MobileSales } from './pages/mobile/MobileSales'
 import { MobileProduction } from './pages/mobile/MobileProduction'
 import { MobileMoneyTracking } from './pages/mobile/MobileMoneyTracking'
+import { MobileShipments } from './pages/mobile/MobileShipments'
 import { Layout }         from './components/layout/Layout'
 import { Dashboard }      from './pages/Dashboard'
 import { Shipments }      from './pages/Shipments'
@@ -46,9 +47,21 @@ import { Settings }           from './pages/Settings'
 import { ShipmentDocuments }  from './pages/ShipmentDocuments'
 import { Calculator }         from './pages/Calculator'
 import { Documentation }      from './pages/Documentation'
+import { OperationalCenter }  from './pages/OperationalCenter'
+import { Documents }          from './pages/Documents'
 import { NotFound }           from './pages/NotFound'
+import { useAuth } from './lib/auth'
 
 const WarehouseOperations = lazy(() => import('./pages/WarehouseOperations'))
+const WarehouseFloorPlan = lazy(() => import('./pages/WarehouseFloorPlan'))
+const WarehouseInventory = lazy(() => import('./pages/WarehouseInventory'))
+const WarehouseReceiving = lazy(() => import('./pages/WarehouseReceiving'))
+
+function HomeRoute() {
+  const { profile } = useAuth()
+  if (profile?.role === 'warehouse_operations') return <Navigate to="/warehouse-operations" replace />
+  return <ModeRoute desktop={<Dashboard />} mobile={<MobileHome />} />
+}
 
 function PinGate({ children }: { children: ReactNode }) {
   const { status } = usePinLock()
@@ -78,11 +91,13 @@ export default function App() {
           <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
-              <Route index                  element={<ModeRoute desktop={<Dashboard />} mobile={<MobileHome />} />}      />
-              <Route path="daily-activity"  element={<DailyActivity />}  />
-              <Route path="reports"         element={<Reports />}        />
-              <Route path="calculator"      element={<Calculator />}     />
-              <Route path="documentation"   element={<Documentation />}  />
+              <Route index                  element={<HomeRoute />} />
+              <Route path="daily-activity"  element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']}><DailyActivity /></RequireRole>} />
+              <Route path="reports"         element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']}><Reports /></RequireRole>} />
+              <Route path="calculator"      element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']} warehouseScope><Calculator /></RequireRole>} />
+              <Route path="documentation"   element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']} warehouseScope><Documentation /></RequireRole>} />
+              <Route path="work"            element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']} warehouseScope><OperationalCenter /></RequireRole>} />
+              <Route path="documents"       element={<RequireRole allow={['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system']} warehouseScope><Documents /></RequireRole>} />
 
               <Route path="proforma-invoices" element={
                 <RequireRole allow={['operations_marketing']}><ProformaInvoices /></RequireRole>
@@ -91,7 +106,7 @@ export default function App() {
                 <RequireRole allow={['operations_marketing']}><ProformaInvoiceDetail /></RequireRole>
               } />
               <Route path="shipments" element={
-                <RequireRole allow={['operations_marketing']}><Shipments /></RequireRole>
+                <RequireRole allow={['operations_marketing']}><ModeRoute desktop={<Shipments />} mobile={<MobileShipments />} /></RequireRole>
               } />
               <Route path="shipments/:id" element={
                 <RequireRole allow={['operations_marketing']}><ShipmentDetail /></RequireRole>
@@ -131,10 +146,27 @@ export default function App() {
                 <RequireRole allow={['manufacturing_sales', 'operations_marketing']}><WarehouseTransfers /></RequireRole>
               } />
               <Route path="warehouse-operations" element={
-                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']}>
+                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']} warehouseScope>
                   <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading Warehouse Operations…</div>}>
                     <WarehouseOperations />
                   </Suspense>
+                </RequireRole>
+              } />
+              <Route path="warehouse-operations/floor-plan/:warehouseId" element={
+                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']} warehouseScope>
+                  <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading Floor Plan…</div>}>
+                    <WarehouseFloorPlan />
+                  </Suspense>
+                </RequireRole>
+              } />
+              <Route path="warehouse-operations/inventory/:warehouseId" element={
+                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']} warehouseScope>
+                  <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading warehouse inventory…</div>}><WarehouseInventory /></Suspense>
+                </RequireRole>
+              } />
+              <Route path="warehouse-operations/receiving/:warehouseId" element={
+                <RequireRole allow={['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance']} warehouseScope>
+                  <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading receiving dock…</div>}><WarehouseReceiving /></Suspense>
                 </RequireRole>
               } />
               <Route path="djibouti" element={
@@ -173,10 +205,10 @@ export default function App() {
                 <RequireRole allow={['hr_system']}><Employees /></RequireRole>
               } />
               <Route path="payroll" element={
-                <RequireRole allow={['hr_system']}><Payroll /></RequireRole>
+                <RequireRole allow={['hr_system', 'accounting_finance']}><Payroll /></RequireRole>
               } />
               <Route path="hr-notes" element={
-                <RequireRole allow={['hr_system']}><HrNotes /></RequireRole>
+                <RequireRole allow={['hr_system', 'accounting_finance']}><HrNotes /></RequireRole>
               } />
               <Route path="settings" element={
                 <RequireRole allow={['hr_system']}><Settings /></RequireRole>

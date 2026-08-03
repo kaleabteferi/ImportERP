@@ -10,6 +10,9 @@ import {
   AlertOctagon,
 } from 'lucide-react'
 import { addShortageNote } from '../api/shortageNotes'
+import { createDamageReport } from '../api/damageReports'
+import { ReceivingCountModal, type CountLine, type CountResultLine, type PlacementLocation } from '../components/ReceivingCountModal'
+import { moveInventoryLocation, fetchWarehouseLocationsData } from '../api/warehouseOperations'
 import { useConfirm } from '../hooks/useConfirm'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ContainerTimelineTabs } from '../components/shipments/ContainerTimelineTabs'
@@ -24,7 +27,7 @@ import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
 import { SearchableSelect } from '../components/SearchableSelect'
-import { receiveShipmentToInventory, resolveAssemblyType } from '../lib/inventoryReceive'
+import { receiveShipmentToInventory, resolveAssemblyType, postInventoryMovement } from '../lib/inventoryReceive'
 import { PageHeader } from '../components/ui/PageHeader'
 import { StatCard } from '../components/ui/StatCard'
 import { Badge } from '../components/ui/Badge'
@@ -226,8 +229,22 @@ export function ShipmentDetail() {
   const [error, setError]         = useState<string | null>(null)
   const [editExpId, setEditExpId] = useState<string | null>(null)
   const [receiving, setReceiving] = useState(false)
+  const [counting, setCounting] = useState(false)
+  const [countError, setCountError] = useState<string | null>(null)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('')
+  const [warehouseLocations, setWarehouseLocations] = useState<PlacementLocation[]>([])
+
+  useEffect(() => {
+    if (!selectedWarehouseId) { setWarehouseLocations([]); return }
+    let cancelled = false
+    fetchWarehouseLocationsData([selectedWarehouseId]).then(data => {
+      if (cancelled) return
+      setWarehouseLocations(data.locations.filter(loc => loc.is_active).map(loc => ({ id: loc.id, code: loc.code, name: loc.name })))
+    }).catch(() => { if (!cancelled) setWarehouseLocations([]) })
+    return () => { cancelled = true }
+  }, [selectedWarehouseId])
+
   const load = useCallback(async () => {
     if (!id) return
     setLoading(true)
@@ -244,7 +261,7 @@ export function ShipmentDetail() {
       supabase.from('forex_rates').select('rate')
         .eq('from_currency', 'USD').eq('to_currency', 'ETB').eq('rate_type', 'CUSTOMS')
         .order('effective_date', { ascending: false }).limit(1),
-      supabase.from('warehouses').select('*').order('name'),
+      supabase.from('warehouses').select('*').eq('is_active', true).order('name'),
     ])
 
     const prodMap = new Map((prodRes.data ?? []).map((p: Product) => [p.id, p]))
@@ -261,9 +278,14 @@ export function ShipmentDetail() {
       setProducts(prodRes.data ?? [])
       setFxRate(fxRes.data?.[0]?.rate ?? 131.20)
       setWarehouses(whRes.data ?? [])
-      const defaultWarehouse = shRes.data?.warehouse_id
-        || whRes.data?.[0]?.id
-        || ''
+      // Only default to the shipment's stored warehouse if it's still an
+      // active warehouse — otherwise (e.g. it points at a since-deactivated
+      // warehouse) leave it blank so receiving requires an explicit choice
+      // instead of silently crediting a retired warehouse.
+      const activeWarehouseIds = new Set((whRes.data ?? []).map((w: any) => w.id))
+      const defaultWarehouse = (shRes.data?.warehouse_id && activeWarehouseIds.has(shRes.data.warehouse_id))
+        ? shRes.data.warehouse_id
+        : ''
       setSelectedWarehouseId(defaultWarehouse)
     }
     setLoading(false)
@@ -410,38 +432,154 @@ export function ShipmentDetail() {
     setShipment({ ...shipment, warehouse_id: warehouseId })
   }
 
-  async function receiveIntoInventory() {
+  function openReceivingCount() {
     if (!id || items.length === 0) return
     if (!selectedWarehouseId) {
       setError('Select a warehouse before receiving this shipment.')
       return
     }
-    setReceiving(true)
     setError(null)
+    setCountError(null)
+    setCounting(true)
+  }
+
+  // Truck-unload / receiving-count reconciliation: instead of blindly
+  // crediting the full expected (PI) quantity, the warehouse manager counts
+  // what actually came off the truck. Counted quantity (including any
+  // damaged units) is what gets posted to inventory — it's what physically
+  // arrived — then damaged units are immediately written off via a damage
+  // report, and any line that came up short of the expected quantity is
+  // logged against the supplier so it resurfaces on the next order.
+  async function submitReceivingCount(result: CountResultLine[]) {
+    if (!id || !selectedWarehouseId || !shipment) return
+    setReceiving(true)
+    setCountError(null)
     try {
       const { data: prodMeta } = await supabase
         .from('products')
         .select('id, assembly_type, is_assembled')
         .in('id', items.map(i => i.product_id))
-
       const metaMap = new Map((prodMeta ?? []).map(p => [p.id, p]))
+      const itemById = new Map(items.map(i => [i.id, i]))
 
+      const toReceive = result.filter(line => line.countedQuantity > 0)
       await receiveShipmentToInventory(
         id,
-        items.map(item => ({
-          shipment_item_id:     item.id,
-          product_id:           item.product_id,
-          product_name:         item.products?.name ?? '',
-          quantity:             item.quantity,
-          unit_landed_cost_etb: item.unit_landed_cost_etb,
-          assembly_type:        resolveAssemblyType(metaMap.get(item.product_id) ?? {}),
+        toReceive.map(line => ({
+          shipment_item_id:     line.shipmentItemId,
+          product_id:           line.productId,
+          product_name:         line.productName,
+          quantity:             line.countedQuantity,
+          unit_landed_cost_etb: itemById.get(line.shipmentItemId)?.unit_landed_cost_etb ?? null,
+          assembly_type:        resolveAssemblyType(metaMap.get(line.productId) ?? {}),
         })),
         fxRate,
         selectedWarehouseId,
       )
+
+      // CKD/SKD kits get decomposed into BOM components at receiving time
+      // (above) — the kit itself is never stocked as such, so damage
+      // write-offs and shelf placement both have to target the same
+      // components, not the kit. Looked up once per product and reused.
+      const bomLinesCache = new Map<string, { component_product_id: string; quantity_required: number }[] | null>()
+      async function getBomLines(productId: string) {
+        if (bomLinesCache.has(productId)) return bomLinesCache.get(productId)!
+        const { data: bomHeader } = await supabase
+          .from('bom_headers')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .maybeSingle()
+        let result: { component_product_id: string; quantity_required: number }[] | null = null
+        if (bomHeader) {
+          const { data } = await supabase
+            .from('bom_lines')
+            .select('component_product_id, quantity_required')
+            .eq('bom_header_id', bomHeader.id)
+          result = data ?? []
+        }
+        bomLinesCache.set(productId, result)
+        return result
+      }
+
+      const today = new Date().toISOString().split('T')[0]
+      for (const line of result) {
+        const assemblyType = resolveAssemblyType(metaMap.get(line.productId) ?? {})
+        const isKit = assemblyType === 'CKD' || assemblyType === 'SKD'
+
+        if (line.damagedQuantity > 0) {
+          const bomLines = isKit ? await getBomLines(line.productId) : null
+
+          const reportId = await createDamageReport({
+            productId: line.productId,
+            warehouseId: selectedWarehouseId,
+            quantity: line.damagedQuantity,
+            reason: 'Damaged in transit — found during receiving count',
+            shipmentId: id,
+            reportDate: today,
+            notes: line.notes || undefined,
+            skipLedgerMovement: !!bomLines,
+          })
+
+          if (bomLines) {
+            for (const bomLine of bomLines) {
+              await postInventoryMovement({
+                product_id: bomLine.component_product_id,
+                quantity: -Math.abs(bomLine.quantity_required * line.damagedQuantity),
+                movement_type: 'DAMAGE',
+                movement_date: today,
+                warehouse_id: selectedWarehouseId,
+                reference_type: 'damage_report',
+                reference_id: reportId,
+                notes: `Component write-off from damaged ${assemblyType} receipt of "${line.productName}"`,
+              })
+            }
+          }
+        }
+        const shortQty = line.expectedQuantity - line.countedQuantity
+        if (shortQty > 0) {
+          await addShortageNote({
+            supplierId: shipment.supplier_id,
+            productId: line.productId,
+            shipmentId: id,
+            quantityShort: shortQty,
+            notes: line.notes || 'Found short during receiving count.',
+          })
+        }
+
+        // Shelve it right away instead of leaving it in the unplaced pool
+        // for a separate trip to the Locations tab.
+        const goodQty = line.countedQuantity - line.damagedQuantity
+        if (line.placementLocationId && goodQty > 0) {
+          const bomLines = isKit ? await getBomLines(line.productId) : null
+          if (bomLines) {
+            for (const bomLine of bomLines) {
+              await moveInventoryLocation({
+                warehouseId: selectedWarehouseId,
+                productId: bomLine.component_product_id,
+                fromLocationId: null,
+                toLocationId: line.placementLocationId,
+                quantity: bomLine.quantity_required * goodQty,
+                notes: `Placed from receiving count of "${line.productName}"`,
+              })
+            }
+          } else {
+            await moveInventoryLocation({
+              warehouseId: selectedWarehouseId,
+              productId: line.productId,
+              fromLocationId: null,
+              toLocationId: line.placementLocationId,
+              quantity: goodQty,
+              notes: line.notes || undefined,
+            })
+          }
+        }
+      }
+
+      setCounting(false)
       load()
     } catch (e: any) {
-      setError(e.message)
+      setCountError(e.message ?? String(e))
     } finally {
       setReceiving(false)
     }
@@ -638,7 +776,7 @@ export function ShipmentDetail() {
           <div className="text-xs text-green-800">
             <p className="font-medium">Ready for warehouse receipt</p>
             <p className="mt-0.5 text-green-700">
-              Inventory entries will be created for each shipment line and routed to assembly components or finished stock based on the product type.
+              Count what actually came off the truck before it's posted — shortages get logged against the supplier, damaged units are written off automatically.
             </p>
           </div>
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -656,19 +794,39 @@ export function ShipmentDetail() {
               </select>
             </label>
             <button
-              onClick={receiveIntoInventory}
+              onClick={openReceivingCount}
               disabled={receiving || !selectedWarehouseId}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 text-white
                          text-xs rounded-lg hover:bg-green-800 disabled:opacity-50 shrink-0"
             >
-              {receiving
-                ? <><Loader2 size={12} className="animate-spin" /> Receiving…</>
-                : <><Package size={12} /> Receive into inventory</>
-              }
+              <Package size={12} /> Count &amp; receive
             </button>
           </div>
         </div>
       )}
+
+      <ReceivingCountModal
+        key={counting ? `open-${id}` : 'closed'}
+        open={counting}
+        title="Count what arrived"
+        subtitle={`Receiving into ${warehouses.find(w => w.id === selectedWarehouseId)?.name ?? 'selected warehouse'}. Each line defaults to the expected quantity — adjust it to match the actual count.`}
+        lines={items.map((item): CountLine => ({
+          shipmentItemId: item.id,
+          productId: item.product_id,
+          productName: item.products?.name ?? 'Unknown product',
+          sku: item.products?.sku,
+          expectedQuantity: item.quantity,
+          expectedCartons: item.carton_qty,
+          unitsPerCarton: item.units_per_carton,
+          unitOfMeasure: item.unit_of_measure ?? item.products?.unit_of_measure,
+          containerNumber: item.containers?.container_number,
+        }))}
+        locations={warehouseLocations}
+        saving={receiving}
+        error={countError}
+        onCancel={() => setCounting(false)}
+        onSubmit={submitReceivingCount}
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1.5 mb-5 border-b border-gray-100
@@ -1354,7 +1512,7 @@ export function ShipmentDetail() {
       {/* Add PI Item modal */}
       {itemOpen && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setItemOpen(false)}
         >
           <div className="bg-white rounded-card w-full max-w-lg max-h-[90vh]
@@ -1601,7 +1759,7 @@ export function ShipmentDetail() {
         />
       )}
       {shortageTarget && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setShortageTarget(null)}>
           <div className="bg-white rounded-card w-full max-w-sm shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">

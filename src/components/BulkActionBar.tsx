@@ -5,7 +5,7 @@ export function BulkActionBar({ count, itemLabel, onClear, onDelete }: {
   count: number
   itemLabel: string
   onClear: () => void
-  onDelete: () => Promise<void>
+  onDelete: () => void | Promise<void>
 }) {
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)

@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2 } from 'lucide-react'
+import { ArrowLeft, Plus, Loader2, X, Check, Package, Boxes, Pencil, Wand2, CircleDollarSign, Scale, Ship, Route, CalendarDays } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Modal } from '../components/ui/Modal'
 import { SelectMenu } from '../components/ui/SelectMenu'
@@ -16,7 +16,8 @@ import { PackingListBuilder } from '../components/containers/PackingListBuilder'
 import { GenerateShipmentButton } from '../components/containers/GenerateShipmentButton'
 import { ContainerFillGauge } from '../components/containers/ContainerFillGauge'
 import { containerCapacityM3, containerPayloadKg } from '../lib/containerSpecs'
-import { suggestPackingLayout, pickContainerTypeForDeficit, singleCartonExceedsContainer } from '../lib/packingSuggestion'
+import { estimateNewContainersNeeded, suggestPackingLayout, pickContainerTypeForDeficit, singleCartonExceedsContainer } from '../lib/packingSuggestion'
+import './ProformaInvoices.css'
 
 interface Product { id: string; name: string; sku: string; default_customs_value: number | null }
 
@@ -57,6 +58,7 @@ export function ProformaInvoiceDetail() {
   const [expandedContainer, setExpandedContainer] = useState<string | null>(null)
   const [containerVolumes, setContainerVolumes] = useState<Record<string, number>>({})
   const [containerWeights, setContainerWeights] = useState<Record<string, number>>({})
+  const [allocatedUnits, setAllocatedUnits] = useState(0)
   const [suggesting, setSuggesting] = useState(false)
   // Synchronous re-entrancy lock for suggestLayout -- setSuggesting alone
   // isn't enough because the disabled-button re-render lags one tick behind
@@ -102,9 +104,11 @@ export function ProformaInvoiceDetail() {
       setProducts(prodRes.data ?? [])
       const volumes: Record<string, number> = {}
       const weights: Record<string, number> = {}
+      let packedUnits = 0
       for (const row of (plItemsRes.data ?? []) as any[]) {
         const containerId = row.packing_lists?.container_id
         if (!containerId) continue
+        packedUnits += Number(row.total_units ?? 0)
         const dimensionVolume = Number(row.total_volume_m3 ?? 0)
         const productVolumePerUnit = row.pi_items?.products?.volume_m3
         const effectiveVolume = dimensionVolume > 0
@@ -123,6 +127,7 @@ export function ProformaInvoiceDetail() {
       }
       setContainerVolumes(volumes)
       setContainerWeights(weights)
+      setAllocatedUnits(packedUnits)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -306,28 +311,32 @@ export function ProformaInvoiceDetail() {
       // Top up with fresh containers until nothing's left unplaced, capped
       // so a genuinely-impossible item (bigger than an empty container)
       // can't spin this into an endless container-creation loop.
-      for (let attempt = 0; attempt < 5 && result.unplaced.length > 0; attempt++) {
+      for (let attempt = 0; attempt < 8 && result.unplaced.length > 0; attempt++) {
         if (singleCartonExceedsContainer(result.unplaced, suggestionItems, biggestType.capacityM3, biggestType.payloadKg)) break
 
         const chosen = pickContainerTypeForDeficit(result.unplaced, suggestionItems, STANDARD_TYPES_SMALLEST_FIRST)
+        const calculatedCount = estimateNewContainersNeeded(result.unplaced, suggestionItems, chosen.capacityM3, chosen.payloadKg)
+        const containersToCreate = Math.min(calculatedCount, Math.max(0, 24 - workingContainers.length))
+        if (!containersToCreate) break
         const { data: pending } = await supabase.from('containers').select('container_number').like('container_number', 'PENDING-%')
         let maxN = (pending ?? []).reduce((max: number, r: any) => {
           const n = parseInt(String(r.container_number).slice('PENDING-'.length), 10)
           return Number.isFinite(n) && n > max ? n : max
         }, 0)
 
-        // A single container of the chosen type might not be the WHOLE
-        // answer if it's the fallback biggest type and still doesn't cover
-        // everything -- suggestPackingLayout below will report unplaced
-        // again in that case and the outer loop tops up with another one.
-        maxN += 1
-        const containerNumber = `PENDING-${maxN}`
-        const newId = await createContainer(pi.id, { container_number: containerNumber, container_type: chosen.type })
-        createdContainerNumbers.push(containerNumber)
-        containerNumberById.set(newId, containerNumber)
-        capacityById.set(newId, chosen.capacityM3)
-        baselineUsedById.set(newId, 0)
-        workingContainers = [...workingContainers, { containerId: newId, capacityM3: chosen.capacityM3, payloadKg: chosen.payloadKg, usedM3: 0, usedKg: 0 }]
+        // Create the calculated capacity in one pass instead of discovering
+        // one missing container per rerun. A subsequent pass only handles
+        // bin-packing geometry that aggregate CBM/payload cannot predict.
+        for (let index = 0; index < containersToCreate; index++) {
+          maxN += 1
+          const containerNumber = `PENDING-${maxN}`
+          const newId = await createContainer(pi.id, { container_number: containerNumber, container_type: chosen.type })
+          createdContainerNumbers.push(containerNumber)
+          containerNumberById.set(newId, containerNumber)
+          capacityById.set(newId, chosen.capacityM3)
+          baselineUsedById.set(newId, 0)
+          workingContainers = [...workingContainers, { containerId: newId, capacityM3: chosen.capacityM3, payloadKg: chosen.payloadKg, usedM3: 0, usedKg: 0 }]
+        }
         result = suggestPackingLayout(suggestionItems, workingContainers)
       }
 
@@ -420,13 +429,17 @@ export function ProformaInvoiceDetail() {
   }
 
   const routed = pi.buyer_company && pi.final_company && pi.buyer_company.name !== pi.final_company.name
+  const totalUnits = items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+  const invoiceValue = items.reduce((sum, item) => sum + Number(item.total_price ?? 0), 0)
+  const allocatedPct = totalUnits ? Math.min(100, allocatedUnits / totalUnits * 100) : 0
 
   return (
-    <div className="p-5 max-w-5xl mx-auto">
-      <Link to="/proforma-invoices" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3 transition-colors">
+    <div className="proforma-detail p-5 max-w-7xl mx-auto">
+      <Link to="/proforma-invoices" className="pi-detail-back">
         <ArrowLeft size={12} /> Proforma invoices
       </Link>
 
+      <section className="pi-detail-hero">
       <PageHeader
         title={pi.pi_number}
         subtitle={<>
@@ -437,6 +450,10 @@ export function ProformaInvoiceDetail() {
             : <> · {pi.final_company?.name ?? 'no company set'}</>}
         </>}
       />
+      <div className="pi-detail-facts"><span><CalendarDays /><small>Issued</small><strong>{pi.issue_date}</strong></span><span><Route /><small>Trade route</small><strong>{pi.port_of_loading ?? 'Origin TBD'} → {pi.port_of_discharge ?? 'Destination TBD'}</strong></span><span><CircleDollarSign /><small>Invoice value</small><strong>${N(invoiceValue)} {pi.currency}</strong></span><span><Package /><small>Ordered</small><strong>{N(totalUnits)} units</strong></span></div>
+      </section>
+
+      <section className="pi-readiness"><div><span>Commercial order</span><strong>{items.length ? 'Line items entered' : 'Add line items'}</strong></div><i className={items.length ? 'done' : ''} /><div><span>Container allocation</span><strong>{N(allocatedPct)}% packed</strong></div><i className={allocatedPct >= 100 ? 'done' : ''} /><div><span>Shipment handoff</span><strong>{containers.some(container => container.shipment_id) ? 'Shipment generated' : 'Not generated'}</strong></div></section>
 
       {error && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -488,21 +505,21 @@ export function ProformaInvoiceDetail() {
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 mb-5 border-b border-gray-100 pb-3">
+      <div className="pi-inner-tabs" role="tablist" aria-label="Proforma workspace">
         <button onClick={() => setTab('items')}
-          className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full border transition-colors ${tab === 'items' ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
-          <Package size={12} /> Line items ({items.length})
+          className={tab === 'items' ? 'active' : ''}>
+          <Package size={15} /><span><strong>Line items</strong><small>Products, HS codes and customs value</small></span><b>{items.length}</b>
         </button>
         <button onClick={() => { setTab('containers'); suggestLayout(true) }}
-          className={`flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-full border transition-colors ${tab === 'containers' ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
-          <Boxes size={12} /> Containers ({containers.length})
+          className={tab === 'containers' ? 'active' : ''}>
+          <Boxes size={15} /><span><strong>Containers</strong><small>Cartons, dimensions, weight and filling</small></span><b>{containers.length}</b>
         </button>
       </div>
 
       {tab === 'items' && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium">Line items</p>
+        <div className="pi-tab-workspace">
+          <div className="pi-workspace-head">
+            <div><span>Commercial classification</span><h2>Invoice line items</h2><p>Match the supplier document: product, quantity, price, origin and customs treatment.</p></div>
             <button onClick={openAddItem}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-accent-foreground text-xs rounded-full hover:brightness-95 transition-colors">
               <Plus size={13} /> Add item
@@ -520,8 +537,8 @@ export function ProformaInvoiceDetail() {
               </button>
             </div>
           ) : (
-            <div className="bg-white border border-gray-200 rounded-card overflow-hidden overflow-x-auto">
-              <table className="w-full text-xs">
+            <div className="pi-line-register">
+              <table>
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <th className="text-left px-4 py-2.5 font-medium text-gray-400 uppercase tracking-wide">Item</th>
@@ -561,14 +578,14 @@ export function ProformaInvoiceDetail() {
       )}
 
       {tab === 'containers' && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium">Containers</p>
+        <div className="pi-tab-workspace">
+          <div className="pi-workspace-head">
+            <div><span>Physical load planning</span><h2>Container filling</h2><p>Allocate every ordered unit, check CBM and payload, then generate the shared shipment.</p></div>
             <div className="flex items-center gap-2">
-              <button onClick={() => suggestLayout()} disabled={suggesting || containers.length === 0 || items.length === 0}
-                title={containers.length === 0 ? 'Add a container first' : 'Auto-split remaining items across containers'}
+              <button onClick={() => suggestLayout()} disabled={suggesting || items.length === 0}
+                title="Calculate the required containers and allocate remaining cartons"
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-gray-600 border border-gray-200 text-xs rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors">
-                {suggesting ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Suggest layout
+                {suggesting ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Smart fill
               </button>
               <GenerateShipmentButton containers={containers} onGenerated={() => load()} />
               <button onClick={() => { setContainerForm({ ...EMPTY_CONTAINER }); setEditingContainerId(null); setError(null); setContainerOpen(true) }}
@@ -587,14 +604,14 @@ export function ProformaInvoiceDetail() {
               <p className="text-xs text-gray-400">Split this order's line items across one or more containers — they'll all share one shipment, each still tracked independently.</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="pi-container-grid">
               {containers.map(c => (
-                <div key={c.id} className="bg-white border border-gray-200 rounded-card overflow-hidden">
-                  <div className="flex items-center justify-between px-4 pt-3 cursor-pointer"
+                <article key={c.id} className={`pi-container-card ${expandedContainer === c.id ? 'expanded' : ''}`}>
+                  <div className="pi-container-top"
                     onClick={() => setExpandedContainer(v => v === c.id ? null : c.id)}>
                     <div>
-                      <p className="text-sm font-medium font-mono">{c.container_number}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{c.vessel_name || 'vessel TBD'}{c.eta_djibouti ? ` · ETA ${c.eta_djibouti}` : ''}</p>
+                      <span>{c.container_type}</span><h3>{c.container_number}</h3>
+                      <p>{c.vessel_name || 'Vessel not assigned'}{c.eta_djibouti ? ` · ETA ${c.eta_djibouti}` : ''}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {c.shipment_id && (
@@ -604,15 +621,16 @@ export function ProformaInvoiceDetail() {
                         className="text-gray-300 hover:text-blue-600 transition-colors"><Pencil size={13} /></button>
                     </div>
                   </div>
-                  <div className="px-4 pt-3 pb-1 max-w-md">
+                  <div className="pi-container-gauge">
                     <ContainerFillGauge containerType={c.container_type} packedM3={containerVolumes[c.id] ?? 0} />
                   </div>
+                  <div className="pi-container-facts"><span><Scale /><small>Payload</small><strong>{N(containerWeights[c.id] ?? 0)} / {N(containerPayloadKg(c.container_type))} kg</strong></span><span><Boxes /><small>Volume left</small><strong>{N(Math.max(0, containerCapacityM3(c.container_type) - (containerVolumes[c.id] ?? 0)))} m³</strong></span><span><Ship /><small>Shipment</small><strong>{c.shipments?.shipment_number ?? 'Not generated'}</strong></span></div>
                   {expandedContainer === c.id && (
-                    <div className="px-4 pb-4 border-t border-gray-50">
+                    <div className="pi-container-packing">
                       <PackingListBuilder piId={pi.id} containerId={c.id} piItems={items} onChanged={load} refreshToken={refreshToken} />
                     </div>
                   )}
-                </div>
+                </article>
               ))}
             </div>
           )}

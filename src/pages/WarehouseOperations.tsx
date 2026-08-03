@@ -1,25 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeDollarSign,
+  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowRightLeft, ArrowUpRight, BadgeDollarSign,
   Boxes, BriefcaseBusiness, Building2, CalendarDays, Check, CheckCircle2, ChevronRight,
-  CircleDollarSign, ClipboardCheck, Clock3, Factory, Gauge, Layers3, Loader2, Package, Plus,
+  CircleDollarSign, ClipboardCheck, Clock3, Factory, Gauge, Layers3, Loader2, MapPin, Package, Plus,
   FileDown, Landmark, RefreshCw, Search, ShieldAlert, ShieldCheck, Sparkles, TrendingUp, UserCheck, Users, WalletCards, X,
+  ClipboardPaste, ShoppingCart,
 } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import { SelectMenu } from '../components/ui/SelectMenu'
+import { BulkImportModal } from '../components/BulkImportModal'
+import type { BulkImportColumn } from '../components/BulkImportModal'
 import { createDamageReport } from '../api/damageReports'
+import { createEmployee, fetchEmployeeById, updateEmployee } from '../api/employees'
+import type { EmployeeInput } from '../api/employees'
 import { fetchProductionDailyReport, logUnmanagedProduction } from '../api/production'
 import type { ProductionDailyReportData } from '../api/production'
 import {
   approveProductionBatch,
   computeMaxProducible,
   createProductionBatch,
+  createWarehouseLocation,
   createWarehouseProductionOrder,
   createWorkforceGroup,
   decideOvertime,
+  fetchWarehouseLocationsData,
   fetchWarehouseOperations,
+  moveInventoryLocation,
   prepareWarehousePayroll,
   refreshOperationalAlerts,
   resolveOperationalAlert,
@@ -32,6 +40,7 @@ import {
 } from '../api/warehouseOperations'
 import type {
   AttendanceStatus,
+  LocationStockRow,
   OperationalEmployee,
   OperationalProductionOrder,
   OperationalUnit,
@@ -39,13 +48,15 @@ import type {
   ProductionBatch,
   UnitAccessRole,
   UnitDailyRollup,
+  UnplacedStockRow,
+  WarehouseLocation,
   WarehouseOperationsData,
   WarehousePayrollRun,
   WorkforceGroup,
 } from '../api/warehouseOperations'
 
-type Tab = 'overview' | 'production' | 'workforce' | 'attendance' | 'overtime' | 'efficiency' | 'payroll' | 'dailyReport' | 'alerts'
-type ModalName = 'batch' | 'batchDetail' | 'productionOrder' | 'group' | 'attendance' | 'overtime' | 'payroll' | 'logProduction' | 'logDamage' | null
+type Tab = 'overview' | 'production' | 'workforce' | 'locations' | 'attendance' | 'overtime' | 'efficiency' | 'payroll' | 'dailyReport' | 'alerts'
+type ModalName = 'batch' | 'batchDetail' | 'productionOrder' | 'group' | 'attendance' | 'overtime' | 'payroll' | 'logProduction' | 'logDamage' | 'employee' | 'newLocation' | 'moveStock' | null
 
 const today = () => new Date().toISOString().slice(0, 10)
 const nf = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -106,6 +117,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'production', label: 'Production control' },
   { key: 'workforce', label: 'Workforce' },
+  { key: 'locations', label: 'Locations' },
   { key: 'attendance', label: 'Attendance' },
   { key: 'overtime', label: 'Overtime' },
   { key: 'efficiency', label: 'Efficiency' },
@@ -597,6 +609,7 @@ function ProductionControl({
   data,
   units,
   selectedUnit,
+  date,
   query,
   focusedOrderId,
   canPlan,
@@ -611,6 +624,7 @@ function ProductionControl({
   data: WarehouseOperationsData
   units: OperationalUnit[]
   selectedUnit: OperationalUnit | null
+  date: string
   query: string
   focusedOrderId: string
   canPlan: boolean
@@ -792,8 +806,93 @@ function ProductionControl({
         )}
       </Section>
 
+      <FinishedGoodsPanel data={data} units={units} date={date} />
       <ProducibleNowPanel data={data} units={units} />
     </>
+  )
+}
+
+interface FinishedOutputMovement {
+  id: string
+  warehouse_id: string
+  product_id: string
+  quantity: number
+  movement_date: string
+}
+
+function FinishedGoodsPanel({ data, units, date }: { data: WarehouseOperationsData; units: OperationalUnit[]; date: string }) {
+  const [outputs, setOutputs] = useState<FinishedOutputMovement[]>([])
+  const [loading, setLoading] = useState(true)
+  const warehouseIds = useMemo(() => units.map(unit => unit.warehouse_id).filter((id): id is string => Boolean(id)), [units])
+
+  useEffect(() => {
+    let active = true
+    const timer = window.setTimeout(() => {
+      if (!warehouseIds.length) { setOutputs([]); setLoading(false); return }
+      setLoading(true)
+      void supabase.from('inventory_ledger')
+        .select('id, warehouse_id, product_id, quantity, movement_date')
+        .eq('movement_type', 'PRODUCTION_OUTPUT')
+        .in('warehouse_id', warehouseIds)
+        .lt('movement_date', offsetDate(date, 1))
+        .order('movement_date', { ascending: false })
+        .limit(2000)
+        .then(({ data: rows }) => {
+          if (active) {
+            setOutputs(((rows ?? []) as FinishedOutputMovement[]).map(row => ({ ...row, quantity: Number(row.quantity ?? 0) })))
+            setLoading(false)
+          }
+        }, () => { if (active) setLoading(false) })
+    }, 0)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [date, warehouseIds])
+
+  const rows = useMemo(() => {
+    const grouped = new Map<string, { warehouseId: string; productId: string; today: number; total: number; lastDate: string; daily: Map<string, number> }>()
+    for (const output of outputs) {
+      const key = `${output.warehouse_id}:${output.product_id}`
+      const current = grouped.get(key) ?? { warehouseId: output.warehouse_id, productId: output.product_id, today: 0, total: 0, lastDate: output.movement_date, daily: new Map<string, number>() }
+      const movementDay = output.movement_date.slice(0, 10)
+      current.total += output.quantity
+      if (movementDay === date) current.today += output.quantity
+      current.daily.set(movementDay, (current.daily.get(movementDay) ?? 0) + output.quantity)
+      if (output.movement_date > current.lastDate) current.lastDate = output.movement_date
+      grouped.set(key, current)
+    }
+    return [...grouped.values()].map(row => ({
+      ...row,
+      product: data.products.find(product => product.id === row.productId),
+      unit: units.find(unit => unit.warehouse_id === row.warehouseId),
+      onHand: data.inventory.find(item => item.warehouse_id === row.warehouseId && item.product_id === row.productId)?.quantity_on_hand ?? 0,
+      dailyValues: [...row.daily.entries()].sort(([left], [right]) => left.localeCompare(right)).slice(-7).map(([, quantity]) => quantity),
+    })).sort((left, right) => right.today - left.today || right.onHand - left.onHand)
+  }, [data.inventory, data.products, date, outputs, units])
+
+  const outputToday = sum(rows, row => row.today)
+  const outputToDate = sum(rows, row => row.total)
+  const onHand = sum(rows, row => row.onHand)
+
+  return (
+    <Section title="Finished goods control" eyebrow={`Assembly output through ${formatDate(date)}`}>
+      <div className="warehouse-finished-explainer"><Factory size={18} /><div><strong>Approved output lands here.</strong><span>Components are consumed and accepted units become on-hand finished goods in the producing warehouse. From here, transfer stock to another warehouse or sell it.</span></div></div>
+      <div className="warehouse-finished-kpis">
+        <article><span>Produced today</span><strong>{formatNumber(outputToday)}</strong><small>Approved units on {formatDate(date)}</small></article>
+        <article><span>Produced to date</span><strong>{formatNumber(outputToDate)}</strong><small>All approved production output</small></article>
+        <article><span>Finished goods on hand</span><strong>{formatNumber(onHand)}</strong><small>Available across this warehouse scope</small></article>
+        <article><span>Available product lines</span><strong>{rows.filter(row => row.onHand > 0).length}</strong><small>Ready to transfer or sell</small></article>
+      </div>
+      {loading ? <div className="warehouse-finished-loading"><Loader2 className="animate-spin" size={20} /> Loading finished goods ledger…</div> : rows.length ? (
+        <div className="warehouse-finished-grid">{rows.map(row => {
+          const maxDaily = Math.max(1, ...row.dailyValues)
+          return <article key={`${row.warehouseId}:${row.productId}`}>
+            <header><div><Package size={16} /><span><strong>{row.product?.name ?? 'Finished product'}</strong><small>{row.product?.sku ?? 'No SKU'} · {row.unit?.name ?? 'Warehouse'}</small></span></div><b>{formatNumber(row.onHand)}<small>on hand</small></b></header>
+            <div className="warehouse-finished-stats"><span><small>Today</small><b>{formatNumber(row.today)}</b></span><span><small>Produced to date</small><b>{formatNumber(row.total)}</b></span><span><small>Last output</small><b>{formatDate(row.lastDate.slice(0, 10))}</b></span></div>
+            <div className="warehouse-finished-trend" aria-label="Last seven production days">{row.dailyValues.map((value, index) => <i key={index} style={{ height: `${Math.max(12, value / maxDaily * 100)}%` }} title={`${formatNumber(value)} units`} />)}</div>
+            <footer><Link to={`/warehouse-transfers?from=${row.warehouseId}&product=${row.productId}&quantity=${Math.max(0, row.onHand)}`}><ArrowRightLeft size={14} />Send to warehouse</Link><Link to={`/sales?warehouse=${row.warehouseId}&product=${row.productId}`}><ShoppingCart size={14} />Sell product</Link><Link to="/inventory">History <ArrowRight size={13} /></Link></footer>
+          </article>
+        })}</div>
+      ) : <EmptyState icon={Factory} title="No approved finished goods yet" copy="Approve a production batch or use Log production. Its accepted quantity will appear here and in warehouse inventory." />}
+    </Section>
   )
 }
 
@@ -1267,8 +1366,111 @@ function BulkAttendanceForm({
   )
 }
 
+const ATTENDANCE_IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'employee', label: 'Employee', required: true, width: '160px' },
+  { key: 'date', label: 'Date (YYYY-MM-DD)', required: true, width: '110px' },
+  { key: 'status', label: 'Status', required: true, width: '90px' },
+  { key: 'regular_hours', label: 'Regular hours', width: '90px' },
+  { key: 'overtime_hours', label: 'Overtime hours', width: '90px' },
+  { key: 'notes', label: 'Notes', width: '140px' },
+]
+const ATTENDANCE_IMPORT_EXAMPLE = `employee,date,status,regular_hours,overtime_hours,notes
+Almaz Tesfaye,2026-07-28,present,8,0,
+Bereket Alemu,2026-07-28,absent,0,0,called in sick
+Almaz Tesfaye,2026-07-29,present,8,1.5,`
+
+const ATTENDANCE_STATUS_VALUES = new Set(['present', 'absent', 'partial', 'leave', 'sick'])
+
+function AttendanceImportButton({
+  unit, employees, saving, onRefresh,
+}: {
+  unit: OperationalUnit
+  employees: OperationalEmployee[]
+  saving: boolean
+  onRefresh: () => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+
+  async function handleImport(rows: Record<string, string>[]) {
+    const errors: string[] = []
+    const valid: Parameters<typeof saveAttendanceBatch>[0] = []
+
+    rows.forEach((row, i) => {
+      const rowLabel = `Row ${i + 1}`
+      const name = row.employee?.trim()
+      if (!name) { errors.push(`${rowLabel}: missing employee name.`); return }
+
+      const exact = employees.filter(e => e.full_name.trim().toLowerCase() === name.toLowerCase())
+      const candidates = exact.length > 0 ? exact : employees.filter(e => e.full_name.toLowerCase().includes(name.toLowerCase()))
+      if (candidates.length === 0) { errors.push(`${rowLabel}: no employee in this warehouse matches "${name}".`); return }
+      if (candidates.length > 1) { errors.push(`${rowLabel}: "${name}" matches more than one employee — use their full name.`); return }
+
+      const attendanceDate = row.date?.trim()
+      if (!attendanceDate || !/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || Number.isNaN(Date.parse(attendanceDate))) {
+        errors.push(`${rowLabel}: invalid date "${row.date}" — use YYYY-MM-DD.`); return
+      }
+
+      const status = row.status?.trim().toLowerCase()
+      if (!ATTENDANCE_STATUS_VALUES.has(status)) {
+        errors.push(`${rowLabel}: invalid status "${row.status}" — must be present, absent, partial, leave, or sick.`); return
+      }
+
+      const defaultHours = status === 'absent' || status === 'leave' || status === 'sick' ? 0 : 8
+      const regularHours = row.regular_hours?.trim() ? Number(row.regular_hours) : defaultHours
+      const overtimeHours = row.overtime_hours?.trim() ? Number(row.overtime_hours) : 0
+      if (Number.isNaN(regularHours) || regularHours < 0 || regularHours > 24) { errors.push(`${rowLabel}: regular hours must be between 0 and 24.`); return }
+      if (Number.isNaN(overtimeHours) || overtimeHours < 0 || overtimeHours > 16) { errors.push(`${rowLabel}: overtime hours must be between 0 and 16.`); return }
+
+      valid.push({
+        employeeId: candidates[0].id,
+        operationalUnitId: unit.id,
+        shiftId: null,
+        attendanceDate,
+        attendanceStatus: status as Parameters<typeof saveAttendanceBatch>[0][number]['attendanceStatus'],
+        regularHours,
+        rawOvertimeHours: overtimeHours,
+        notes: row.notes || undefined,
+        source: 'import',
+      })
+    })
+
+    // Saved directly (not through the shared onSaveBulk/runAction path) —
+    // that path unconditionally closes the whole Attendance Control modal
+    // on any successful save, which would wipe out this result banner
+    // before the user ever saw which rows failed to match.
+    if (valid.length > 0) {
+      try {
+        await saveAttendanceBatch(valid)
+        await onRefresh()
+      } catch (e: any) {
+        return { succeeded: 0, errors: [...errors, e?.message ?? 'Failed to save the imported batch.'] }
+      }
+    }
+    return { succeeded: valid.length, errors }
+  }
+
+  return (
+    <>
+      <button type="button" className="warehouse-ops-secondary" onClick={() => setOpen(true)} disabled={saving}>
+        <ClipboardPaste size={15} /> Import attendance
+      </button>
+      {open && (
+        <BulkImportModal
+          title={`Import attendance — ${unit.name}`}
+          columns={ATTENDANCE_IMPORT_COLUMNS}
+          exampleCsv={ATTENDANCE_IMPORT_EXAMPLE}
+          helpText="Paste attendance exported from a timesheet, biometric device, or spreadsheet — one row per employee per day. Employees are matched by full name against this warehouse's roster."
+          onImport={handleImport}
+          onClose={() => setOpen(false)}
+          onImported={() => setOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
 function AttendanceWorkspace({
-  unit, employees, shifts, attendance, date, saving, onSaveSingle, onSaveBulk,
+  unit, employees, shifts, attendance, date, saving, onSaveSingle, onSaveBulk, onRefresh,
 }: {
   unit: OperationalUnit
   employees: OperationalEmployee[]
@@ -1278,6 +1480,7 @@ function AttendanceWorkspace({
   saving: boolean
   onSaveSingle: (input: Parameters<typeof saveAttendance>[0]) => Promise<void>
   onSaveBulk: (inputs: Parameters<typeof saveAttendanceBatch>[0]) => Promise<void>
+  onRefresh: () => Promise<void>
 }) {
   const [mode, setMode] = useState<'bulk' | 'single'>('bulk')
   return (
@@ -1289,6 +1492,7 @@ function AttendanceWorkspace({
         <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'is-active' : ''} onClick={() => setMode('single')}>
           <UserCheck size={14} /> Quick single entry
         </button>
+        <AttendanceImportButton unit={unit} employees={employees} saving={saving} onRefresh={onRefresh} />
       </div>
       {mode === 'bulk'
         ? <BulkAttendanceForm unit={unit} employees={employees} shifts={shifts} attendance={attendance} date={date} saving={saving} onSave={onSaveBulk} />
@@ -1445,6 +1649,7 @@ export function WarehouseOperations() {
   const [modal, setModal] = useState<ModalName>(null)
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null)
   const [preselectedProductionOrderId, setPreselectedProductionOrderId] = useState('')
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1452,6 +1657,10 @@ export function WarehouseOperations() {
   const [notice, setNotice] = useState<string | null>(null)
   const [dailyReport, setDailyReport] = useState<ProductionDailyReportData>({ logs: [], movements: [], salesToday: 0, damageReports: [] })
   const [shipments, setShipments] = useState<Array<{ id: string; shipment_number: string }>>([])
+  const [locations, setLocations] = useState<WarehouseLocation[]>([])
+  const [stockByLocation, setStockByLocation] = useState<LocationStockRow[]>([])
+  const [unplacedStock, setUnplacedStock] = useState<UnplacedStockRow[]>([])
+  const [moveStockContext, setMoveStockContext] = useState<{ productId: string; fromLocationId: string | null } | null>(null)
 
   // Keep date/warehouse/tab in the URL so a hard refresh (or a shared
   // link) restores the same view instead of silently resetting to
@@ -1480,6 +1689,11 @@ export function WarehouseOperations() {
       setData(next)
       setDailyReport(report)
       setShipments((shipmentsRes.data ?? []) as Array<{ id: string; shipment_number: string }>)
+      const warehouseIds = [...new Set(next.units.map(unit => unit.warehouse_id).filter((id): id is string => Boolean(id)))]
+      const locationsData = await fetchWarehouseLocationsData(warehouseIds)
+      setLocations(locationsData.locations)
+      setStockByLocation(locationsData.stockByLocation)
+      setUnplacedStock(locationsData.unplacedStock)
       setSelectedUnitId(current => {
         if (next.units.length === 1) return next.units[0].id
         if (current !== 'all' && !next.units.some(unit => unit.id === current)) return 'all'
@@ -1723,6 +1937,35 @@ export function WarehouseOperations() {
     }
   }
 
+  async function submitEmployee(input: EmployeeInput, existingId: string | null) {
+    if (!selectedUnit?.warehouse_id) throw new Error('Select a warehouse first.')
+    const payload: EmployeeInput = { ...input, warehouse_id: selectedUnit.warehouse_id }
+    if (existingId) await updateEmployee(existingId, payload)
+    else await createEmployee(payload)
+  }
+
+  async function submitNewLocation(input: { code: string; name: string; locationType: WarehouseLocation['location_type'] }) {
+    if (!selectedUnit?.warehouse_id) throw new Error('Select a warehouse first.')
+    await createWarehouseLocation({
+      warehouseId: selectedUnit.warehouse_id,
+      code: input.code,
+      name: input.name || undefined,
+      locationType: input.locationType,
+    })
+  }
+
+  async function submitMoveStock(input: { toLocationId: string; quantity: number; notes: string }) {
+    if (!selectedUnit?.warehouse_id || !moveStockContext) throw new Error('Select a warehouse first.')
+    await moveInventoryLocation({
+      warehouseId: selectedUnit.warehouse_id,
+      productId: moveStockContext.productId,
+      fromLocationId: moveStockContext.fromLocationId,
+      toLocationId: input.toLocationId,
+      quantity: input.quantity,
+      notes: input.notes || undefined,
+    })
+  }
+
   async function submitDamageReport(input: { productId: string; quantity: number; reason: string; shipmentId: string; reportDate: string }) {
     if (!selectedUnit?.warehouse_id) throw new Error('Select a warehouse first.')
     await createDamageReport({
@@ -1853,6 +2096,7 @@ export function WarehouseOperations() {
                 data={data}
                 units={scopedUnits}
                 selectedUnit={selectedUnit}
+                date={date}
                 query={query}
                 focusedOrderId={preselectedProductionOrderId}
                 canPlan={canPlanProduction}
@@ -1885,21 +2129,35 @@ export function WarehouseOperations() {
 
           {tab === 'workforce' && (
             <div className="warehouse-ops-two-column">
-              <Section title="Employees & Groups" eyebrow={`${filteredEmployees.length} active employees`} className="is-wide" action={selectedUnit && canManage ? <button className="warehouse-ops-primary" onClick={() => setModal('group')}><Plus size={15} /> Create group</button> : undefined}>
-                {filteredEmployees.length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table is-roomy"><thead><tr><th>Employee</th><th>Employment</th><th>Operational unit</th><th>Groups</th><th>Attendance</th><th>Efficiency</th></tr></thead><tbody>{filteredEmployees.map(employee => {
+              <Section title="Warehouse Employees & Groups" eyebrow={`${filteredEmployees.length} active · owned by this warehouse`} className="is-wide" action={selectedUnit && canManage ? <div className="warehouse-ops-section-actions"><button className="warehouse-ops-secondary" onClick={() => { setEditingEmployeeId(null); setModal('employee') }}><Plus size={15} /> Register warehouse employee</button><button className="warehouse-ops-primary" onClick={() => setModal('group')}><Plus size={15} /> Create local group</button></div> : undefined}>
+                {filteredEmployees.length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table is-roomy"><thead><tr><th>Employee</th><th>Employment</th><th>Operational unit</th><th>Groups</th><th>Attendance</th><th>Efficiency</th><th /></tr></thead><tbody>{filteredEmployees.map(employee => {
                   const memberships = data.groupMembers.filter(member => member.employee_id === employee.id).map(member => data.groups.find(group => group.id === member.workforce_group_id)?.name).filter(Boolean)
                   const attendance = scopedAttendance.find(row => row.employee_id === employee.id)
                   const efficiency = scopedEfficiency.find(row => row.employee_id === employee.id)
-                  return <tr key={employee.id}><td><strong>{employee.full_name}</strong><small>{employee.title ?? employee.department ?? 'Employee'}</small></td><td>{titleCase(employee.employment_type)}</td><td>{unitById.get(employee.operational_unit_id)?.name}</td><td>{memberships.join(', ') || 'Unassigned'}</td><td>{attendance ? <StatusPill value={attendance.attendance_status} /> : <span className="warehouse-ops-muted">Not recorded</span>}</td><td>{efficiency ? `${oneDecimal.format(efficiency.efficiency_pct)}%` : '—'}</td></tr>
-                })}</tbody></table></div> : <EmptyState icon={Users} title="No employees in this scope" copy="Assign employees to a warehouse in the HR employee master." />}
+                  return <tr key={employee.id}><td><strong>{employee.full_name}</strong><small>{employee.title ?? employee.department ?? 'Employee'}</small></td><td>{titleCase(employee.employment_type)}</td><td>{unitById.get(employee.operational_unit_id)?.name}</td><td>{memberships.join(', ') || 'Unassigned'}</td><td>{attendance ? <StatusPill value={attendance.attendance_status} /> : <span className="warehouse-ops-muted">Not recorded</span>}</td><td>{efficiency ? `${oneDecimal.format(efficiency.efficiency_pct)}%` : '—'}</td><td>{canManage && <button className="warehouse-ops-row-action" onClick={() => { setEditingEmployeeId(employee.id); setModal('employee') }}>Edit</button>}</td></tr>
+                })}</tbody></table></div> : <EmptyState icon={Users} title="No employees in this warehouse" copy={canManage ? 'Register the first employee here. The record will appear read-only in the central HR warehouse directory.' : 'The assigned warehouse manager has not registered employees yet.'} />}
               </Section>
-              <Section title="Active Groups" eyebrow="Reusable allocation">
+              <Section title="Warehouse Groups" eyebrow="Local workforce classification">
                 {scopedGroups.length ? <div className="warehouse-ops-group-cards">{scopedGroups.map(group => {
                   const members = data.groupMembers.filter(member => member.workforce_group_id === group.id)
                   return <article key={group.id}><div><Users size={18} /></div><strong>{group.name}</strong><span>{titleCase(group.group_type)}</span><b>{members.length}<small>members</small></b></article>
-                })}</div> : <EmptyState icon={Layers3} title="No workforce groups" copy="Groups make production allocation faster without merging employee records." />}
+                })}</div> : <EmptyState icon={Layers3} title="No local workforce groups" copy="Create groups inside this warehouse for shifts, task teams and production allocation." />}
               </Section>
             </div>
+          )}
+
+          {tab === 'locations' && (
+            <LocationsTab
+              units={scopedUnits}
+              selectedUnit={selectedUnit}
+              locations={locations}
+              stockByLocation={stockByLocation}
+              unplacedStock={unplacedStock}
+              products={data.products}
+              canManage={canManage}
+              onNewLocation={() => setModal('newLocation')}
+              onMoveStock={(productId, fromLocationId) => { setMoveStockContext({ productId, fromLocationId }); setModal('moveStock') }}
+            />
           )}
 
           {tab === 'attendance' && (
@@ -1942,7 +2200,7 @@ export function WarehouseOperations() {
                 <article className="is-accent"><span>Net payroll</span><strong>{latestRun ? money.format(latestRun.net_amount) : '—'}</strong><small>Employee payroll payable</small></article>
                 <article className="is-dark"><span>Accounting expense</span><strong>{latestRun ? money.format(latestRun.gross_amount + latestRun.employer_pension_amount) : '—'}</strong><small>Summarized journal debit</small></article>
               </div>
-              <Section title="Consolidated Payroll Summary" eyebrow="Operational detail, accounting summary" className="is-wide" action={
+              <Section title="Warehouse Payroll Runs" eyebrow="Calculated here · submitted to central Payroll" className="is-wide" action={
                 <div className="warehouse-ops-section-actions">
                   <Link to="/payroll" className="warehouse-ops-secondary"><WalletCards size={15} /> Open system Payroll</Link>
                   {latestRun && <button className="warehouse-ops-secondary" onClick={() => downloadPayrollReport(latestRun, data.payrollEmployees, employeeById, unitById.get(latestRun.operational_unit_id)?.name ?? 'Warehouse')}><FileDown size={15} /> Export report</button>}
@@ -1990,11 +2248,14 @@ export function WarehouseOperations() {
       {modal === 'productionOrder' && selectedUnit && canPlanProduction && <Modal eyebrow={selectedUnit.name} title="Create Production Order" onClose={() => setModal(null)}><ProductionOrderForm unit={selectedUnit} data={data} date={date} saving={saving} onSave={input => runAction(() => createWarehouseProductionOrder(input).then(orderId => { setPreselectedProductionOrderId(orderId) }), 'Production order created and added to the warehouse plan queue.', true, true)} /></Modal>}
       {modal === 'batchDetail' && selectedBatch && <Modal wide eyebrow={unitById.get(selectedBatch.operational_unit_id)?.name ?? 'Production control'} title={selectedBatch.batch_number} onClose={() => { setModal(null); setSelectedBatchId(null) }}><BatchDetail batch={selectedBatch} data={data} canManage={canManageSelectedBatch} canApprove={canApproveSelectedBatch} saving={saving} onTransition={input => runAction(() => transitionProductionBatch(input), input.action === 'start' ? 'Production batch started.' : input.action === 'cancel' ? 'Production batch cancelled.' : 'Production posted to inventory.', true)} onApprove={() => runAction(() => approveProductionBatch(selectedBatch.id), `${selectedBatch.batch_number} approved.`, true)} /></Modal>}
       {modal === 'group' && selectedUnit && <Modal eyebrow={selectedUnit.name} title="Create Workforce Group" onClose={() => setModal(null)}><GroupForm unit={selectedUnit} employees={data.employees.filter(employee => employee.operational_unit_id === selectedUnit.id)} saving={saving} onSave={input => runAction(() => createWorkforceGroup(input), 'Workforce group created.', true)} /></Modal>}
-      {modal === 'attendance' && selectedUnit && <Modal wide eyebrow={selectedUnit.name} title="Attendance Control" onClose={() => setModal(null)}><AttendanceWorkspace unit={selectedUnit} employees={data.employees.filter(employee => employee.operational_unit_id === selectedUnit.id)} shifts={data.shifts.filter(shift => shift.operational_unit_id === selectedUnit.id)} attendance={data.attendance.filter(row => row.operational_unit_id === selectedUnit.id && row.attendance_date === date)} date={date} saving={saving} onSaveSingle={input => runAction(() => saveAttendance(input), 'Attendance saved.', true)} onSaveBulk={inputs => runAction(() => saveAttendanceBatch(inputs), `${inputs.length} attendance records saved.`, true)} /></Modal>}
+      {modal === 'attendance' && selectedUnit && <Modal wide eyebrow={selectedUnit.name} title="Attendance Control" onClose={() => setModal(null)}><AttendanceWorkspace unit={selectedUnit} employees={data.employees.filter(employee => employee.operational_unit_id === selectedUnit.id)} shifts={data.shifts.filter(shift => shift.operational_unit_id === selectedUnit.id)} attendance={data.attendance.filter(row => row.operational_unit_id === selectedUnit.id && row.attendance_date === date)} date={date} saving={saving} onSaveSingle={input => runAction(() => saveAttendance(input), 'Attendance saved.', true)} onSaveBulk={inputs => runAction(() => saveAttendanceBatch(inputs), `${inputs.length} attendance records saved.`, true)} onRefresh={() => load(true)} /></Modal>}
       {modal === 'overtime' && selectedUnit && <Modal eyebrow={selectedUnit.name} title="Submit Overtime Request" onClose={() => setModal(null)}><OvertimeForm unit={selectedUnit} employees={data.employees.filter(employee => employee.operational_unit_id === selectedUnit.id)} types={data.overtimeTypes} batches={data.batches.filter(batch => batch.operational_unit_id === selectedUnit.id)} date={date} saving={saving} onSave={input => runAction(() => submitOvertime(input), 'Overtime request submitted.', true)} /></Modal>}
       {modal === 'payroll' && selectedUnit && <Modal eyebrow={selectedUnit.name} title="Prepare Warehouse Payroll" onClose={() => setModal(null)}><PayrollForm unit={selectedUnit} date={date} saving={saving} onSave={(start, end) => runAction(() => prepareWarehousePayroll(selectedUnit.id, start, end).then(() => undefined), 'Payroll calculated and ready for review.', true)} /></Modal>}
       {modal === 'logProduction' && selectedUnit && <Modal wide eyebrow={selectedUnit.name} title="Log Production" onClose={() => setModal(null)}><QuickLogForm unit={selectedUnit} data={data} date={date} employees={scopedEmployees} managedBatchFor={managedBatchFor} saving={saving} onSave={input => runAction(() => submitQuickLog(input), 'Production logged.', true)} /></Modal>}
       {modal === 'logDamage' && selectedUnit && <Modal eyebrow={selectedUnit.name} title="Log Damage" onClose={() => setModal(null)}><DamageForm products={data.products} shipments={shipments} date={date} saving={saving} onSave={input => runAction(() => submitDamageReport(input), 'Damage logged.', true)} /></Modal>}
+      {modal === 'employee' && selectedUnit && <Modal eyebrow={selectedUnit.name} title={editingEmployeeId ? 'Edit Employee' : 'Register Employee'} onClose={() => { setModal(null); setEditingEmployeeId(null) }}><EmployeeForm employeeId={editingEmployeeId} saving={saving} onSave={input => runAction(() => submitEmployee(input, editingEmployeeId), editingEmployeeId ? 'Employee updated.' : 'Employee registered.', true)} /></Modal>}
+      {modal === 'newLocation' && selectedUnit && <Modal eyebrow={selectedUnit.name} title="New Location" onClose={() => setModal(null)}><LocationForm saving={saving} onSave={input => runAction(() => submitNewLocation(input), 'Location created.', true)} /></Modal>}
+      {modal === 'moveStock' && selectedUnit && moveStockContext && <Modal eyebrow={selectedUnit.name} title="Move Stock" onClose={() => { setModal(null); setMoveStockContext(null) }}><MoveStockForm unit={selectedUnit} locations={locations.filter(item => item.warehouse_id === selectedUnit.warehouse_id && item.is_active)} products={data.products} context={moveStockContext} saving={saving} onSave={input => runAction(() => submitMoveStock(input), 'Stock moved.', true)} /></Modal>}
     </div>
   )
 }
@@ -2162,6 +2423,100 @@ function QuickLogForm({
   )
 }
 
+const EMPTY_EMPLOYEE_INPUT: EmployeeInput = {
+  full_name: '', department: 'manufacturing_sales', title: '', warehouse_id: null,
+  employment_type: 'permanent', is_active: true, hire_date: null,
+  phone: '', tin_number: '', bank_name: '', bank_account_number: '', emergency_contact: '',
+  base_salary_etb: null, daily_rate_etb: null, pension_eligible: true, notes: '',
+}
+
+function EmployeeForm({
+  employeeId, saving, onSave,
+}: {
+  employeeId: string | null
+  saving: boolean
+  onSave: (input: EmployeeInput) => Promise<void>
+}) {
+  const [form, setForm] = useState<EmployeeInput>(EMPTY_EMPLOYEE_INPUT)
+  const [loading, setLoading] = useState(Boolean(employeeId))
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!employeeId) { setForm(EMPTY_EMPLOYEE_INPUT); setLoading(false); return }
+    let cancelled = false
+    setLoading(true)
+    fetchEmployeeById(employeeId)
+      .then(employee => { if (!cancelled) { const { id: _id, created_at: _createdAt, ...rest } = employee; setForm(rest) } })
+      .catch(caught => { if (!cancelled) setLoadError(caught instanceof Error ? caught.message : 'Could not load employee.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [employeeId])
+
+  function set<K extends keyof EmployeeInput>(key: K, value: EmployeeInput[K]) {
+    setForm(current => ({ ...current, [key]: value }))
+  }
+
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  if (loading) return <div className="warehouse-ops-loading"><Loader2 className="animate-spin" /></div>
+  if (loadError) return <EmptyState icon={AlertTriangle} title="Could not load employee" copy={loadError} />
+
+  return (
+    <form className="warehouse-ops-form" onSubmit={event => {
+      event.preventDefault()
+      setValidationError(null)
+      if (!form.full_name.trim()) { setValidationError('Enter the employee\'s full name.'); return }
+      if (form.employment_type === 'permanent' && !form.base_salary_etb) { setValidationError('Enter a monthly net salary for a permanent employee.'); return }
+      if (form.employment_type !== 'permanent' && !form.daily_rate_etb) { setValidationError('Enter a daily rate for a daily-wage or casual worker.'); return }
+      void onSave(form)
+    }}>
+      <div className="warehouse-ops-form__grid">
+        <label>Full name<input required value={form.full_name} onChange={event => set('full_name', event.target.value)} /></label>
+        <label>Title / role<input value={form.title ?? ''} onChange={event => set('title', event.target.value || null)} placeholder="e.g. Packer, Assembly operator" /></label>
+        <label>Employment type<SelectMenu ariaLabel="Employment type" value={form.employment_type} onChange={value => set('employment_type', value as EmployeeInput['employment_type'])} options={[
+          { value: 'permanent', label: 'Permanent', description: 'Fixed monthly net salary' },
+          { value: 'daily_wage', label: 'Daily wage', description: 'Paid per day worked' },
+          { value: 'casual', label: 'Casual', description: 'Paid per day worked' },
+        ]} /></label>
+        {form.employment_type === 'permanent' ? (
+          <label>Net salary (ETB/month)<input required type="number" min="0" value={form.base_salary_etb ?? ''} onChange={event => set('base_salary_etb', event.target.value ? Number(event.target.value) : null)} title="Take-home monthly amount — gross and tax are calculated back from this" /></label>
+        ) : (
+          <label>Daily rate (ETB)<input required type="number" min="0" value={form.daily_rate_etb ?? ''} onChange={event => set('daily_rate_etb', event.target.value ? Number(event.target.value) : null)} /></label>
+        )}
+        <label>Hire date<input type="date" value={form.hire_date ?? ''} onChange={event => set('hire_date', event.target.value || null)} /></label>
+        <label>Phone<input value={form.phone ?? ''} onChange={event => set('phone', event.target.value || null)} /></label>
+        <label className="warehouse-ops-check" style={{ padding: '10px 12px' }}>
+          <input type="checkbox" checked={form.pension_eligible} onChange={event => set('pension_eligible', event.target.checked)} style={{ width: 16, minHeight: 16 }} />
+          <span style={{ fontSize: 12 }}>Pension eligible (7% employee / 11% employer)</span>
+        </label>
+        <label className="warehouse-ops-check" style={{ padding: '10px 12px' }}>
+          <input type="checkbox" checked={form.is_active} onChange={event => set('is_active', event.target.checked)} style={{ width: 16, minHeight: 16 }} />
+          <span style={{ fontSize: 12 }}>Active</span>
+        </label>
+      </div>
+      <details>
+        <summary style={{ cursor: 'pointer', fontSize: 12, opacity: 0.7, margin: '4px 0' }}>Bank, TIN and emergency contact (optional)</summary>
+        <div className="warehouse-ops-form__grid" style={{ marginTop: 8 }}>
+          <label>TIN number<input value={form.tin_number ?? ''} onChange={event => set('tin_number', event.target.value || null)} /></label>
+          <label>Bank name<input value={form.bank_name ?? ''} onChange={event => set('bank_name', event.target.value || null)} /></label>
+          <label>Bank account number<input value={form.bank_account_number ?? ''} onChange={event => set('bank_account_number', event.target.value || null)} /></label>
+          <label>Emergency contact<input value={form.emergency_contact ?? ''} onChange={event => set('emergency_contact', event.target.value || null)} /></label>
+        </div>
+      </details>
+      <label>Notes<textarea rows={2} value={form.notes ?? ''} onChange={event => set('notes', event.target.value || null)} /></label>
+      {validationError && <div className="warehouse-ops-message is-error" role="alert"><AlertTriangle size={15} /><span>{validationError}</span></div>}
+      <div className="warehouse-ops-form__footer">
+        <span />
+        <div className="warehouse-ops-form__actions">
+          <button type="submit" className="warehouse-ops-primary" disabled={saving}>
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <ClipboardCheck size={15} />} {employeeId ? 'Save changes' : 'Register employee'}
+          </button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
 function DamageForm({
   products, shipments, date, saving, onSave,
 }: {
@@ -2270,6 +2625,127 @@ function DailyReportTab({
         {[...withdrawals, ...outputs, ...salesMoves].length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table"><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Quantity</th></tr></thead><tbody>{[...withdrawals, ...outputs, ...salesMoves].sort((a, b) => b.movementDate.localeCompare(a.movementDate)).map(movement => <tr key={movement.id}><td>{new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(movement.movementDate))}</td><td>{movement.productName}</td><td>{titleCase(movement.movementType)}</td><td className={movement.quantity < 0 ? 'is-negative' : 'is-positive'}>{movement.quantity > 0 ? '+' : ''}{formatNumber(movement.quantity)}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No movements recorded" copy="Withdrawals, outputs and sales will appear here." />}
       </Section>
     </div>
+  )
+}
+
+function LocationsTab({
+  units, selectedUnit, locations, stockByLocation, unplacedStock, products, canManage, onNewLocation, onMoveStock,
+}: {
+  units: OperationalUnit[]
+  selectedUnit: OperationalUnit | null
+  locations: WarehouseLocation[]
+  stockByLocation: LocationStockRow[]
+  unplacedStock: UnplacedStockRow[]
+  products: WarehouseOperationsData['products']
+  canManage: boolean
+  onNewLocation: () => void
+  onMoveStock: (productId: string, fromLocationId: string | null) => void
+}) {
+  const warehouseIds = new Set(units.map(unit => unit.warehouse_id).filter(Boolean))
+  const scopedLocations = locations.filter(location => warehouseIds.has(location.warehouse_id))
+  const scopedStock = stockByLocation.filter(row => warehouseIds.has(row.warehouse_id))
+  const scopedUnplaced = unplacedStock.filter(row => warehouseIds.has(row.warehouse_id))
+  const productById = new Map(products.map(product => [product.id, product]))
+  const locationById = new Map(locations.map(location => [location.id, location]))
+  const unitByWarehouse = new Map(units.map(unit => [unit.warehouse_id, unit]))
+
+  return (
+    <div className="warehouse-ops-two-column">
+      {!selectedUnit && <div className="warehouse-ops-message is-info is-full" role="status"><MapPin size={17} /><div><strong>Select a warehouse</strong><span>Pick a specific warehouse from the dropdown above to place stock, move it between locations, or open its floor plan. This consolidated view is read-only across all warehouses.</span></div></div>}
+      <Section title="Warehouse Locations" eyebrow={`${scopedLocations.length} locations`} action={selectedUnit ? <div className="warehouse-ops-section-actions">
+        {selectedUnit.warehouse_id && <Link className="warehouse-ops-secondary" to={`/warehouse-operations/inventory/${selectedUnit.warehouse_id}`}><Boxes size={15} /> Inventory list</Link>}
+        {selectedUnit.warehouse_id && <Link className="warehouse-ops-secondary" to={`/warehouse-operations/receiving/${selectedUnit.warehouse_id}`}><ClipboardCheck size={15} /> Receiving dock</Link>}
+        {selectedUnit.warehouse_id && <Link className="warehouse-ops-secondary" to={`/warehouse-operations/floor-plan/${selectedUnit.warehouse_id}?name=${encodeURIComponent(selectedUnit.name)}`}><MapPin size={15} /> Floor Plan</Link>}
+        {canManage && <button className="warehouse-ops-primary" onClick={onNewLocation}><Plus size={15} /> New location</button>}
+      </div> : undefined}>
+        {scopedLocations.length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table"><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Warehouse</th></tr></thead><tbody>{scopedLocations.map(location => <tr key={location.id}><td><strong>{location.code}</strong></td><td>{location.name ?? '—'}</td><td>{titleCase(location.location_type)}</td><td>{unitByWarehouse.get(location.warehouse_id)?.name ?? '—'}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No locations yet" copy={selectedUnit && canManage ? 'Add zones, aisles, shelves or bins to start tracking where stock actually sits.' : 'Select a warehouse to add locations.'} />}
+      </Section>
+      <Section title="Not Yet Placed" eyebrow="Stock with no assigned location">
+        {scopedUnplaced.length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table"><thead><tr><th>Product</th><th>Warehouse</th><th>Quantity</th><th /></tr></thead><tbody>{scopedUnplaced.map(row => <tr key={`${row.warehouse_id}-${row.product_id}`}><td>{productById.get(row.product_id)?.name ?? 'Unknown product'}</td><td>{unitByWarehouse.get(row.warehouse_id)?.name ?? '—'}</td><td>{formatNumber(row.quantity_on_hand)}</td><td>{canManage && selectedUnit?.warehouse_id === row.warehouse_id && <button className="warehouse-ops-row-action" onClick={() => onMoveStock(row.product_id, null)}>Place</button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={CheckCircle2} title="Everything is placed" copy="All tracked stock has an assigned location." />}
+      </Section>
+      <Section title="Stock by Location" eyebrow={`${scopedStock.length} product/location combinations`} className="is-full">
+        {scopedStock.length ? <div className="warehouse-ops-table-wrap"><table className="warehouse-ops-table"><thead><tr><th>Location</th><th>Product</th><th>Warehouse</th><th>Quantity</th><th /></tr></thead><tbody>{scopedStock.map(row => <tr key={`${row.location_id}-${row.product_id}`}><td>{locationById.get(row.location_id)?.code ?? '—'}</td><td>{productById.get(row.product_id)?.name ?? 'Unknown product'}</td><td>{unitByWarehouse.get(row.warehouse_id)?.name ?? '—'}</td><td>{formatNumber(row.quantity_on_hand)}</td><td>{canManage && selectedUnit?.warehouse_id === row.warehouse_id && <button className="warehouse-ops-row-action" onClick={() => onMoveStock(row.product_id, row.location_id)}>Move</button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No stock placed yet" copy="Once you assign locations, current stock per shelf/bin shows up here." />}
+      </Section>
+    </div>
+  )
+}
+
+function LocationForm({
+  saving, onSave,
+}: {
+  saving: boolean
+  onSave: (input: { code: string; name: string; locationType: WarehouseLocation['location_type'] }) => Promise<void>
+}) {
+  const [code, setCode] = useState('')
+  const [name, setName] = useState('')
+  const [locationType, setLocationType] = useState<WarehouseLocation['location_type']>('shelf')
+
+  return (
+    <form className="warehouse-ops-form" onSubmit={event => {
+      event.preventDefault()
+      void onSave({ code, name, locationType })
+    }}>
+      <div className="warehouse-ops-form__grid">
+        <label>Code<input required value={code} onChange={event => setCode(event.target.value)} placeholder="e.g. A-01-03" /></label>
+        <label>Type<SelectMenu ariaLabel="Location type" value={locationType} onChange={value => setLocationType(value as WarehouseLocation['location_type'])} options={[
+          { value: 'zone', label: 'Zone' },
+          { value: 'aisle', label: 'Aisle' },
+          { value: 'shelf', label: 'Shelf' },
+          { value: 'bin', label: 'Bin' },
+          { value: 'floor', label: 'Floor' },
+          { value: 'staging', label: 'Staging' },
+        ]} /></label>
+      </div>
+      <label>Name (optional)<input value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Zone A, Aisle 1, Shelf 3" /></label>
+      <div className="warehouse-ops-form__footer">
+        <span />
+        <div className="warehouse-ops-form__actions">
+          <button type="submit" className="warehouse-ops-primary" disabled={saving || !code.trim()}>
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <ClipboardCheck size={15} />} Create location
+          </button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
+function MoveStockForm({
+  locations, products, context, saving, onSave,
+}: {
+  unit: OperationalUnit
+  locations: WarehouseLocation[]
+  products: WarehouseOperationsData['products']
+  context: { productId: string; fromLocationId: string | null }
+  saving: boolean
+  onSave: (input: { toLocationId: string; quantity: number; notes: string }) => Promise<void>
+}) {
+  const [toLocationId, setToLocationId] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [notes, setNotes] = useState('')
+  const product = products.find(item => item.id === context.productId)
+  const fromLocation = context.fromLocationId ? locations.find(item => item.id === context.fromLocationId) : null
+  const destinationOptions = locations.filter(item => item.id !== context.fromLocationId)
+
+  return (
+    <form className="warehouse-ops-form" onSubmit={event => {
+      event.preventDefault()
+      void onSave({ toLocationId, quantity: Number(quantity), notes })
+    }}>
+      <p className="warehouse-ops-panel-note">Moving <strong>{product?.name ?? 'this product'}</strong> from <strong>{fromLocation?.code ?? 'Not yet placed'}</strong>.</p>
+      <div className="warehouse-ops-form__grid">
+        <label>Destination<SelectMenu ariaLabel="Destination location" searchable value={toLocationId} onChange={setToLocationId} options={destinationOptions.map(item => ({ value: item.id, label: item.code, description: item.name ?? titleCase(item.location_type) }))} /></label>
+        <label>Quantity<input required min="0.001" step="0.001" type="number" value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
+      </div>
+      <label>Notes<textarea rows={2} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Optional" /></label>
+      <div className="warehouse-ops-form__footer">
+        <span />
+        <div className="warehouse-ops-form__actions">
+          <button type="submit" className="warehouse-ops-primary" disabled={saving || !toLocationId || !quantity}>
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <ClipboardCheck size={15} />} Move
+          </button>
+        </div>
+      </div>
+    </form>
   )
 }
 

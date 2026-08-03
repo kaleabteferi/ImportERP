@@ -21,6 +21,7 @@ const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'weight_kg', label: 'Weight (kg)', width: '90px' },
   { key: 'volume_m3', label: 'Volume (m³)', width: '90px' },
   { key: 'assembly_type', label: 'Assembly type', width: '110px' },
+  { key: 'material_kind', label: 'Material kind', width: '130px' },
   { key: 'default_customs_value', label: 'Default CD value (USD)', width: '120px' },
   { key: 'carton_length_cm', label: 'Carton L (cm)', width: '100px' },
   { key: 'carton_width_cm', label: 'Carton W (cm)', width: '100px' },
@@ -28,9 +29,19 @@ const PRODUCT_IMPORT_COLUMNS: BulkImportColumn[] = [
   { key: 'default_units_per_carton', label: 'Units/carton', width: '100px' },
   { key: 'description', label: 'Description', width: '200px' },
 ]
-const PRODUCT_IMPORT_EXAMPLE = `sku,name,unit_of_measure,weight_kg,volume_m3,assembly_type,default_customs_value,carton_length_cm,carton_width_cm,carton_height_cm,default_units_per_carton,description
-TV-55-DMD,Dimond TV 55',PCS,18.5,0.21,SKD,180,70,15,45,1,55 inch smart LED
-STV-2B-SCH,Saachi 2-Burner Stove,PCS,4.2,0.03,IMPORTED,,50,40,30,10,`
+const PRODUCT_IMPORT_EXAMPLE = `sku,name,unit_of_measure,weight_kg,volume_m3,assembly_type,material_kind,default_customs_value,carton_length_cm,carton_width_cm,carton_height_cm,default_units_per_carton,description
+TV-55-DMD,Dimond TV 55',PCS,18.5,0.21,SKD,finished_product,180,70,15,45,1,55 inch smart LED
+STV-2B-SCH,Saachi 2-Burner Stove,PCS,4.2,0.03,IMPORTED,finished_product,,50,40,30,10,`
+
+export const MATERIAL_KINDS = ['finished_product', 'skd_component', 'packaging_material', 'spare_part', 'raw_material'] as const
+export type MaterialKind = typeof MATERIAL_KINDS[number]
+export const MATERIAL_KIND_LABELS: Record<MaterialKind, string> = {
+  finished_product: 'Finished product',
+  skd_component: 'SKD/CKD component',
+  packaging_material: 'Packaging material',
+  spare_part: 'Spare part',
+  raw_material: 'Raw material',
+}
 
 interface Product {
   id: string
@@ -42,6 +53,7 @@ interface Product {
   volume_m3: number | null
   is_assembled: boolean
   assembly_type: string | null
+  material_kind: MaterialKind | null
   default_customs_value: number | null
   carton_length_cm: number | null
   carton_width_cm: number | null
@@ -58,7 +70,7 @@ const EMPTY = {
   sku: '', name: '', description: '',
   unit_of_measure: 'PCS', weight_kg: '',
   volume_m3: '', is_assembled: false,
-  assembly_type: 'IMPORTED', default_customs_value: '',
+  assembly_type: 'IMPORTED', material_kind: 'finished_product' as MaterialKind, default_customs_value: '',
   carton_length_cm: '', carton_width_cm: '', carton_height_cm: '', default_units_per_carton: '',
 }
 
@@ -114,6 +126,7 @@ export function Products() {
       volume_m3:       p.volume_m3 ?? '',
       is_assembled:    p.is_assembled,
       assembly_type:   p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED'),
+      material_kind:   p.material_kind ?? 'finished_product',
       default_customs_value: p.default_customs_value ?? '',
       carton_length_cm: p.carton_length_cm ?? '',
       carton_width_cm: p.carton_width_cm ?? '',
@@ -142,6 +155,7 @@ export function Products() {
       volume_m3:       form.volume_m3 ? parseFloat(form.volume_m3) : null,
       is_assembled:    form.is_assembled,
       assembly_type:   form.assembly_type,
+      material_kind:   form.material_kind,
       default_customs_value: form.default_customs_value ? parseFloat(form.default_customs_value) : null,
       carton_length_cm: form.carton_length_cm ? parseFloat(form.carton_length_cm) : null,
       carton_width_cm: form.carton_width_cm ? parseFloat(form.carton_width_cm) : null,
@@ -166,6 +180,8 @@ export function Products() {
       if (!sku || !name) { errors.push(`Skipped a row missing SKU or name.`); continue }
       const assemblyType = ['IMPORTED', 'FULL', 'SKD', 'CKD'].includes((row.assembly_type ?? '').toUpperCase())
         ? row.assembly_type.toUpperCase() : 'IMPORTED'
+      const materialKind = MATERIAL_KINDS.includes((row.material_kind ?? '').trim().toLowerCase() as MaterialKind)
+        ? row.material_kind.trim().toLowerCase() : 'finished_product'
       const { error } = await supabase.from('products').insert({
         sku, name,
         description: row.description?.trim() || null,
@@ -174,6 +190,7 @@ export function Products() {
         volume_m3: row.volume_m3 ? parseFloat(row.volume_m3) : null,
         is_assembled: assemblyType === 'FULL' || assemblyType === 'SKD',
         assembly_type: assemblyType,
+        material_kind: materialKind,
         default_customs_value: row.default_customs_value ? parseFloat(row.default_customs_value) : null,
         carton_length_cm: row.carton_length_cm ? parseFloat(row.carton_length_cm) : null,
         carton_width_cm: row.carton_width_cm ? parseFloat(row.carton_width_cm) : null,
@@ -298,6 +315,9 @@ export function Products() {
                 <Badge variant={p.assembly_type === 'FULL' || p.is_assembled ? 'accent' : p.assembly_type === 'SKD' || p.assembly_type === 'CKD' ? 'warning' : 'neutral'}>
                   {p.assembly_type ?? (p.is_assembled ? 'FULL' : 'IMPORTED')}
                 </Badge>
+                {p.material_kind && p.material_kind !== 'finished_product' && (
+                  <p className="text-[10px] text-gray-400 mt-0.5">{MATERIAL_KIND_LABELS[p.material_kind]}</p>
+                )}
               </div>
               <div className="text-right text-xs font-mono text-gray-500">
                 {p.default_customs_value != null ? `$${p.default_customs_value}` : '—'}
@@ -506,6 +526,20 @@ export function Products() {
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   SKD/CKD stock routes to assembly components when shipment is received.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Material kind</label>
+                <select
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
+                  value={form.material_kind}
+                  onChange={e => set('material_kind', e.target.value)}
+                >
+                  {MATERIAL_KINDS.map(kind => <option key={kind} value={kind}>{MATERIAL_KIND_LABELS[kind]}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  What this product actually is on a bill of materials — a sellable finished unit, an SKD/CKD assembly part, packaging, a spare, or a raw material. Drives grouping on the BOMs page.
                 </p>
               </div>
 

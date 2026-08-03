@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Plus, FileText, Check, Loader2, Search, AlertOctagon } from 'lucide-react'
+import { Plus, FileText, Check, Loader2, Search, AlertOctagon, Boxes, CircleDollarSign, ArrowUpRight, Ship, SlidersHorizontal } from 'lucide-react'
 import { usePageState } from '../lib/pageState'
 import { nextPiNumber, createProformaInvoice } from '../api/proformaInvoices'
 import { listOpenShortageNotes, resolveShortageNote } from '../api/shortageNotes'
@@ -13,6 +13,7 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { SelectMenu } from '../components/ui/SelectMenu'
+import './ProformaInvoices.css'
 
 interface Row {
   id: string
@@ -24,6 +25,7 @@ interface Row {
   buyer_company: { name: string } | null
   final_company: { name: string } | null
   containers: { id: string }[]
+  pi_items: { quantity: number; total_price: number | null }[]
 }
 
 interface Supplier { id: string; name: string }
@@ -43,7 +45,7 @@ const STATUS_RAIL: Record<string, string> = {
 const EMPTY_FORM = {
   supplier_id: '', issue_date: new Date().toISOString().slice(0, 10),
   incoterm: 'FOB', port_of_loading: '', port_of_discharge: 'Djibouti',
-  buyer_company_id: '', final_company_id: '', markup_pct: '',
+  buyer_company_id: '', final_company_id: '', markup_pct: '', validity_date: '', payment_terms: '', notes: '',
 }
 
 export function ProformaInvoices() {
@@ -57,6 +59,8 @@ export function ProformaInvoices() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = usePageState('proformaInvoices.search', '')
+  const [statusFilter, setStatusFilter] = usePageState('proformaInvoices.status', 'ALL')
+  const [sortBy, setSortBy] = usePageState<'newest' | 'oldest' | 'value'>('proformaInvoices.sort', 'newest')
   const [shortages, setShortages] = useState<ShortageNote[]>([])
   const [loadingShortages, setLoadingShortages] = useState(false)
 
@@ -64,7 +68,7 @@ export function ProformaInvoices() {
     setLoading(true)
     const [piRes, supRes, coRes] = await Promise.all([
       supabase.from('proforma_invoices')
-        .select('id, pi_number, issue_date, incoterm, status, suppliers(name), buyer_company:buyer_company_id(name), final_company:final_company_id(name), containers(id)')
+        .select('id, pi_number, issue_date, incoterm, status, suppliers(name), buyer_company:buyer_company_id(name), final_company:final_company_id(name), containers(id), pi_items(quantity, total_price)')
         .order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id, name').eq('is_active', true).order('name'),
       supabase.from('companies').select('id, name').eq('is_active', true).order('is_primary', { ascending: false }).order('name'),
@@ -101,6 +105,9 @@ export function ProformaInvoices() {
         buyer_company_id: form.buyer_company_id || form.final_company_id,
         final_company_id: form.final_company_id,
         markup_pct: form.markup_pct ? parseFloat(form.markup_pct) : null,
+        validity_date: form.validity_date || null,
+        payment_terms: form.payment_terms || null,
+        notes: form.notes || null,
       })
       setOpen(false)
       setForm({ ...EMPTY_FORM })
@@ -111,32 +118,38 @@ export function ProformaInvoices() {
     }
   }
 
+  const rowValue = (row: Row) => row.pi_items.reduce((sum, item) => sum + Number(item.total_price ?? 0), 0)
   const filtered = useMemo(() => rows.filter(r => {
+    if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return r.pi_number.toLowerCase().includes(q) || (r.suppliers?.name ?? '').toLowerCase().includes(q)
-  }), [rows, search])
+  }).sort((left, right) => sortBy === 'value' ? rowValue(right) - rowValue(left) : sortBy === 'oldest' ? left.issue_date.localeCompare(right.issue_date) : right.issue_date.localeCompare(left.issue_date)), [rows, search, sortBy, statusFilter])
 
   const alphaRouted = (r: Row) => r.buyer_company && r.final_company && r.buyer_company.name !== r.final_company.name
 
   return (
-    <div className="p-5 max-w-5xl mx-auto">
+    <div className="proforma-hub p-5 max-w-7xl mx-auto">
+      <section className="proforma-hero">
       <PageHeader
         title="Proforma Invoices"
-        subtitle={`${rows.length} order${rows.length === 1 ? '' : 's'} · split each into containers below`}
+        subtitle="Build the commercial order, classify every line, then allocate cartons into shipment-ready containers."
         actions={
           <Button icon={<Plus size={13} />} onClick={() => { setOpen(true); setError(null); setForm({ ...EMPTY_FORM }); setShortages([]) }}>
             New proforma invoice
           </Button>
         }
       />
+      <div className="proforma-hero-flow"><span className="active"><b>1</b>Invoice terms</span><i /><span><b>2</b>Line items</span><i /><span><b>3</b>Container plan</span><i /><span><b>4</b>Shipment</span></div>
+      </section>
+
+      {!loading && <section className="proforma-kpis"><article><i><FileText /></i><span>Active proformas<strong>{rows.filter(row => row.status !== 'COMPLETED').length}</strong><small>{rows.filter(row => row.status === 'DRAFT').length} still in draft</small></span></article><article><i><CircleDollarSign /></i><span>Quoted value<strong>${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(rows.reduce((sum, row) => sum + rowValue(row), 0))}</strong><small>Across entered PI lines</small></span></article><article><i><Boxes /></i><span>Containers planned<strong>{rows.reduce((sum, row) => sum + (row.containers?.length ?? 0), 0)}</strong><small>Physical loading units</small></span></article><article><i><Ship /></i><span>Ready workflow<strong>{rows.filter(row => row.pi_items.length && row.containers.length).length}</strong><small>Have lines and containers</small></span></article></section>}
 
       {!loading && rows.length > 0 && (
-        <div className="mb-4 relative w-64">
-          <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+        <div className="proforma-filterbar">
+          <div className="proforma-search"><Search size={15} />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search PI number, supplier"
-            className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-accent" />
+            placeholder="Search PI number or supplier" /></div><div className="proforma-filter"><SlidersHorizontal size={14} /><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="ALL">All statuses</option><option value="DRAFT">Draft</option><option value="CONFIRMED">Confirmed</option><option value="COMPLETED">Completed</option></select></div><select value={sortBy} onChange={event => setSortBy(event.target.value as 'newest' | 'oldest' | 'value')}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="value">Highest value</option></select><span>{filtered.length} records</span>
         </div>
       )}
 
@@ -160,35 +173,28 @@ export function ProformaInvoices() {
       )}
 
       {!loading && filtered.length > 0 && (
-        <Card>
-          <div className="grid grid-cols-[1.3fr_1fr_1fr_1fr_0.8fr_auto] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
-            <div>PI number</div>
-            <div>Supplier</div>
-            <div>Routing</div>
-            <div>Issue date</div>
-            <div>Containers</div>
-            <div>Status</div>
-          </div>
+        <Card className="proforma-register">
+          <div className="proforma-register-head"><div>Proforma / supplier</div><div>Commercial route</div><div>Order value</div><div>Load plan</div><div>Status</div></div>
           {filtered.map((r, i) => (
             <Link
               key={r.id}
               to={`/proforma-invoices/${r.id}`}
-              className={`stagger-row grid grid-cols-[1.3fr_1fr_1fr_1fr_0.8fr_auto] gap-3 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors border-l-[3px] ${STATUS_RAIL[r.status] ?? 'border-l-gray-200'} ${i % 2 === 1 ? 'bg-gray-50/40' : ''} ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}
+              className={`proforma-register-row stagger-row ${STATUS_RAIL[r.status] ?? 'border-l-gray-200'}`}
               style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
             >
-              <div className="text-sm font-medium">{r.pi_number}</div>
-              <div className="text-xs text-gray-500">{r.suppliers?.name ?? '—'}</div>
-              <div className="text-xs text-gray-500">
+              <div className="proforma-identity"><i><FileText /></i><span><strong>{r.pi_number}</strong><small>{r.suppliers?.name ?? 'Supplier not assigned'} · {r.issue_date}</small></span></div>
+              <div className="proforma-route">
                 {alphaRouted(r)
                   ? <span>{r.buyer_company?.name} → {r.final_company?.name}</span>
                   : <span>{r.final_company?.name ?? '—'}</span>}
               </div>
-              <div className="text-xs text-gray-500">{r.issue_date}</div>
-              <div className="text-xs text-gray-500">{r.containers?.length ?? 0}</div>
-              <div>
+              <div className="proforma-value"><strong>${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(rowValue(r))}</strong><small>{r.pi_items.length} line{r.pi_items.length === 1 ? '' : 's'}</small></div>
+              <div className="proforma-load"><Boxes /><span><strong>{r.containers?.length ?? 0} containers</strong><small>{r.incoterm} · {r.pi_items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0).toLocaleString()} units</small></span></div>
+              <div className="proforma-row-end">
                 <Badge variant={STATUS[r.status]?.variant ?? 'neutral'}>
                   {STATUS[r.status]?.label ?? r.status}
                 </Badge>
+                <ArrowUpRight size={15} />
               </div>
             </Link>
           ))}
@@ -206,6 +212,8 @@ export function ProformaInvoices() {
           </Button>
         </>}
       >
+              <div className="pi-create-intro"><i><FileText /></i><div><strong>Start with the supplier’s commercial terms</strong><span>The next screen adds HS-coded line items and allocates cartons into containers.</span></div></div>
+              <div className="pi-create-section"><h3>Trade parties</h3>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Supplier <span className="text-red-400">*</span></label>
                 <SelectMenu
@@ -293,6 +301,8 @@ export function ProformaInvoices() {
                 </div>
               )}
 
+              </div><div className="pi-create-section"><h3>Dates and commercial terms</h3>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Issue date</label>
@@ -316,6 +326,8 @@ export function ProformaInvoices() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3"><div><label className="block text-xs text-gray-500 mb-1">Valid until</label><input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent" value={form.validity_date} onChange={event => set('validity_date', event.target.value)} /></div><div><label className="block text-xs text-gray-500 mb-1">Payment terms</label><input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent" value={form.payment_terms} onChange={event => set('payment_terms', event.target.value)} placeholder="e.g. 30% deposit, 70% before shipment" /></div></div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Port of loading</label>
@@ -327,6 +339,8 @@ export function ProformaInvoices() {
                   <input className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent"
                     value={form.port_of_discharge} onChange={e => set('port_of_discharge', e.target.value)} />
                 </div>
+              </div>
+              <div><label className="block text-xs text-gray-500 mb-1">Commercial notes</label><textarea rows={3} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent" value={form.notes} onChange={event => set('notes', event.target.value)} placeholder="Quality requirements, document instructions, inspection or delivery conditions" /></div>
               </div>
 
               {error && (

@@ -9,6 +9,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
 }
 
 function json(body: unknown, status = 200) {
@@ -19,7 +21,8 @@ function json(body: unknown, status = 200) {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders })
+  if (req.method !== 'POST') return json({ error: 'Method not allowed.' }, 405)
 
   try {
     const authHeader = req.headers.get('Authorization')
@@ -54,6 +57,7 @@ Deno.serve(async (req) => {
       }
       const { error } = await adminClient.auth.admin.updateUserById(userId, { password: newPassword })
       if (error) return json({ error: error.message }, 400)
+      await adminClient.from('audit_events').insert({ actor_id: caller.id, action: 'password_reset', entity_type: 'profile', entity_id: userId, summary: 'Administrator reset a user password.' })
       return json({ ok: true })
     }
 
@@ -63,6 +67,44 @@ Deno.serve(async (req) => {
       const { data, error } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 })
       if (error) return json({ error: error.message }, 400)
       return json({ users: data.users.map(u => ({ id: u.id, email: u.email ?? null })) })
+    }
+
+    if (body.action === 'list_users') {
+      const { data, error } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 })
+      if (error) return json({ error: error.message }, 400)
+      return json({ users: data.users.map(u => ({
+        id: u.id,
+        email: u.email ?? null,
+        createdAt: u.created_at,
+        lastSignInAt: u.last_sign_in_at ?? null,
+      })) })
+    }
+
+    if (body.action === 'update_authority') {
+      const { userId, role, employeeId } = body
+      const allowedRoles = ['pending', 'full_access', 'accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system', 'warehouse_operations']
+      if (!userId || !allowedRoles.includes(role)) return json({ error: 'A valid user and ERP role are required.' }, 400)
+      const { data: previous } = await adminClient.from('profiles').select('role,employee_id').eq('id', userId).maybeSingle()
+      const { error } = await adminClient.from('profiles').update({ role, employee_id: employeeId || null }).eq('id', userId)
+      if (error) return json({ error: error.message }, 400)
+      await adminClient.from('audit_events').insert({ actor_id: caller.id, action: 'authority_changed', entity_type: 'profile', entity_id: userId, summary: `User authority changed to ${role}.`, previous_values: previous, new_values: { role, employee_id: employeeId || null } })
+      return json({ ok: true })
+    }
+
+    if (body.action === 'delete_user') {
+      const { userId } = body
+      if (!userId) return json({ error: 'A user is required.' }, 400)
+      if (userId === caller.id) return json({ error: 'You cannot delete your own login.' }, 400)
+
+      // Soft deletion removes the login while retaining audit references made
+      // by that person. The profile is hidden and all warehouse scopes close.
+      const { error: authError } = await adminClient.auth.admin.deleteUser(userId, true)
+      if (authError) return json({ error: authError.message }, 400)
+      await adminClient.from('warehouse_user_assignments').update({ is_active: false }).eq('profile_id', userId).eq('is_active', true)
+      const { error: profileError } = await adminClient.from('profiles').update({ role: 'pending', is_active: false }).eq('id', userId)
+      if (profileError) return json({ error: `Login deleted, but profile cleanup failed: ${profileError.message}` }, 400)
+      await adminClient.from('audit_events').insert({ actor_id: caller.id, action: 'user_deleted', entity_type: 'profile', entity_id: userId, summary: 'User login was deleted and operational access was deactivated.' })
+      return json({ ok: true })
     }
 
     return json({ error: 'Unknown action.' }, 400)

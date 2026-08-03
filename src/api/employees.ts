@@ -30,6 +30,12 @@ export async function fetchEmployees(): Promise<Employee[]> {
   return (data ?? []) as unknown as Employee[]
 }
 
+export async function fetchEmployeeById(id: string): Promise<Employee> {
+  const { data, error } = await supabase.from('employees').select(COLUMNS).eq('id', id).single()
+  if (error) throw new Error(error.message)
+  return data as unknown as Employee
+}
+
 export type EmployeeInput = Omit<Employee, 'id' | 'created_at'>
 
 export async function createEmployee(input: EmployeeInput): Promise<string> {
@@ -46,4 +52,25 @@ export async function updateEmployee(id: string, patch: Partial<EmployeeInput>):
 export async function deleteEmployees(ids: string[]): Promise<void> {
   const { error } = await supabase.from('employees').delete().in('id', ids)
   if (error) throw new Error(error.message)
+}
+
+export interface EmployeeWorkforceMembership {
+  employee_id: string
+  group_id: string
+  group_name: string
+  group_type: string
+}
+
+export async function fetchEmployeeWorkforceMemberships(): Promise<EmployeeWorkforceMembership[]> {
+  const [{ data: groups, error: groupsError }, { data: members, error: membersError }] = await Promise.all([
+    supabase.from('workforce_groups').select('id, name, group_type'),
+    supabase.from('workforce_group_members').select('employee_id, workforce_group_id').eq('is_active', true),
+  ])
+  if (groupsError) throw new Error(groupsError.message)
+  if (membersError) throw new Error(membersError.message)
+  const groupById = new Map((groups ?? []).map(group => [group.id as string, group]))
+  return (members ?? []).flatMap(member => {
+    const group = groupById.get(member.workforce_group_id as string)
+    return group ? [{ employee_id: member.employee_id as string, group_id: group.id as string, group_name: group.name as string, group_type: group.group_type as string }] : []
+  })
 }

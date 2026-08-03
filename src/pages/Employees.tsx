@@ -1,325 +1,87 @@
-import { useState, useEffect, useCallback } from 'react'
-import { fetchEmployees, createEmployee, updateEmployee, deleteEmployees } from '../api/employees'
-import type { Employee, EmployeeInput } from '../api/employees'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowUpRight, BriefcaseBusiness, Building2, Check, ClipboardPaste, Layers3, Loader2, Pencil, Plus, Search, ShieldCheck, UserRoundCheck, Users, Warehouse, X } from 'lucide-react'
+import { createEmployee, deleteEmployees, fetchEmployees, fetchEmployeeWorkforceMemberships, updateEmployee } from '../api/employees'
+import type { Employee, EmployeeInput, EmployeeWorkforceMembership } from '../api/employees'
 import { fetchWarehousesList } from '../api/income'
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
 import { BulkActionBar } from '../components/BulkActionBar'
-import { SortHeader } from '../components/SortHeader'
-import { useSort } from '../lib/useSort'
-import { useBulkSelect } from '../lib/useBulkSelect'
-import { Users, Loader2, Plus, X, Check, Search, Pencil, ShieldCheck, ClipboardPaste } from 'lucide-react'
-import { PageHeader } from '../components/ui/PageHeader'
-import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import './HrWorkspace.css'
 
-interface Option { id: string; name: string }
-
-const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
-
-type SortKey = 'full_name' | 'department' | 'employment_type' | 'created_at'
-
-const EMPLOYEE_IMPORT_COLUMNS: BulkImportColumn[] = [
-  { key: 'full_name', label: 'Full name', required: true, width: '150px' },
-  { key: 'title', label: 'Title', width: '120px' },
-  { key: 'department', label: 'Department', width: '110px' },
-  { key: 'employment_type', label: 'Employment type', width: '110px' },
-  { key: 'base_salary_etb', label: 'Net salary (ETB)', width: '100px' },
-  { key: 'daily_rate_etb', label: 'Daily rate (ETB)', width: '100px' },
-  { key: 'hire_date', label: 'Hire date', width: '100px' },
-  { key: 'phone', label: 'Phone', width: '110px' },
+interface WarehouseOption { id: string; name: string }
+type Workspace = 'corporate' | 'warehouse'
+const money = (value: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(value))
+const IMPORT_COLUMNS: BulkImportColumn[] = [
+  { key: 'full_name', label: 'Full name', required: true, width: '160px' }, { key: 'title', label: 'Title', width: '130px' },
+  { key: 'department', label: 'Department', width: '120px' }, { key: 'employment_type', label: 'Employment type', width: '120px' },
+  { key: 'base_salary_etb', label: 'Monthly salary', width: '110px' }, { key: 'daily_rate_etb', label: 'Daily rate', width: '100px' },
+  { key: 'hire_date', label: 'Hire date', width: '110px' }, { key: 'phone', label: 'Phone', width: '120px' },
 ]
-const EMPLOYEE_IMPORT_EXAMPLE = `full_name,title,department,employment_type,base_salary_etb,daily_rate_etb,hire_date,phone
-Abebe Kebede,Line Supervisor,Factory,permanent,8500,,2025-03-01,0911223344
-Selam Tesfaye,Assembly Worker,Factory,daily_wage,,350,2026-01-10,0922334455`
+const IMPORT_EXAMPLE = `full_name,title,department,employment_type,base_salary_etb,hire_date,phone
+Abebe Kebede,Accountant,Finance,permanent,18500,2026-01-15,0911223344`
+const EMPTY_EMPLOYEE: EmployeeInput = { full_name: '', department: '', title: '', warehouse_id: null, employment_type: 'permanent', is_active: true, hire_date: null, phone: '', tin_number: '', bank_name: '', bank_account_number: '', emergency_contact: '', base_salary_etb: null, daily_rate_etb: null, pension_eligible: true, notes: '' }
 
-const EMPTY_FORM: EmployeeInput = {
-  full_name: '', department: '', title: '', warehouse_id: null,
-  employment_type: 'permanent', is_active: true, hire_date: null,
-  phone: '', tin_number: '', bank_name: '', bank_account_number: '', emergency_contact: '',
-  base_salary_etb: null, daily_rate_etb: null, pension_eligible: true, notes: '',
-}
-
-function EmployeeForm({ initial, warehouses, onCancel, onSaved }: {
-  initial: Employee | null
-  warehouses: Option[]
-  onCancel: () => void
-  onSaved: () => void
-}) {
-  const [form, setForm] = useState<EmployeeInput>(() => {
-    if (!initial) return { ...EMPTY_FORM }
-    const { id: _id, created_at: _createdAt, ...rest } = initial
-    return rest
-  })
+function CorporateEmployeeForm({ employee, onCancel, onSaved }: { employee: Employee | null; onCancel: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<EmployeeInput>(() => employee ? {
+    full_name: employee.full_name, department: employee.department, title: employee.title, warehouse_id: null,
+    employment_type: employee.employment_type, is_active: employee.is_active, hire_date: employee.hire_date,
+    phone: employee.phone, tin_number: employee.tin_number, bank_name: employee.bank_name,
+    bank_account_number: employee.bank_account_number, emergency_contact: employee.emergency_contact,
+    base_salary_etb: employee.base_salary_etb, daily_rate_etb: employee.daily_rate_etb,
+    pension_eligible: employee.pension_eligible, notes: employee.notes,
+  } : { ...EMPTY_EMPLOYEE })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const set = <K extends keyof EmployeeInput>(key: K, value: EmployeeInput[K]) => setForm(f => ({ ...f, [key]: value }))
-
-  async function submit() {
-    if (!form.full_name.trim()) { setError('Enter a name.'); return }
-    if (form.employment_type === 'permanent' && !form.base_salary_etb) { setError('Enter a monthly base salary for a permanent employee.'); return }
-    if (form.employment_type !== 'permanent' && !form.daily_rate_etb) { setError('Enter a daily rate for a daily-wage or casual worker.'); return }
+  const set = <K extends keyof EmployeeInput>(key: K, value: EmployeeInput[K]) => setForm(current => ({ ...current, [key]: value }))
+  async function save() {
+    if (!form.full_name.trim()) return setError('Enter the employee’s full name.')
+    if (form.employment_type === 'permanent' && !form.base_salary_etb) return setError('Enter the monthly salary.')
+    if (form.employment_type !== 'permanent' && !form.daily_rate_etb) return setError('Enter the daily rate.')
     setSaving(true); setError(null)
-    try {
-      const payload: EmployeeInput = {
-        ...form,
-        department: form.department || null, title: form.title || null,
-        phone: form.phone || null, tin_number: form.tin_number || null,
-        bank_name: form.bank_name || null, bank_account_number: form.bank_account_number || null,
-        emergency_contact: form.emergency_contact || null, notes: form.notes || null,
-        hire_date: form.hire_date || null, warehouse_id: form.warehouse_id || null,
-      }
-      if (initial) await updateEmployee(initial.id, payload)
-      else await createEmployee(payload)
-      onSaved()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to save employee.')
-    } finally {
-      setSaving(false)
-    }
+    const payload: EmployeeInput = { ...form, warehouse_id: null, full_name: form.full_name.trim(), department: form.department || null, title: form.title || null, hire_date: form.hire_date || null, phone: form.phone || null, tin_number: form.tin_number || null, bank_name: form.bank_name || null, bank_account_number: form.bank_account_number || null, emergency_contact: form.emergency_contact || null, notes: form.notes || null }
+    try { if (employee) await updateEmployee(employee.id, payload); else await createEmployee(payload); onSaved() }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save the employee.') }
+    finally { setSaving(false) }
   }
-
-  return (
-    <Card padded className="mb-4 space-y-4">
-      {error && <p className="text-xs text-red-600">{error}</p>}
-
-      <div>
-        <p className="text-xs font-medium text-gray-500 mb-2">Basic info</p>
-        <div className="grid grid-cols-2 gap-2">
-          <input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="Full name"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.title ?? ''} onChange={e => set('title', e.target.value)} placeholder="Job title"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.department ?? ''} onChange={e => set('department', e.target.value)} placeholder="Department (e.g. Factory, Sales)"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <select value={form.warehouse_id ?? ''} onChange={e => set('warehouse_id', e.target.value || null)}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-            <option value="">No fixed warehouse/site</option>
-            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
-          <input type="date" value={form.hire_date ?? ''} onChange={e => set('hire_date', e.target.value || null)}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5">
-            <input type="checkbox" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} /> Active
-          </label>
-        </div>
-      </div>
-
-      <div>
-        <p className="text-xs font-medium text-gray-500 mb-2">Employment & pay</p>
-        <div className="grid grid-cols-2 gap-2">
-          <select value={form.employment_type} onChange={e => set('employment_type', e.target.value as EmployeeInput['employment_type'])}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-            <option value="permanent">Permanent (monthly salary)</option>
-            <option value="daily_wage">Daily wage (e.g. factory line worker)</option>
-            <option value="casual">Casual (short-term, under 45 days)</option>
-          </select>
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5">
-            <input type="checkbox" checked={form.pension_eligible} onChange={e => set('pension_eligible', e.target.checked)} /> Pension-eligible
-          </label>
-          {form.employment_type === 'permanent' ? (
-            <input type="number" value={form.base_salary_etb ?? ''} onChange={e => set('base_salary_etb', e.target.value ? Number(e.target.value) : null)}
-              placeholder="Monthly NET salary (take-home, ETB)" title="What they actually take home before overtime/allowances — payroll calculates the gross needed to net this amount after tax and pension"
-              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          ) : (
-            <input type="number" value={form.daily_rate_etb ?? ''} onChange={e => set('daily_rate_etb', e.target.value ? Number(e.target.value) : null)}
-              placeholder="Daily rate (ETB)" className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          )}
-        </div>
-        {form.employment_type !== 'permanent' && (
-          <p className="text-xs text-amber-600 mt-1.5">
-            Under the Pension Proclamation, workers engaged 45+ days are generally pension-eligible regardless of daily-wage pay structure — don't uncheck "pension-eligible" purely because pay is daily. See HR Notes.
-          </p>
-        )}
-      </div>
-
-      <div>
-        <p className="text-xs font-medium text-gray-500 mb-2">Bank, tax & contact</p>
-        <div className="grid grid-cols-2 gap-2">
-          <input value={form.phone ?? ''} onChange={e => set('phone', e.target.value)} placeholder="Phone"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.tin_number ?? ''} onChange={e => set('tin_number', e.target.value)} placeholder="TIN number"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.bank_name ?? ''} onChange={e => set('bank_name', e.target.value)} placeholder="Bank name"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.bank_account_number ?? ''} onChange={e => set('bank_account_number', e.target.value)} placeholder="Bank account number"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-          <input value={form.emergency_contact ?? ''} onChange={e => set('emergency_contact', e.target.value)} placeholder="Emergency contact (name & phone)"
-            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg col-span-2" />
-        </div>
-      </div>
-
-      <input value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} placeholder="Notes (optional)"
-        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
-
-      <div className="flex gap-2 justify-end">
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button loading={saving} icon={<Check size={12} />} onClick={submit}>Save employee</Button>
-      </div>
-    </Card>
-  )
+  return <Card className="hr-editor">
+    <header><div><span>Central HR record</span><h3>{employee ? `Edit ${employee.full_name}` : 'Add a head-office employee'}</h3><p>This employee remains outside warehouse operations and is included only in head-office payroll.</p></div><button aria-label="Close employee form" onClick={onCancel}><X /></button></header>
+    {error && <div className="hr-form-error">{error}</div>}
+    <section><h4>Employment identity</h4><div className="hr-form-grid"><label><span>Full name *</span><input value={form.full_name} onChange={event => set('full_name', event.target.value)} /></label><label><span>Job title</span><input value={form.title ?? ''} onChange={event => set('title', event.target.value)} /></label><label><span>Department</span><input value={form.department ?? ''} onChange={event => set('department', event.target.value)} placeholder="Finance, Sales, Administration…" /></label><label><span>Hire date</span><input type="date" value={form.hire_date ?? ''} onChange={event => set('hire_date', event.target.value || null)} /></label></div></section>
+    <section><h4>Pay configuration</h4><div className="hr-form-grid"><label><span>Employment type</span><select value={form.employment_type} onChange={event => set('employment_type', event.target.value as EmployeeInput['employment_type'])}><option value="permanent">Permanent · monthly</option><option value="daily_wage">Daily wage</option><option value="casual">Casual</option></select></label>{form.employment_type === 'permanent' ? <label><span>Monthly salary (ETB) *</span><input type="number" value={form.base_salary_etb ?? ''} onChange={event => set('base_salary_etb', event.target.value ? Number(event.target.value) : null)} /></label> : <label><span>Daily rate (ETB) *</span><input type="number" value={form.daily_rate_etb ?? ''} onChange={event => set('daily_rate_etb', event.target.value ? Number(event.target.value) : null)} /></label>}<label className="hr-check"><input type="checkbox" checked={form.pension_eligible} onChange={event => set('pension_eligible', event.target.checked)} /><span>Pension eligible</span></label><label className="hr-check"><input type="checkbox" checked={form.is_active} onChange={event => set('is_active', event.target.checked)} /><span>Active employee</span></label></div></section>
+    <section><h4>Bank, tax and contact</h4><div className="hr-form-grid"><label><span>Phone</span><input value={form.phone ?? ''} onChange={event => set('phone', event.target.value)} /></label><label><span>TIN number</span><input value={form.tin_number ?? ''} onChange={event => set('tin_number', event.target.value)} /></label><label><span>Bank</span><input value={form.bank_name ?? ''} onChange={event => set('bank_name', event.target.value)} /></label><label><span>Bank account</span><input value={form.bank_account_number ?? ''} onChange={event => set('bank_account_number', event.target.value)} /></label><label className="span-two"><span>Emergency contact</span><input value={form.emergency_contact ?? ''} onChange={event => set('emergency_contact', event.target.value)} /></label><label className="span-two"><span>Notes</span><textarea rows={3} value={form.notes ?? ''} onChange={event => set('notes', event.target.value)} /></label></div></section>
+    <footer><Button variant="secondary" onClick={onCancel}>Cancel</Button><Button loading={saving} icon={<Check size={14} />} onClick={save}>Save head-office employee</Button></footer>
+  </Card>
 }
 
 export function Employees() {
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [warehouses, setWarehouses] = useState<Option[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [showForm, setShowForm] = useState(false)
-  const [editing, setEditing] = useState<Employee | null>(null)
-  const [search, setSearch] = useState('')
-  const [showImport, setShowImport] = useState(false)
+  const [employees, setEmployees] = useState<Employee[]>([]), [warehouses, setWarehouses] = useState<WarehouseOption[]>([]), [memberships, setMemberships] = useState<EmployeeWorkforceMembership[]>([])
+  const [workspace, setWorkspace] = useState<Workspace>('corporate'), [warehouseFilter, setWarehouseFilter] = useState('ALL'), [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [editing, setEditing] = useState<Employee | null>(null), [showForm, setShowForm] = useState(false), [showImport, setShowImport] = useState(false), [selected, setSelected] = useState<Set<string>>(new Set())
+  const load = useCallback(async () => { setLoading(true); setError(null); try { const [employeeRows, warehouseRows, groupRows] = await Promise.all([fetchEmployees(), fetchWarehousesList(), fetchEmployeeWorkforceMemberships()]); setEmployees(employeeRows); setWarehouses((warehouseRows ?? []).map(row => ({ id: row.id, name: row.name }))); setMemberships(groupRows) } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load the workforce.') } finally { setLoading(false) } }, [])
+  useEffect(() => { const timer = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(timer) }, [load])
+  const corporate = useMemo(() => employees.filter(employee => !employee.warehouse_id), [employees]), warehouseStaff = useMemo(() => employees.filter(employee => Boolean(employee.warehouse_id)), [employees])
+  const query = search.trim().toLowerCase(), corporateVisible = corporate.filter(employee => !query || `${employee.full_name} ${employee.title ?? ''} ${employee.department ?? ''}`.toLowerCase().includes(query)), warehouseVisible = warehouseStaff.filter(employee => (warehouseFilter === 'ALL' || employee.warehouse_id === warehouseFilter) && (!query || `${employee.full_name} ${employee.title ?? ''} ${employee.department ?? ''}`.toLowerCase().includes(query)))
+  const groupsByEmployee = useMemo(() => { const map = new Map<string, EmployeeWorkforceMembership[]>(); memberships.forEach(item => map.set(item.employee_id, [...(map.get(item.employee_id) ?? []), item])); return map }, [memberships])
+  const warehouseSections = warehouses.map(warehouse => ({ ...warehouse, employees: warehouseVisible.filter(employee => employee.warehouse_id === warehouse.id) })).filter(section => section.employees.length)
+  const allCorporateSelected = corporateVisible.length > 0 && corporateVisible.every(employee => selected.has(employee.id))
+  const toggle = (id: string) => setSelected(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  async function removeSelected() { try { await deleteEmployees([...selected]); setSelected(new Set()); await load() } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not remove employees.') } }
+  async function importCorporate(rows: Record<string, string>[]) { const errors: string[] = []; let succeeded = 0; for (const row of rows) { const name = row.full_name?.trim(); if (!name) { errors.push('Skipped a row without a name.'); continue } try { const type = ['permanent','daily_wage','casual'].includes(row.employment_type) ? row.employment_type as EmployeeInput['employment_type'] : 'permanent'; await createEmployee({ ...EMPTY_EMPLOYEE, full_name: name, title: row.title || null, department: row.department || null, employment_type: type, base_salary_etb: row.base_salary_etb ? Number(row.base_salary_etb) : null, daily_rate_etb: row.daily_rate_etb ? Number(row.daily_rate_etb) : null, hire_date: row.hire_date || null, phone: row.phone || null, warehouse_id: null }); succeeded++ } catch (caught) { errors.push(`${name}: ${caught instanceof Error ? caught.message : 'failed'}`) } } return { succeeded, errors } }
+  const switchWorkspace = (next: Workspace) => { setWorkspace(next); setShowForm(false); setEditing(null); setSelected(new Set()) }
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null)
-    try {
-      const [emp, wh] = await Promise.all([fetchEmployees(), fetchWarehousesList()])
-      setEmployees(emp)
-      setWarehouses((wh ?? []).map((w: any) => ({ id: w.id, name: w.name })))
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load employees.')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const filtered = employees.filter(e =>
-    !search.trim() || e.full_name.toLowerCase().includes(search.toLowerCase()) || (e.department ?? '').toLowerCase().includes(search.toLowerCase()))
-
-  const { sorted: visible, sortKey, sortDir, toggleSort } = useSort<Employee, SortKey>(filtered, (e, key) => e[key], 'full_name')
-  const { selected, toggle, toggleAll, clear, allSelected, count } = useBulkSelect(visible)
-
-  async function bulkDelete() {
-    try {
-      await deleteEmployees([...selected])
-      clear()
-      load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to delete.')
-    }
-  }
-
-  async function handleBulkImport(rows: Record<string, string>[]) {
-    const errors: string[] = []
-    let succeeded = 0
-    for (const row of rows) {
-      const full_name = row.full_name?.trim()
-      if (!full_name) { errors.push('Skipped a row missing a name.'); continue }
-      const employmentType = ['permanent', 'daily_wage', 'casual'].includes(row.employment_type?.trim())
-        ? row.employment_type.trim() as EmployeeInput['employment_type'] : 'permanent'
-      try {
-        await createEmployee({
-          full_name, title: row.title?.trim() || null, department: row.department?.trim() || null,
-          warehouse_id: null, employment_type: employmentType, is_active: true,
-          hire_date: row.hire_date?.trim() || null, phone: row.phone?.trim() || null,
-          tin_number: null, bank_name: null, bank_account_number: null, emergency_contact: null,
-          base_salary_etb: row.base_salary_etb ? Number(row.base_salary_etb) : null,
-          daily_rate_etb: row.daily_rate_etb ? Number(row.daily_rate_etb) : null,
-          pension_eligible: true, notes: null,
-        })
-        succeeded++
-      } catch (e: any) {
-        errors.push(`${full_name}: ${e?.message ?? 'failed to save'}`)
-      }
-    }
-    return { succeeded, errors }
-  }
-
-  return (
-    <div className="p-5 max-w-4xl mx-auto">
-      <PageHeader
-        icon={<Users size={18} />}
-        title="Employees"
-        subtitle={<>
-          {employees.length} on record · {employees.filter(e => e.is_active).length} active ·{' '}
-          <span className="inline-flex items-center gap-1"><ShieldCheck size={11} className="text-gray-400" /> HR only — includes salary, bank, and TIN</span>
-        </>}
-        actions={<>
-          <Button variant="secondary" icon={<ClipboardPaste size={13} />} onClick={() => setShowImport(true)}>Bulk import</Button>
-          <Button icon={showForm && !editing ? <X size={12} /> : <Plus size={12} />} onClick={() => { setShowForm(v => !v); setEditing(null) }}>New employee</Button>
-        </>}
-      />
-
-      {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-
-      {showImport && (
-        <BulkImportModal
-          title="Bulk import employees"
-          columns={EMPLOYEE_IMPORT_COLUMNS}
-          exampleCsv={EMPLOYEE_IMPORT_EXAMPLE}
-          helpText="Paste a staff list. Only name is required — employment type defaults to permanent if left blank or unrecognized. Bank/TIN/emergency contact details can be added afterward by editing each employee."
-          onImport={handleBulkImport}
-          onClose={() => setShowImport(false)}
-          onImported={load}
-        />
-      )}
-
-      {showForm && (
-        <EmployeeForm
-          initial={editing}
-          warehouses={warehouses}
-          onCancel={() => { setShowForm(false); setEditing(null) }}
-          onSaved={() => { setShowForm(false); setEditing(null); load() }}
-        />
-      )}
-
-      {!showForm && employees.length > 0 && (
-        <div className="relative mb-3">
-          <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or department"
-            className="pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg w-64" />
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
-      ) : employees.length === 0 ? (
-        <div className="text-center py-16">
-          <Users size={36} className="mx-auto text-gray-200 mb-3" />
-          <p className="text-sm font-medium text-gray-500 mb-1">No employees on record yet</p>
-          <p className="text-xs text-gray-400">Add your team — payroll, production logs, and expense records all link back to these.</p>
-        </div>
-      ) : (
-        <>
-          <BulkActionBar count={count} itemLabel="employee" onClear={clear} onDelete={bulkDelete} />
-          <Card>
-          <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400 uppercase tracking-wide">
-            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="cursor-pointer" />
-            <div className="flex-1"><SortHeader label="Name" active={sortKey === 'full_name'} dir={sortDir} onClick={() => toggleSort('full_name')} /></div>
-            <div className="w-32"><SortHeader label="Type" active={sortKey === 'employment_type'} dir={sortDir} onClick={() => toggleSort('employment_type')} /></div>
-            <div className="w-28 text-right"><SortHeader label="Added" align="right" active={sortKey === 'created_at'} dir={sortDir} onClick={() => toggleSort('created_at')} /></div>
-            <div className="w-6"></div>
-          </div>
-          {visible.map((e, i) => (
-            <div key={e.id} className={`stagger-row flex items-center gap-3 px-4 py-3 ${i < visible.length - 1 ? 'border-b border-gray-50' : ''} ${!e.is_active ? 'opacity-50' : ''} ${selected.has(e.id) ? 'bg-blue-50/40' : ''}`}
-              style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}>
-              <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggle(e.id)} className="cursor-pointer" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">{e.full_name}</p>
-                <p className="text-xs text-gray-400">
-                  {e.title ?? '—'}{e.department && ` · ${e.department}`}
-                  {!e.is_active && ' · inactive'}
-                </p>
-              </div>
-              <div className="w-32 text-center"><Badge>{e.employment_type.replace('_', ' ')}</Badge></div>
-              <div className="text-right w-28">
-                <p className="text-xs font-mono font-medium text-gray-700">
-                  {e.employment_type === 'permanent' ? `${N(e.base_salary_etb ?? 0)}/mo net` : `${N(e.daily_rate_etb ?? 0)}/day`}
-                </p>
-                {!e.pension_eligible && <p className="text-xs text-amber-600">No pension</p>}
-              </div>
-              <button onClick={() => { setEditing(e); setShowForm(true) }} className="p-1.5 text-gray-300 hover:text-blue-600 shrink-0">
-                <Pencil size={13} />
-              </button>
-            </div>
-          ))}
-          </Card>
-        </>
-      )}
-    </div>
-  )
+  return <main className="hr-workspace">
+    <section className="hr-hero"><div className="hr-hero__copy"><span>People operations</span><h1>Company workforce</h1><p>Head-office employment and warehouse operations stay separate, while HR retains one secure company directory.</p></div><div className="hr-hero__guard"><ShieldCheck /><span><b>HR controlled</b>Salary, bank and TIN data remain restricted</span></div></section>
+    <nav className="hr-workspace-tabs" aria-label="Employee workspaces"><button className={workspace === 'corporate' ? 'active' : ''} onClick={() => switchWorkspace('corporate')}><Building2 /><span><b>Head-office employees</b><small>Created and maintained by central HR</small></span><strong>{corporate.length}</strong></button><button className={workspace === 'warehouse' ? 'active' : ''} onClick={() => switchWorkspace('warehouse')}><Warehouse /><span><b>Warehouse directory</b><small>Registered and grouped inside each warehouse</small></span><strong>{warehouseStaff.length}</strong></button></nav>
+    <section className="hr-kpis"><article><i><BriefcaseBusiness /></i><span>Head office<strong>{corporate.filter(item => item.is_active).length}</strong><small>Active corporate employees</small></span></article><article><i><Warehouse /></i><span>Warehouse workforce<strong>{warehouseStaff.filter(item => item.is_active).length}</strong><small>Operational employees</small></span></article><article><i><Layers3 /></i><span>Workforce groups<strong>{new Set(memberships.map(item => item.group_id)).size}</strong><small>Warehouse-owned groups</small></span></article><article><i><UserRoundCheck /></i><span>Active workforce<strong>{employees.filter(item => item.is_active).length}</strong><small>Across the company</small></span></article></section>
+    <section className="hr-section-head"><div><span>{workspace === 'corporate' ? 'Central HR master' : 'Read-only operations directory'}</span><h2>{workspace === 'corporate' ? 'Head-office employees' : 'Warehouse employees by location'}</h2><p>{workspace === 'corporate' ? 'Create payroll-ready records for employees who do not belong to a warehouse.' : 'Warehouse managers own registration, employment changes and workforce groups.'}</p></div>{workspace === 'corporate' ? <div className="hr-section-actions"><Button variant="secondary" icon={<ClipboardPaste size={14} />} onClick={() => setShowImport(true)}>Import staff</Button><Button icon={showForm && !editing ? <X size={14} /> : <Plus size={14} />} onClick={() => { setShowForm(value => !value); setEditing(null) }}>Add employee</Button></div> : <Link to="/warehouse-operations" className="hr-open-operations"><ArrowUpRight /> Open warehouse operations</Link>}</section>
+    {error && <div className="hr-form-error">{error}</div>}
+    {showImport && <BulkImportModal title="Import head-office employees" columns={IMPORT_COLUMNS} exampleCsv={IMPORT_EXAMPLE} helpText="Imported employees remain in central HR. Register warehouse staff from Warehouse Operations." onImport={importCorporate} onClose={() => setShowImport(false)} onImported={() => void load()} />}
+    {showForm && workspace === 'corporate' && <CorporateEmployeeForm employee={editing} onCancel={() => { setShowForm(false); setEditing(null) }} onSaved={() => { setShowForm(false); setEditing(null); void load() }} />}
+    {!showForm && <div className="hr-directory-tools"><div className="hr-search"><Search /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search employee, title or department" /></div>{workspace === 'warehouse' && <select value={warehouseFilter} onChange={event => setWarehouseFilter(event.target.value)}><option value="ALL">All warehouses</option>{warehouses.map(warehouse => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select>}<span>{workspace === 'corporate' ? corporateVisible.length : warehouseVisible.length} visible</span></div>}
+    {loading ? <div className="hr-loading"><Loader2 className="animate-spin" /> Loading workforce…</div> : workspace === 'corporate' ? <><BulkActionBar count={selected.size} itemLabel="employee" onClear={() => setSelected(new Set())} onDelete={() => void removeSelected()} /><Card className="hr-employee-register"><div className="hr-register-head"><input type="checkbox" aria-label="Select all head-office employees" checked={allCorporateSelected} onChange={() => setSelected(allCorporateSelected ? new Set() : new Set(corporateVisible.map(item => item.id)))} /><span>Employee</span><span>Department</span><span>Employment</span><span>Pay basis</span><span>Status</span><span /></div>{corporateVisible.length ? corporateVisible.map(employee => <article key={employee.id} className={`hr-employee-row ${!employee.is_active ? 'inactive' : ''}`}><input type="checkbox" checked={selected.has(employee.id)} onChange={() => toggle(employee.id)} /><div><b>{employee.full_name}</b><small>{employee.title ?? 'Head-office employee'}</small></div><span>{employee.department ?? 'Unassigned'}</span><Badge>{employee.employment_type.replace('_',' ')}</Badge><strong>{employee.employment_type === 'permanent' ? `${money(employee.base_salary_etb ?? 0)} ETB / month` : `${money(employee.daily_rate_etb ?? 0)} ETB / day`}</strong><span className={employee.is_active ? 'is-active' : 'is-inactive'}>{employee.is_active ? 'Active' : 'Inactive'}</span><button aria-label={`Edit ${employee.full_name}`} onClick={() => { setEditing(employee); setShowForm(true) }}><Pencil /></button></article>) : <div className="hr-empty"><Users /><h3>No head-office employees found</h3><p>Add a central employee or change the search.</p></div>}</Card></> : warehouseSections.length ? <div className="hr-warehouse-sections">{warehouseSections.map(section => <section key={section.id} className="hr-warehouse-card"><header><div><i><Warehouse /></i><span><b>{section.name}</b><small>{section.employees.length} employee{section.employees.length === 1 ? '' : 's'} · warehouse owned</small></span></div><Link to="/warehouse-operations">Manage in warehouse <ArrowUpRight /></Link></header><div className="hr-warehouse-list">{section.employees.map(employee => { const groups = groupsByEmployee.get(employee.id) ?? []; return <article key={employee.id} className={!employee.is_active ? 'inactive' : ''}><div className="hr-avatar">{employee.full_name.split(' ').slice(0,2).map(part => part[0]).join('')}</div><div><b>{employee.full_name}</b><small>{employee.title ?? employee.department ?? 'Warehouse employee'}</small></div><Badge>{employee.employment_type.replace('_',' ')}</Badge><div className="hr-group-tags">{groups.length ? groups.map(group => <span key={group.group_id}>{group.group_name}</span>) : <span className="unassigned">Not grouped</span>}</div><strong>{employee.is_active ? 'Active' : 'Inactive'}</strong></article> })}</div></section>)}</div> : <div className="hr-empty"><Warehouse /><h3>No warehouse employees found</h3><p>Warehouse employees appear after registration from Warehouse Operations.</p><Link to="/warehouse-operations">Open warehouse operations <ArrowUpRight /></Link></div>}
+  </main>
 }

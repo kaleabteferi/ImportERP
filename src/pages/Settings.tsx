@@ -634,7 +634,7 @@ export function Settings() {
 
           {ownOpen && (
             <div
-              className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+              className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
               onClick={e => e.target === e.currentTarget && setOwnOpen(false)}
             >
               <div className="bg-white rounded-card w-full max-w-md max-h-[90vh] overflow-auto shadow-xl">
@@ -816,7 +816,7 @@ export function Settings() {
 
           {acctOpen && (
             <div
-              className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+              className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
               onClick={e => e.target === e.currentTarget && setAcctOpen(false)}
             >
               <div className="bg-white rounded-card w-full max-w-sm shadow-xl">
@@ -1138,7 +1138,7 @@ export function Settings() {
           )}
 
           {wOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+            <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 px-4">
               <div className="w-full max-w-xl bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <div>
@@ -1351,7 +1351,7 @@ export function Settings() {
       {/* Consignee modal */}
       {cOpen && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
           onClick={e => e.target === e.currentTarget && setCOpen(false)}
         >
           <div className="bg-white rounded-card w-full max-w-md max-h-[90vh]

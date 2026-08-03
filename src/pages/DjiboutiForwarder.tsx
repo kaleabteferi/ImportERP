@@ -9,6 +9,7 @@ import {
   fetchDjiboutiReconciliation,
 } from '../api/warehouseTransfers'
 import type { WarehouseTransfer, AliStockRow, DjiboutiReconciliationLine } from '../api/warehouseTransfers'
+import { fetchWarehouseLocationsData } from '../api/warehouseOperations'
 import { SearchableSelect } from '../components/SearchableSelect'
 import {
   Truck, Loader2, Plus, AlertTriangle, CheckCircle2, Package, Ship, ChevronDown, ChevronRight, Box, Calendar, Anchor,
@@ -63,6 +64,9 @@ export function DjiboutiForwarder() {
 
   const [receiveTarget, setReceiveTarget] = useState<WarehouseTransfer | null>(null)
   const [receiveQty, setReceiveQty] = useState('')
+  const [receiveDamagedQty, setReceiveDamagedQty] = useState('')
+  const [receivePlacementLocationId, setReceivePlacementLocationId] = useState('')
+  const [receiveLocations, setReceiveLocations] = useState<{ id: string; code: string }[]>([])
   const [receiveSaving, setReceiveSaving] = useState(false)
 
   const warehouseName = (id: string | null) => warehouses.find(w => w.id === id)?.name ?? '—'
@@ -165,16 +169,25 @@ export function DjiboutiForwarder() {
   function openReceive(t: WarehouseTransfer) {
     setReceiveTarget(t)
     setReceiveQty(String(t.quantity))
+    setReceiveDamagedQty('')
+    setReceivePlacementLocationId('')
+    setReceiveLocations([])
+    if (t.to_warehouse_id) {
+      fetchWarehouseLocationsData([t.to_warehouse_id]).then(data => {
+        setReceiveLocations(data.locations.filter(loc => loc.is_active).map(loc => ({ id: loc.id, code: loc.code })))
+      }).catch(() => setReceiveLocations([]))
+    }
   }
 
   async function submitReceive() {
     if (!receiveTarget) return
     const qty = Number(receiveQty)
     if (!qty || qty <= 0) { setError('Enter the quantity that actually arrived.'); return }
+    const damagedQty = Math.min(qty, Math.max(0, Number(receiveDamagedQty) || 0))
 
     setReceiveSaving(true); setError(null); setSuccess(null)
     try {
-      await confirmDjiboutiReceipt(receiveTarget, qty)
+      await confirmDjiboutiReceipt(receiveTarget, qty, damagedQty, receivePlacementLocationId || null)
       setSuccess('Receipt confirmed — stock added to your warehouse.')
       setReceiveTarget(null)
       load()
@@ -567,6 +580,21 @@ export function DjiboutiForwarder() {
                   </p>
                 )}
               </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Of which damaged (already included above)</label>
+                <input type="number" min="0" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  value={receiveDamagedQty} onChange={e => setReceiveDamagedQty(e.target.value)} placeholder="0" />
+              </div>
+              {receiveLocations.length > 0 && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Place at (of the good units)</label>
+                  <select className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    value={receivePlacementLocationId} onChange={e => setReceivePlacementLocationId(e.target.value)}>
+                    <option value="">Leave unplaced</option>
+                    {receiveLocations.map(loc => <option key={loc.id} value={loc.id}>{loc.code}</option>)}
+                  </select>
+                </div>
+              )}
       </Modal>
     </div>
   )

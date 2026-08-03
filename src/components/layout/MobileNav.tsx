@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Ship, Wrench, Banknote, BarChart3, Menu, X, LogOut, KeyRound, Monitor } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { LayoutDashboard, Ship, Wrench, Banknote, Menu, X, LogOut, KeyRound, Monitor, ChevronDown } from 'lucide-react'
 import { useAuth } from '../../lib/auth'
 import { useViewMode } from '../../lib/viewMode'
 import { hasAccess, ROLE_LABELS } from '../../lib/roles'
@@ -8,12 +8,12 @@ import type { Role } from '../../lib/roles'
 import { NAV_LINKS } from '../../lib/navLinks'
 import { ChangePinModal } from '../ChangePinModal'
 
-const tabs = [
-  { to: '/',              icon: LayoutDashboard, label: 'Home'       },
-  { to: '/shipments',     icon: Ship,            label: 'Shipments'  },
-  { to: '/production',    icon: Wrench,          label: 'Production' },
-  { to: '/money-tracking',icon: Banknote,        label: 'Money'      },
-  { to: '/reports',       icon: BarChart3,       label: 'Reports'    },
+const tabs: Array<{ to: string; icon: typeof LayoutDashboard; label: string; allow: Role[]; warehouseScope?: boolean }> = [
+  { to: '/',                    icon: LayoutDashboard, label: 'Home',       allow: [], warehouseScope: true },
+  { to: '/shipments',           icon: Ship,            label: 'Shipments',  allow: ['operations_marketing'] },
+  { to: '/production',          icon: Wrench,          label: 'Production', allow: ['manufacturing_sales'] },
+  { to: '/warehouse-operations',icon: Wrench,          label: 'Warehouse',  allow: [], warehouseScope: true },
+  { to: '/money-tracking',      icon: Banknote,        label: 'Money',      allow: ['accounting_finance'] },
 ]
 
 // The 5 tabs above are the curated, most-used-on-the-move destinations —
@@ -24,30 +24,33 @@ const tabs = [
 // uses, filtered by role, so nothing is a dead end just because you're on
 // a phone.
 function MoreMenu({ onClose }: { onClose: () => void }) {
-  const { profile, signOut } = useAuth()
+  const { profile, warehouseAssignments, signOut } = useAuth()
   const { toggleMode } = useViewMode()
   const role = profile?.role as Role | undefined
+  const location = useLocation()
   const [showChangePin, setShowChangePin] = useState(false)
   const visibleGroups = NAV_LINKS
-    .map(group => ({ ...group, items: group.items.filter(link => link.allow.length === 0 || hasAccess(role, link.allow)) }))
+    .map(group => ({ ...group, items: group.items.filter(link => hasAccess(role, link.allow, warehouseAssignments, link.warehouseScope)) }))
     .filter(group => group.items.length > 0)
+  const activeSection = visibleGroups.find(group => group.items.some(link => link.to === '/' ? location.pathname === '/' : location.pathname.startsWith(link.to)))?.section
+  const [openSections, setOpenSections] = useState<string[]>(['Overview'])
 
   return (
     <div className="fixed inset-0 z-[70] flex flex-col justify-end bg-black/40" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-[24px] max-h-[85vh] flex flex-col shadow-[var(--shadow-card-xl)]">
+      <div className="mobile-more-sheet bg-white rounded-t-[24px] max-h-[85vh] flex flex-col shadow-[var(--shadow-card-xl)]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
           <div>
             <p className="text-sm font-medium">{profile?.full_name ?? 'Unnamed'}</p>
             <p className="text-xs text-gray-400">{role ? ROLE_LABELS[role] : profile?.role}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600"><X size={18} /></button>
+          <button onClick={onClose} aria-label="Close menu" className="p-1.5 text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
 
         <div className="overflow-y-auto px-4 py-3 space-y-4">
           {visibleGroups.map(group => (
             <div key={group.section}>
-              <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1.5">{group.section}</p>
-              <div className="grid grid-cols-3 gap-2">
+              <button type="button" onClick={() => setOpenSections(current => current.includes(group.section) ? current.filter(section => section !== group.section) : [...current, group.section])} aria-expanded={openSections.includes(group.section) || activeSection === group.section} className="mb-1 flex min-h-11 w-full items-center justify-between rounded-xl px-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] hover:bg-[var(--color-background-secondary)]"><span>{group.section}</span><ChevronDown size={15} className={`transition-transform ${openSections.includes(group.section) || activeSection === group.section ? '' : '-rotate-90'}`} /></button>
+              <div hidden={!openSections.includes(group.section) && activeSection !== group.section} className="grid grid-cols-3 gap-2">
                 {group.items.map(link => (
                   <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={onClose}
                     className={({ isActive }) => `flex flex-col items-center gap-1.5 p-2.5 rounded-card border text-center ${isActive ? 'border-accent bg-accent/10' : 'border-gray-200'}`}>
@@ -79,17 +82,20 @@ function MoreMenu({ onClose }: { onClose: () => void }) {
 
 export function MobileNav() {
   const [showMore, setShowMore] = useState(false)
+  const { profile, warehouseAssignments } = useAuth()
+  const role = profile?.role as Role | undefined
+  const visibleTabs = tabs.filter(tab => hasAccess(role, tab.allow, warehouseAssignments, tab.warehouseScope)).slice(0, 4)
 
   return (
     <>
-      <nav style={{
+      <nav className="mobile-bottom-nav" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
         background: 'var(--color-background-primary)',
         borderTop: '0.5px solid var(--color-border-tertiary)',
         display: 'flex', zIndex: 50,
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}>
-        {tabs.map(tab => (
+        {visibleTabs.map(tab => (
           <NavLink
             key={tab.to}
             to={tab.to}
@@ -97,9 +103,9 @@ export function MobileNav() {
             style={({ isActive }) => ({
               flex: 1, display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              padding: '6px 4px 8px', gap: '3px', textDecoration: 'none',
+              minHeight: '64px', padding: '6px 4px 8px', gap: '3px', textDecoration: 'none',
               color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-              fontSize: '10px', fontWeight: isActive ? 600 : 400,
+              fontSize: '11px', fontWeight: isActive ? 650 : 500,
             })}
           >
             {({ isActive }) => (
@@ -121,8 +127,8 @@ export function MobileNav() {
           style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
-            padding: '6px 4px 8px', gap: '3px', background: 'none', border: 'none',
-            color: 'var(--color-text-tertiary)', fontSize: '10px', cursor: 'pointer',
+            minHeight: '64px', padding: '6px 4px 8px', gap: '3px', background: 'none', border: 'none',
+            color: 'var(--color-text-secondary)', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
           }}
         >
           <Menu size={22} strokeWidth={1.5} />

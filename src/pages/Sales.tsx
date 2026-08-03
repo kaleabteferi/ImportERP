@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { createSalesOrder, fetchOrdersWithMargins, recordPayment, fetchSalesOrderForEdit, deleteSalesOrder } from '../api/sales'
 import { fetchCustomers, createCustomer } from '../api/customers'
@@ -60,6 +61,8 @@ function oneName(c: OrderRow['customers']): string {
 }
 
 export function Sales() {
+  const [searchParams] = useSearchParams()
+  const preselectedProductId = searchParams.get('product') ?? ''
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
   const [orderLineItems, setOrderLineItems] = useState<Record<string, OrderLineItem[]>>({})
@@ -73,12 +76,12 @@ export function Sales() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => Boolean(preselectedProductId))
   const [saving, setSaving] = useState(false)
   const [customerId, setCustomerId] = usePageState('sales.customerId', '')
-  const [warehouseId, setWarehouseId] = usePageState('sales.warehouseId', '')
+  const [warehouseId, setWarehouseId] = usePageState('sales.warehouseId', searchParams.get('warehouse') ?? '')
   const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0])
-  const [cart, setCart] = useState<CartLine[]>([])
+  const [cart, setCart] = useState<CartLine[]>(() => preselectedProductId ? [{ productId: preselectedProductId, quantity: 1, unitPriceEtb: 0 }] : [])
   const [itemQuery, setItemQuery] = useState('')
   const [payNow, setPayNow] = useState(true)
   const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
@@ -128,6 +131,9 @@ export function Sales() {
         if (!(l.product_id in priceMap)) priceMap[l.product_id] = Number(l.unit_price_etb ?? 0)
       }
       setLastPriceByProduct(priceMap)
+      setCart(current => current.map(line => line.unitPriceEtb === 0 && priceMap[line.productId] !== undefined
+        ? { ...line, unitPriceEtb: priceMap[line.productId] }
+        : line))
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load sales data.')
     } finally {

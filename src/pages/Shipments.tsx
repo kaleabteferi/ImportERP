@@ -4,6 +4,9 @@ import { Plus, Ship, Check, Loader2, AlertTriangle, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { receiveShipmentAtDjibouti, resolveAssemblyType } from '../lib/inventoryReceive'
 import { fetchAliWarehouseId } from '../api/warehouseTransfers'
+import { createDamageReport } from '../api/damageReports'
+import { addShortageNote } from '../api/shortageNotes'
+import { ReceivingCountModal, type CountLine, type CountResultLine } from '../components/ReceivingCountModal'
 import { DeleteShipmentModal } from '../components/shipments/DeleteShipmentModal'
 import { usePageState } from '../lib/pageState'
 import { PageHeader } from '../components/ui/PageHeader'
@@ -23,6 +26,7 @@ interface Shipment {
   allocation_method: string
   company_id: string | null
   djibouti_received_at: string | null
+  supplier_id: string
   suppliers: { name: string } | null
   companies: { name: string } | null
 }
@@ -62,12 +66,19 @@ export function Shipments() {
   const [etaTo, setEtaTo]             = usePageState('shipments.etaTo', '')
   const [deleteTarget, setDeleteTarget] = useState<Shipment | null>(null)
   const [notice, setNotice]           = useState<string | null>(null)
+  const [djiboutiCountTarget, setDjiboutiCountTarget] = useState<{
+    shipmentId: string
+    lines: CountLine[]
+    costById: Map<string, number | null>
+  } | null>(null)
+  const [djiboutiCounting, setDjiboutiCounting] = useState(false)
+  const [djiboutiCountError, setDjiboutiCountError] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
     const [shRes, supRes, coRes] = await Promise.all([
       supabase.from('shipments')
-        .select('id, shipment_number, container_number, status, eta_djibouti, arrived_addis_date, allocation_method, company_id, djibouti_received_at, suppliers(name), companies(name)')
+        .select('id, shipment_number, container_number, status, eta_djibouti, arrived_addis_date, allocation_method, company_id, djibouti_received_at, supplier_id, suppliers(name), companies(name)')
         .order('created_at', { ascending: false }),
       supabase.from('suppliers')
         .select('id, name').eq('is_active', true).order('name'),
@@ -132,39 +143,108 @@ export function Shipments() {
   }
 
   async function updateStatus(id: string, status: string) {
-    await supabase.from('shipments').update({ status }).eq('id', id)
-
     const shipment = shipments.find(s => s.id === id)
+
+    // Landing at Djibouti is a truck-unload moment — count what actually
+    // came off before crediting Ali's warehouse, instead of blindly posting
+    // the full expected (PI) quantity. Opens a count modal instead of
+    // updating the status immediately; the status change happens once the
+    // count is submitted (see submitDjiboutiCount below).
     if (status === 'AT_DJIBOUTI' && shipment && !shipment.djibouti_received_at) {
       try {
         const { data: itemRows, error: itemsError } = await supabase
           .from('shipment_items')
-          .select('id, product_id, quantity, unit_landed_cost_etb, products(name, assembly_type, is_assembled)')
+          .select('id, product_id, quantity, unit_landed_cost_etb, products(name, sku, assembly_type, is_assembled)')
           .eq('shipment_id', id)
         if (itemsError) throw itemsError
 
-        const items = (itemRows ?? []).map((row: any) => {
+        if (!itemRows || itemRows.length === 0) {
+          // Nothing to count — fall through to a plain status update.
+          await supabase.from('shipments').update({ status }).eq('id', id)
+          load()
+          return
+        }
+
+        const lines: CountLine[] = itemRows.map((row: any) => {
           const product = Array.isArray(row.products) ? row.products[0] : row.products
           return {
-            shipment_item_id: row.id,
-            product_id: row.product_id,
-            product_name: product?.name ?? 'Unknown product',
-            quantity: Number(row.quantity ?? 0),
-            unit_landed_cost_etb: row.unit_landed_cost_etb,
-            assembly_type: resolveAssemblyType(product ?? {}),
+            shipmentItemId: row.id,
+            productId: row.product_id,
+            productName: product?.name ?? 'Unknown product',
+            sku: product?.sku,
+            expectedQuantity: Number(row.quantity ?? 0),
           }
         })
-
-        if (items.length > 0) {
-          const aliWarehouseId = await fetchAliWarehouseId()
-          await receiveShipmentAtDjibouti(id, items, aliWarehouseId)
-        }
+        const costById = new Map(itemRows.map((row: any) => [row.id, row.unit_landed_cost_etb]))
+        setDjiboutiCountError(null)
+        setDjiboutiCountTarget({ shipmentId: id, lines, costById })
       } catch (e: any) {
-        setError(`Status updated, but couldn't post items into Ali's warehouse: ${e?.message ?? e}`)
+        setError(e?.message ?? String(e))
       }
+      return
     }
 
+    await supabase.from('shipments').update({ status }).eq('id', id)
     load()
+  }
+
+  async function submitDjiboutiCount(result: CountResultLine[]) {
+    const target = djiboutiCountTarget
+    if (!target) return
+    const shipment = shipments.find(s => s.id === target.shipmentId)
+    setDjiboutiCounting(true)
+    setDjiboutiCountError(null)
+    try {
+      const { data: prodMeta } = await supabase
+        .from('products')
+        .select('id, assembly_type, is_assembled')
+        .in('id', result.map(r => r.productId))
+      const metaMap = new Map((prodMeta ?? []).map(p => [p.id, p]))
+      const aliWarehouseId = await fetchAliWarehouseId()
+
+      const toReceive = result.filter(line => line.countedQuantity > 0).map(line => ({
+        shipment_item_id: line.shipmentItemId,
+        product_id: line.productId,
+        product_name: line.productName,
+        quantity: line.countedQuantity,
+        unit_landed_cost_etb: target.costById.get(line.shipmentItemId) ?? null,
+        assembly_type: resolveAssemblyType(metaMap.get(line.productId) ?? {}),
+      }))
+      await receiveShipmentAtDjibouti(target.shipmentId, toReceive, aliWarehouseId)
+      await supabase.from('shipments').update({ status: 'AT_DJIBOUTI' }).eq('id', target.shipmentId)
+
+      const today = new Date().toISOString().split('T')[0]
+      for (const line of result) {
+        if (line.damagedQuantity > 0) {
+          await createDamageReport({
+            productId: line.productId,
+            warehouseId: aliWarehouseId,
+            quantity: line.damagedQuantity,
+            reason: 'Damaged in transit — found during Djibouti landing count',
+            shipmentId: target.shipmentId,
+            reportDate: today,
+            notes: line.notes || undefined,
+          })
+        }
+        const shortQty = line.expectedQuantity - line.countedQuantity
+        if (shortQty > 0 && shipment) {
+          await addShortageNote({
+            supplierId: shipment.supplier_id,
+            productId: line.productId,
+            shipmentId: target.shipmentId,
+            quantityShort: shortQty,
+            notes: line.notes || 'Found short at Djibouti landing count.',
+          })
+        }
+      }
+
+      setDjiboutiCountTarget(null)
+      load()
+    } catch (e: any) {
+      setDjiboutiCountError(e?.message ?? String(e))
+    } finally {
+      setDjiboutiCounting(false)
+    }
   }
 
   const filteredShipments = useMemo(() => shipments
@@ -410,6 +490,18 @@ export function Shipments() {
           }}
         />
       )}
+
+      <ReceivingCountModal
+        key={djiboutiCountTarget?.shipmentId ?? 'closed'}
+        open={!!djiboutiCountTarget}
+        title="Count arrival at Djibouti"
+        subtitle="Landing at Ali's Djibouti warehouse. Each line defaults to the expected quantity — adjust it to match what actually came off the truck."
+        lines={djiboutiCountTarget?.lines ?? []}
+        saving={djiboutiCounting}
+        error={djiboutiCountError}
+        onCancel={() => setDjiboutiCountTarget(null)}
+        onSubmit={submitDjiboutiCount}
+      />
 
       {/* Modal */}
       <Modal

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 export type UnitAccessRole = 'regional_manager' | 'warehouse_manager' | 'payroll_officer' | 'viewer'
 export type BatchStatus = 'draft' | 'active' | 'completed' | 'submitted' | 'approved' | 'cancelled'
 export type AttendanceStatus = 'present' | 'absent' | 'partial' | 'leave' | 'sick'
+export type AttendanceSource = 'manual' | 'biometric' | 'import' | 'production_batch'
 export type PayrollRunStatus =
   | 'draft' | 'calculated' | 'submitted' | 'hr_approved'
   | 'finance_approved' | 'posted' | 'paid' | 'rejected'
@@ -148,6 +149,169 @@ export interface WarehouseInventoryRow {
   warehouse_id: string
   product_id: string
   quantity_on_hand: number
+}
+
+export type LocationType = 'zone' | 'aisle' | 'shelf' | 'bin' | 'rack' | 'loading' | 'damaged' | 'workspace' | 'staging' | 'floor'
+export type ManualLocationStatus = 'reserved' | 'restricted' | null
+
+export interface WarehouseLocation {
+  id: string
+  warehouse_id: string
+  code: string
+  name: string | null
+  location_type: LocationType
+  parent_location_id: string | null
+  is_active: boolean
+  pos_x: number
+  pos_y: number
+  width: number
+  height: number
+  capacity: number | null
+  manual_status: ManualLocationStatus
+  notes: string | null
+  display_color: string | null
+}
+
+export interface LocationStockRow {
+  warehouse_id: string
+  location_id: string
+  product_id: string
+  quantity_on_hand: number
+}
+
+export interface UnplacedStockRow {
+  warehouse_id: string
+  product_id: string
+  quantity_on_hand: number
+}
+
+export interface FloorPlanProduct { id: string; name: string; sku: string }
+
+/** Self-contained fetch for the dedicated floor-plan editor page -- avoids
+ * pulling in the full WarehouseOperationsData blob (payroll, attendance,
+ * etc.) just to show one warehouse's locations and stock. */
+export async function fetchFloorPlanData(warehouseId: string): Promise<{
+  locations: WarehouseLocation[]
+  stockByLocation: LocationStockRow[]
+  unplacedStock: UnplacedStockRow[]
+  products: FloorPlanProduct[]
+}> {
+  const base = await fetchWarehouseLocationsData([warehouseId])
+  const productIds = [...new Set(base.stockByLocation.map(row => row.product_id).concat(base.unplacedStock.map(row => row.product_id)))]
+  const productsRes = productIds.length
+    ? await supabase.from('products').select('id, name, sku').in('id', productIds)
+    : { data: [], error: null }
+  if (productsRes.error) throw new Error(productsRes.error.message)
+  return { ...base, products: (productsRes.data ?? []) as FloorPlanProduct[] }
+}
+
+export async function fetchWarehouseLocationsData(warehouseIds: string[]): Promise<{
+  locations: WarehouseLocation[]
+  stockByLocation: LocationStockRow[]
+  unplacedStock: UnplacedStockRow[]
+}> {
+  if (warehouseIds.length === 0) return { locations: [], stockByLocation: [], unplacedStock: [] }
+  const [locationsRes, stockRes, unplacedRes] = await Promise.all([
+    supabase.from('warehouse_locations').select('id, warehouse_id, code, name, location_type, parent_location_id, is_active, pos_x, pos_y, width, height, capacity, manual_status, notes, display_color').in('warehouse_id', warehouseIds).order('code'),
+    supabase.from('current_inventory_by_location').select('warehouse_id, location_id, product_id, quantity_on_hand').in('warehouse_id', warehouseIds),
+    supabase.from('current_inventory_unplaced').select('warehouse_id, product_id, quantity_on_hand').in('warehouse_id', warehouseIds),
+  ])
+  return {
+    locations: rows<WarehouseLocation>(locationsRes),
+    stockByLocation: rows<LocationStockRow>(stockRes),
+    unplacedStock: rows<UnplacedStockRow>(unplacedRes),
+  }
+}
+
+export async function createWarehouseLocation(input: {
+  warehouseId: string
+  code: string
+  name?: string
+  locationType: LocationType
+  parentLocationId?: string | null
+  posX?: number
+  posY?: number
+  width?: number
+  height?: number
+  capacity?: number | null
+  displayColor?: string | null
+}): Promise<string> {
+  const { data, error } = await supabase.from('warehouse_locations').insert({
+    warehouse_id: input.warehouseId,
+    code: input.code,
+    name: input.name || null,
+    location_type: input.locationType,
+    parent_location_id: input.parentLocationId || null,
+    pos_x: input.posX ?? 40,
+    pos_y: input.posY ?? 40,
+    width: input.width ?? 140,
+    height: input.height ?? 90,
+    capacity: input.capacity ?? null,
+    display_color: input.displayColor ?? null,
+  }).select('id').single()
+  if (error) throw new Error(error.message)
+  return data.id as string
+}
+
+export async function updateWarehouseLocation(id: string, patch: {
+  code?: string
+  name?: string | null
+  locationType?: LocationType
+  parentLocationId?: string | null
+  isActive?: boolean
+  posX?: number
+  posY?: number
+  width?: number
+  height?: number
+  capacity?: number | null
+  manualStatus?: ManualLocationStatus
+  notes?: string | null
+  displayColor?: string | null
+}): Promise<void> {
+  const { error } = await supabase.from('warehouse_locations').update({
+    ...(patch.code !== undefined ? { code: patch.code } : {}),
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.locationType !== undefined ? { location_type: patch.locationType } : {}),
+    ...(patch.parentLocationId !== undefined ? { parent_location_id: patch.parentLocationId } : {}),
+    ...(patch.isActive !== undefined ? { is_active: patch.isActive } : {}),
+    ...(patch.posX !== undefined ? { pos_x: patch.posX } : {}),
+    ...(patch.posY !== undefined ? { pos_y: patch.posY } : {}),
+    ...(patch.width !== undefined ? { width: patch.width } : {}),
+    ...(patch.height !== undefined ? { height: patch.height } : {}),
+    ...(patch.capacity !== undefined ? { capacity: patch.capacity } : {}),
+    ...(patch.manualStatus !== undefined ? { manual_status: patch.manualStatus } : {}),
+    ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+    ...(patch.displayColor !== undefined ? { display_color: patch.displayColor } : {}),
+  }).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/** Lightweight geometry-only write for live drag/resize, so a fast series
+ * of updates while dragging can't race with an edit to name/type/etc. */
+export async function updateLocationGeometry(id: string, geometry: { posX: number; posY: number; width: number; height: number }): Promise<void> {
+  const { error } = await supabase.from('warehouse_locations').update({
+    pos_x: geometry.posX, pos_y: geometry.posY, width: geometry.width, height: geometry.height,
+  }).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function moveInventoryLocation(input: {
+  warehouseId: string
+  productId: string
+  fromLocationId: string | null
+  toLocationId: string
+  quantity: number
+  notes?: string
+}): Promise<void> {
+  const { error } = await supabase.rpc('move_inventory_location', {
+    p_warehouse_id: input.warehouseId,
+    p_product_id: input.productId,
+    p_from_location_id: input.fromLocationId,
+    p_to_location_id: input.toLocationId,
+    p_quantity: input.quantity,
+    p_notes: input.notes || null,
+  })
+  if (error) throw new Error(error.message)
 }
 
 export interface ProducibleEstimate {
@@ -675,6 +839,7 @@ export async function saveAttendanceBatch(inputs: Array<{
   regularHours: number
   rawOvertimeHours: number
   notes?: string
+  source?: AttendanceSource
 }>) {
   if (inputs.length === 0) throw new Error('Select at least one attendance row to save.')
   const profileId = await currentProfileId()
@@ -688,7 +853,7 @@ export async function saveAttendanceBatch(inputs: Array<{
       attendance_status: input.attendanceStatus,
       regular_hours: input.regularHours,
       raw_overtime_hours: input.rawOvertimeHours,
-      source: 'manual',
+      source: input.source ?? 'manual',
       notes: input.notes || null,
       created_by: profileId,
       updated_at: updatedAt,

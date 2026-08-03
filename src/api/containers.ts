@@ -181,9 +181,9 @@ export async function getAllocatedQuantities(piId: string, excludePlItemId?: str
   if (error) throw new Error(error.message)
   const totals: Record<string, number> = {}
   for (const row of data ?? []) {
-    if (excludePlItemId && (row as any).id === excludePlItemId) continue
-    const key = (row as any).pi_item_id as string
-    totals[key] = (totals[key] ?? 0) + Number((row as any).total_units ?? 0)
+    if (excludePlItemId && row.id === excludePlItemId) continue
+    const key = row.pi_item_id as string
+    totals[key] = (totals[key] ?? 0) + Number(row.total_units ?? 0)
   }
   return totals
 }
@@ -202,6 +202,28 @@ export interface PlItemInput {
 }
 
 export async function addPackingListItem(packingListId: string, input: PlItemInput) {
+  // One product allocation per container. Re-selecting the same PI line is
+  // an increment, not a second visual/physical line. Keep the established
+  // carton specification and add the new carton quantity to it.
+  const { data: existing, error: existingError } = await supabase.from('pl_items')
+    .select('id, carton_qty, units_per_carton, unit_price_foreign, gross_weight_per_ctn, net_weight_per_ctn, length_cm, width_cm, height_cm, marks_and_numbers')
+    .eq('pl_id', packingListId).eq('pi_item_id', input.pi_item_id)
+    .order('line_number').limit(1).maybeSingle()
+  if (existingError) throw new Error(existingError.message)
+  if (existing) {
+    const { error } = await supabase.from('pl_items').update({
+      carton_qty: Number(existing.carton_qty) + Number(input.carton_qty),
+      unit_price_foreign: input.unit_price_foreign ?? existing.unit_price_foreign,
+      gross_weight_per_ctn: existing.gross_weight_per_ctn ?? input.gross_weight_per_ctn ?? null,
+      net_weight_per_ctn: existing.net_weight_per_ctn ?? input.net_weight_per_ctn ?? null,
+      length_cm: existing.length_cm ?? input.length_cm ?? null,
+      width_cm: existing.width_cm ?? input.width_cm ?? null,
+      height_cm: existing.height_cm ?? input.height_cm ?? null,
+      marks_and_numbers: existing.marks_and_numbers || input.marks_and_numbers || null,
+    }).eq('id', existing.id)
+    if (error) throw new Error(error.message)
+    return
+  }
   // line_number must be higher than every line_number that still exists for
   // this packing list, not just "one more than how many rows are left" --
   // COUNT(*) + 1 collides with pl_items_unique_line(pl_id, line_number) as

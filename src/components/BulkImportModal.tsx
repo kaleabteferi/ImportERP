@@ -126,11 +126,11 @@ export function BulkImportModal({ title, columns, exampleCsv, helpText, onImport
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-xl">
+    <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4 max-sm:items-end max-sm:p-0" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-xl max-sm:rounded-b-none max-sm:max-h-[94dvh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
           <h2 className="text-sm font-medium flex items-center gap-2"><ClipboardPaste size={16} className="text-blue-600" /> {title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="Close import" className="w-10 h-10 grid place-items-center rounded-xl text-gray-500 hover:text-gray-700"><X size={18} /></button>
         </div>
 
         <div className="px-5 py-4 overflow-y-auto flex-1">
@@ -193,7 +193,7 @@ export function BulkImportModal({ title, columns, exampleCsv, helpText, onImport
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-100 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-gray-100 shrink-0 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {step === 'preview' && (
             <button onClick={() => { setStep('paste'); setResult(null) }} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 mr-auto">Back to paste</button>
           )}

@@ -1,10 +1,11 @@
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchWarehousesList } from '../../api/income'
 import { logProductionQuick } from '../../lib/productionLogging'
 import { fetchProductionPlanningCompanies } from '../../api/warehouseOperations'
 import type { OperationalCompany } from '../../api/warehouseOperations'
-import { Wrench, Loader2, Check, Package, AlertTriangle } from 'lucide-react'
+import { Wrench, Loader2, Check, Package, AlertTriangle, Factory, ArrowRight, Clock3, Layers3 } from 'lucide-react'
 import { SelectMenu } from '../../components/ui/SelectMenu'
 
 interface BomOption { id: string; name: string; productName: string; stage: string }
@@ -25,6 +26,41 @@ interface RecentLogRow {
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const one = <T,>(value: T | T[] | null | undefined): T | null => Array.isArray(value) ? (value[0] ?? null) : (value ?? null)
 const message = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
+const today = () => new Date().toISOString().split('T')[0]
+const shortDate = new Intl.DateTimeFormat('en-ET', { month: 'short', day: 'numeric' })
+
+function MobileStat({
+  label,
+  value,
+  icon: Icon,
+  tone = 'neutral',
+  hint,
+}: {
+  label: string
+  value: string
+  icon: typeof Factory
+  tone?: 'neutral' | 'accent' | 'good' | 'subtle'
+  hint?: string
+}) {
+  const toneClasses = tone === 'accent'
+    ? 'bg-accent/18 text-accent border-accent/25'
+    : tone === 'good'
+      ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+      : tone === 'subtle'
+        ? 'bg-gray-50 text-gray-500 border-gray-100'
+        : 'bg-slate-50 text-slate-600 border-slate-100'
+
+  return (
+    <article className="rounded-card border bg-white p-3 shadow-[var(--shadow-card-sm)]">
+      <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl border ${toneClasses}`}>
+        <Icon size={17} strokeWidth={1.7} />
+      </div>
+      <p className="text-[11px] text-gray-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold tracking-tight text-gray-900">{value}</p>
+      {hint && <p className="mt-1 text-[10px] leading-tight text-gray-500">{hint}</p>}
+    </article>
+  )
+}
 
 export function MobileProduction() {
   const [warehouses, setWarehouses] = useState<Option[]>([])
@@ -98,17 +134,31 @@ export function MobileProduction() {
     return () => window.clearTimeout(timer)
   }, [load])
 
+  const selectedWarehouse = useMemo(
+    () => warehouses.find(warehouse => warehouse.id === warehouseId) ?? null,
+    [warehouseId, warehouses],
+  )
+  const selectedCompany = useMemo(
+    () => companies.find(company => company.id === companyId) ?? null,
+    [companyId, companies],
+  )
+  const todayLogs = useMemo(() => recent.filter(log => log.log_date === today()), [recent])
+  const totalRecent = useMemo(() => recent.reduce((sum, log) => sum + log.quantity_produced, 0), [recent])
+  const todaysQuantity = useMemo(() => todayLogs.reduce((sum, log) => sum + log.quantity_produced, 0), [todayLogs])
+
   async function logOne(bomId: string) {
     const qty = Number(entries[bomId] ?? '0')
     if (!warehouseId) { setError('Choose a warehouse first.'); return }
     if (!companyId) { setError('Choose the company for this production log.'); return }
     if (!qty || qty <= 0) { setError('Enter a quantity greater than 0.'); return }
-    setSavingId(bomId); setError(null); setSuccess(null)
+    setSavingId(bomId)
+    setError(null)
+    setSuccess(null)
     try {
-      await logProductionQuick(bomId, warehouseId, qty, undefined, new Date().toISOString().split('T')[0], companyId)
+      await logProductionQuick(bomId, warehouseId, qty, undefined, today(), companyId)
       setEntries(prev => ({ ...prev, [bomId]: '' }))
       const bom = boms.find(b => b.id === bomId)
-      setSuccess(`Logged ${qty} × ${bom?.productName ?? ''}`)
+      setSuccess(`Logged ${qty} × ${bom?.productName ?? 'product'}`)
       await load()
     } catch (caught) {
       setError(message(caught, 'Failed to log production.'))
@@ -118,13 +168,54 @@ export function MobileProduction() {
   }
 
   return (
-    <div className="p-4 pb-6 max-w-md mx-auto">
-      <div className="mb-4">
-        <h1 className="text-lg font-semibold flex items-center gap-2"><Wrench size={18} /> Production</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Tap a product, enter today's quantity, log it</p>
+    <div className="mobile-production-shell">
+      <div className="mobile-production-hero">
+        <div>
+          <p className="mobile-production-eyebrow">
+            <Wrench size={12} strokeWidth={1.8} />
+            Production
+          </p>
+          <h1>Floor output on the move</h1>
+          <p>Log production from a phone, then jump into the full warehouse operations workspace when you need batches, payroll or approvals.</p>
+        </div>
+        <Link to="/warehouse-operations?tab=production" className="mobile-production-ops-link">
+          Open ops
+          <ArrowRight size={13} />
+        </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="mobile-production-summary">
+        <MobileStat
+          label="Warehouse"
+          value={selectedWarehouse?.name ?? 'Choose one'}
+          icon={Factory}
+          tone={selectedWarehouse ? 'accent' : 'subtle'}
+          hint={selectedWarehouse ? 'Selected for live logging' : 'Required for every entry'}
+        />
+        <MobileStat
+          label="Company"
+          value={selectedCompany?.name ?? 'Choose one'}
+          icon={Layers3}
+          tone={selectedCompany ? 'good' : 'subtle'}
+          hint={selectedCompany?.is_primary ? 'Primary company scope' : 'Company-scoped logging'}
+        />
+        <MobileStat
+          label="Today"
+          value={N(todaysQuantity)}
+          icon={Clock3}
+          tone="neutral"
+          hint="Units logged today"
+        />
+        <MobileStat
+          label="Recent logs"
+          value={N(totalRecent)}
+          icon={Package}
+          tone="neutral"
+          hint="Last 10 production entries"
+        />
+      </div>
+
+      <div className="mobile-production-filters">
         <SelectMenu
           ariaLabel="Mobile production warehouse"
           searchable
@@ -151,50 +242,85 @@ export function MobileProduction() {
         />
       </div>
 
-      {error && <div className="mb-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700"><AlertTriangle size={13} className="shrink-0 mt-0.5" />{error}</div>}
-      {success && <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">{success}</div>}
+      {error && (
+        <div className="mobile-production-alert is-error" role="alert">
+          <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+      {success && <div className="mobile-production-alert is-success">{success}</div>}
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
+        <div className="mobile-production-loading">
+          <Loader2 size={18} className="animate-spin" />
+          Loading…
+        </div>
       ) : boms.length === 0 ? (
-        <div className="text-center py-16 text-sm text-gray-400">No active BOMs — set one up on the full version first.</div>
+        <div className="mobile-production-empty">
+          <strong>No active BOMs</strong>
+          <span>Set one up on the full version first, then come back here to log output fast.</span>
+        </div>
       ) : (
-        <div className="space-y-2 mb-6">
-          {boms.map(b => (
-            <div key={b.id} className="bg-white shadow-[var(--shadow-card-sm)] rounded-card p-3.5">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0"><Package size={14} className="text-gray-400" /></div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{b.productName}</p>
-                  <p className="text-xs text-gray-400 capitalize">{b.stage.toLowerCase()}</p>
+        <div className="mobile-production-list">
+          {boms.map(bom => (
+            <article key={bom.id} className="mobile-production-card">
+              <div className="mobile-production-card__head">
+                <div className="mobile-production-card__icon">
+                  <Package size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-gray-900">{bom.productName}</p>
+                  <p className="truncate text-[11px] text-gray-500">
+                    {bom.name} · {bom.stage.replaceAll('_', ' ').toLowerCase()}
+                  </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input type="number" value={entries[b.id] ?? ''} onChange={e => setEntries(prev => ({ ...prev, [b.id]: e.target.value }))}
-                  placeholder="Quantity" className="flex-1 h-9 px-3 text-sm border border-gray-200 rounded-lg" />
-                <button onClick={() => logOne(b.id)} disabled={savingId === b.id}
-                  className="h-9 px-4 bg-green-600 text-white text-xs rounded-lg flex items-center gap-1.5 disabled:opacity-50">
-                  {savingId === b.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Log
+              <div className="mobile-production-card__controls">
+                <label className="mobile-production-quantity">
+                  <span>Qty</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={entries[bom.id] ?? ''}
+                    onChange={e => setEntries(prev => ({ ...prev, [bom.id]: e.target.value }))}
+                    placeholder="0"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => logOne(bom.id)}
+                  disabled={savingId === bom.id}
+                  className="mobile-production-log-button"
+                >
+                  {savingId === bom.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  Log
                 </button>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
 
       {recent.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-gray-500 mb-2">Recent activity</p>
-          <div className="bg-white shadow-[var(--shadow-card-sm)] rounded-card overflow-hidden">
-            {recent.map((r, i) => (
-              <div key={r.id} className={`flex items-center justify-between px-4 py-2.5 text-xs ${i < recent.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                <span className="text-gray-600">{r.productName}</span>
-                <span className="text-gray-400">{r.log_date}</span>
-                <span className="font-mono font-medium text-green-700">+{N(r.quantity_produced)}</span>
+        <section className="mobile-production-recent">
+          <div className="mobile-production-recent__head">
+            <p>Recent activity</p>
+            <span>{recent.length} entries</span>
+          </div>
+          <div className="mobile-production-recent__list">
+            {recent.map((log, index) => (
+              <div key={log.id} className={`mobile-production-recent__item${index < recent.length - 1 ? ' has-divider' : ''}`}>
+                <div className="min-w-0">
+                  <strong>{log.productName}</strong>
+                  <span>{shortDate.format(new Date(`${log.log_date}T12:00:00`))}</span>
+                </div>
+                <b>+{N(log.quantity_produced)}</b>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </div>
   )

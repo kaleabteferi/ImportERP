@@ -15,7 +15,7 @@ interface Props {
 
 export function PageHeader({ icon, title, subtitle, actions }: Props) {
   return (
-    <div className="flex items-center justify-between mb-5">
+    <div className="app-page-header flex items-center justify-between mb-5">
       <div>
         <h1 className="text-[32px] leading-tight font-semibold tracking-tight flex items-center gap-2.5">
           {icon}{title}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { calculateInventoryBalances, type InventoryBalance } from '../lib/inventoryLedger'
 import { fetchAllProducts, fetchBoms } from '../api/bom'
@@ -6,11 +7,12 @@ import { fetchWarehousesList } from '../api/income'
 import { usePageState } from '../lib/pageState'
 import { computeDemandForecast, STOCKOUT_WARNING_DAYS, type SalesLine } from '../lib/forecasting'
 import { SearchableSelect } from '../components/SearchableSelect'
-import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
+import { Package, AlertTriangle, Loader2, Plus, X, ShieldAlert, LayoutGrid, Wrench, Boxes, TrendingUp, TrendingDown, Minus, Gauge, Calendar, Clock, ChevronDown, ChevronRight, Search, ArrowRightLeft, ShoppingCart, Warehouse, CircleDollarSign, Map as MapIcon } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
+import './Inventory.css'
 
 function LiveClock() {
   const [now, setNow] = useState(new Date())
@@ -158,7 +160,10 @@ export function Inventory() {
   const [filterProd, setFilterProd] = usePageState('inventory.filterProd', '')
   const [filterWarehouse, setFilterWarehouse] = usePageState('inventory.filterWarehouse', '')
   const [stockSearch, setStockSearch] = usePageState('inventory.stockSearch', '')
-  const [stockSort, setStockSort] = usePageState<'value' | 'name' | 'date'>('inventory.stockSort', 'value')
+  const [stockSort, setStockSort] = usePageState<'value' | 'name' | 'date' | 'quantity' | 'cost'>('inventory.stockSort', 'value')
+  const [category, setCategory] = usePageState('inventory.category', 'ALL')
+  const [stockStatus, setStockStatus] = usePageState('inventory.stockStatus', 'ALL')
+  const [movementType, setMovementType] = usePageState('inventory.movementType', 'ALL')
   const [expandedStockKey, setExpandedStockKey] = useState<string | null>(null)
   const [showAdjustForm, setShowAdjustForm] = useState(false)
   const [products, setProducts] = useState<Array<{ id: string; name: string; sku: string }>>([])
@@ -322,35 +327,46 @@ export function Inventory() {
 
   const warehouseGroups = useMemo(() => {
     const map = new Map<string, { name: string; items: InventoryRow[] }>()
+    // Seed every active warehouse first so ones with zero stock still show
+    // up here — otherwise a warehouse that hasn't received anything yet
+    // just silently disappears from this view instead of reading as "empty".
+    for (const w of warehouses) map.set(w.id, { name: w.name, items: [] })
     for (const item of inventory) {
       const key = item.warehouse_id ?? ''
       if (!map.has(key)) map.set(key, { name: item.warehouse_name, items: [] })
       map.get(key)!.items.push(item)
     }
     return [...map.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name))
-  }, [inventory])
+  }, [inventory, warehouses])
 
   const totalValue = inventory.reduce((s, i) => s + i.total_value, 0)
   const outOfStock = inventory.filter(i => i.quantity_on_hand <= 0)
   const lowStock   = inventory.filter(i => i.quantity_on_hand > 0 && i.quantity_on_hand < 20)
-  const moves      = filterProd
-    ? movements.filter(m => (m.products as any)?.name === filterProd)
-    : movements
+  const moves = movements
+    .filter(m => !filterProd || m.products?.name === filterProd)
+    .filter(m => movementType === 'ALL' || m.movement_type === movementType)
   // inventory has one row per product+warehouse, but this filter is by
   // product name only — dedupe so the same product isn't listed per warehouse.
   const filterableProducts = [...new Map(inventory.map(i => [i.product_name, i])).values()]
   const visibleStock = inventory
     .filter(i => !filterWarehouse || i.warehouse_id === filterWarehouse)
     .filter(i => !stockSearch || i.product_name.toLowerCase().includes(stockSearch.toLowerCase()) || i.sku.toLowerCase().includes(stockSearch.toLowerCase()))
+    .filter(i => category === 'ALL' || (productMeta.get(i.product_id)?.assemblyType ?? 'IMPORTED') === category)
+    .filter(i => stockStatus === 'ALL' || (stockStatus === 'OUT' ? i.quantity_on_hand <= 0 : stockStatus === 'LOW' ? i.quantity_on_hand > 0 && i.quantity_on_hand < 20 : i.quantity_on_hand >= 20))
     .slice()
     .sort((a, b) => {
       if (stockSort === 'name') return a.product_name.localeCompare(b.product_name)
       if (stockSort === 'date') return (b.last_movement_date ?? '').localeCompare(a.last_movement_date ?? '')
+      if (stockSort === 'quantity') return b.quantity_on_hand - a.quantity_on_hand
+      if (stockSort === 'cost') return b.avg_unit_cost_etb - a.avg_unit_cost_etb
       return b.total_value - a.total_value
     })
+  const totalUnits = inventory.reduce((sum, item) => sum + Math.max(0, item.quantity_on_hand), 0)
+  const uniqueSkus = new Set(inventory.map(item => item.product_id)).size
+  const finishedUnits = inventory.filter(item => ['FULL', 'IMPORTED'].includes(productMeta.get(item.product_id)?.assemblyType ?? 'IMPORTED')).reduce((sum, item) => sum + Math.max(0, item.quantity_on_hand), 0)
 
   return (
-    <div className="p-5 max-w-5xl mx-auto">
+    <div className="inventory-shell p-5 max-w-7xl mx-auto">
 
       <PageHeader
         title="Inventory"
@@ -358,7 +374,9 @@ export function Inventory() {
         actions={<LiveClock />}
       />
 
-      <div className="flex items-center justify-end mb-5 -mt-3">
+      <section className="inventory-kpis"><article><i><Package /></i><span>Units on hand<strong>{N(totalUnits)}</strong><small>{uniqueSkus} active SKUs</small></span></article><article><i><CircleDollarSign /></i><span>Inventory value<strong>{N(totalValue)} ETB</strong><small>Weighted ledger value</small></span></article><article><i><Warehouse /></i><span>Warehouse network<strong>{warehouses.length}</strong><small>{inventory.filter(item => item.quantity_on_hand > 0).length} stocked positions</small></span></article><article className={lowStock.length + outOfStock.length ? 'is-alert' : ''}><i><AlertTriangle /></i><span>Needs attention<strong>{lowStock.length + outOfStock.length}</strong><small>{outOfStock.length} out · {lowStock.length} low</small></span></article><article><i><Wrench /></i><span>Finished goods<strong>{N(finishedUnits)}</strong><small>Available to transfer or sell</small></span></article></section>
+
+      <div className="inventory-command-bar flex items-center justify-end mb-5">
         <div className="flex gap-2">
           <Button
             onClick={() => setShowAdjustForm(v => !v)}
@@ -441,14 +459,12 @@ export function Inventory() {
                 Current on-hand quantity and value per product/warehouse. Click a row to see its recent
                 movements — including which shipment and container it was received from.
               </p>
-              <div className="flex items-center gap-2 mb-3">
-                <input
+              <div className="inventory-filter-panel">
+                <label className="inventory-search"><Search size={15} /><input
                   value={stockSearch}
                   onChange={e => setStockSearch(e.target.value)}
                   placeholder="Search product or SKU"
-                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg w-52
-                             focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
+                /></label>
                 <select
                   value={filterWarehouse}
                   onChange={e => setFilterWarehouse(e.target.value)}
@@ -458,16 +474,21 @@ export function Inventory() {
                   <option value="">All warehouses</option>
                   {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
+                <select value={category} onChange={e => setCategory(e.target.value)}><option value="ALL">All categories</option><option value="FULL">Finished goods</option><option value="IMPORTED">Imported finished</option><option value="SKD">SKD kits</option><option value="CKD">CKD kits</option></select>
+                <select value={stockStatus} onChange={e => setStockStatus(e.target.value)}><option value="ALL">All stock status</option><option value="HEALTHY">Healthy stock</option><option value="LOW">Low stock</option><option value="OUT">Out of stock</option></select>
                 <select
                   value={stockSort}
-                  onChange={e => setStockSort(e.target.value as 'value' | 'name' | 'date')}
+                  onChange={e => setStockSort(e.target.value as typeof stockSort)}
                   className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white
                              focus:outline-none focus:ring-1 focus:ring-blue-400"
                 >
                   <option value="value">Sort: Total value</option>
                   <option value="name">Sort: Product name</option>
                   <option value="date">Sort: Last movement date</option>
+                  <option value="quantity">Sort: Quantity on hand</option>
+                  <option value="cost">Sort: Unit cost</option>
                 </select>
+                <span className="inventory-result-count">{visibleStock.length} positions</span>
               </div>
 
               {visibleStock.length === 0 ? (
@@ -500,7 +521,7 @@ export function Inventory() {
                   <div key={key}>
                   <button
                     onClick={() => setExpandedStockKey(expanded ? null : key)}
-                    className={`stagger-row w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 text-left
+                    className={`inventory-stock-row stagger-row w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 text-left
                                 items-center border-l-[3px] ${rail} hover:bg-gray-50/70 transition-colors ${i % 2 === 1 ? 'bg-gray-50/40' : ''}
                                 ${!expanded && i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}
                     style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
@@ -538,7 +559,8 @@ export function Inventory() {
                     </div>
                   </button>
                   {expanded && (
-                    <div className={`px-4 pb-3 pl-9 bg-gray-50/50 ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                    <div className={`inventory-stock-detail px-4 pb-3 pl-9 bg-gray-50/50 ${i < visibleStock.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                      <div className="inventory-detail-summary"><span><b>{productMeta.get(item.product_id)?.assemblyType ?? 'IMPORTED'}</b> classification</span><span><b>{N(item.avg_unit_cost_etb)} ETB</b> average unit cost</span><span><b>{N(item.total_value)} ETB</b> position value</span><div><Link to={`/warehouse-transfers?from=${item.warehouse_id ?? ''}&product=${item.product_id}&quantity=${Math.max(1, item.quantity_on_hand)}`}><ArrowRightLeft size={14} /> Transfer stock</Link><Link to={`/sales?warehouse=${item.warehouse_id ?? ''}&product=${item.product_id}`}><ShoppingCart size={14} /> Sell product</Link></div></div>
                       {history.length === 0 ? (
                         <p className="text-xs text-gray-400 py-2">No movement history found for this product/warehouse.</p>
                       ) : (
@@ -596,18 +618,23 @@ export function Inventory() {
           </div>
         ) : (
           <div className="space-y-6">
+            <div className="inventory-warehouse-toolbar">
+              <div><Warehouse size={16} /><span>Warehouse stock classification</span></div>
+              <select value={category} onChange={event => setCategory(event.target.value)} aria-label="Filter warehouse stock by classification">
+                <option value="ALL">All product classes</option><option value="FULL">Finished goods</option><option value="IMPORTED">Imported products</option><option value="SKD">SKD components</option><option value="CKD">CKD components</option>
+              </select>
+            </div>
             {warehouseGroups.map(([whId, group]) => {
               const buildable = buildableByWarehouse.get(whId) ?? []
-              const maxQty = Math.max(1, ...group.items.map(i => i.quantity_on_hand))
+              const groupItems = group.items.filter(item => category === 'ALL' || (productMeta.get(item.product_id)?.assemblyType ?? 'IMPORTED') === category)
+              const maxQty = Math.max(1, ...groupItems.map(i => i.quantity_on_hand))
               return (
                 <div key={whId || 'unassigned'}>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="inventory-warehouse-heading">
                     <h2 className="text-sm font-medium flex items-center gap-1.5">
                       <LayoutGrid size={14} className="text-gray-400" /> {group.name}
                     </h2>
-                    <span className="text-xs text-gray-400">
-                      {group.items.length} products · {N(group.items.reduce((s, i) => s + i.total_value, 0))} ETB
-                    </span>
+                    <div><span>{groupItems.length} products · {N(groupItems.reduce((s, i) => s + i.total_value, 0))} ETB</span>{whId && <><Link to={`/warehouse-operations/inventory/${whId}`}><Warehouse size={13} />Inventory</Link><Link to={`/warehouse-operations/floor-plan/${whId}?name=${encodeURIComponent(group.name)}`}><MapIcon size={13} />Floor plan</Link></>}</div>
                   </div>
 
                   {buildable.length > 0 && (
@@ -624,8 +651,13 @@ export function Inventory() {
                     </div>
                   )}
 
+                  {groupItems.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-gray-400 border border-dashed border-gray-200 rounded-card">
+                      No stock recorded in this warehouse yet.
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {group.items.map((item, i) => {
+                    {groupItems.map((item, i) => {
                       const isOut      = item.quantity_on_hand <= 0
                       const isCritical = !isOut && item.quantity_on_hand < 5
                       const isLow      = !isOut && !isCritical && item.quantity_on_hand < 20
@@ -636,7 +668,7 @@ export function Inventory() {
                         <Card
                           key={`${whId}:${item.product_id}`}
                           padded
-                          className={`stagger-row !border ${ringColor} flex flex-col gap-2`}
+                          className={`inventory-warehouse-card stagger-row !border ${ringColor} flex flex-col gap-2`}
                           style={{ '--stagger-index': Math.min(i, 20) } as React.CSSProperties}
                         >
                           <div className="flex items-center gap-2">
@@ -661,10 +693,12 @@ export function Inventory() {
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(4, (item.quantity_on_hand / maxQty) * 100)}%` }} />
                           </div>
+                          <div className="inventory-card-hover"><span>{meta?.assemblyType ?? 'IMPORTED'} · {N(item.avg_unit_cost_etb)} ETB/unit</span><strong>{N(item.total_value)} ETB value</strong><small>Last movement {item.last_movement_date ? new Date(item.last_movement_date).toLocaleDateString() : 'not recorded'}</small><div><Link to={`/warehouse-transfers?from=${whId}&product=${item.product_id}`}><ArrowRightLeft />Transfer</Link><Link to={`/sales?warehouse=${whId}&product=${item.product_id}`}><ShoppingCart />Sell</Link></div></div>
                         </Card>
                       )
                     })}
                   </div>
+                  )}
                 </div>
               )
             })}
@@ -739,7 +773,7 @@ export function Inventory() {
       {!loading && tab === 'movements' && (
         <div>
           {inventory.length > 0 && (
-            <div className="flex items-center gap-2 mb-3">
+            <div className="inventory-history-filters flex items-center gap-2 mb-3">
               <span className="text-xs text-gray-500">Filter:</span>
               <select
                 value={filterProd}
@@ -752,6 +786,8 @@ export function Inventory() {
                   <option key={i.product_id} value={i.product_name}>{i.product_name}</option>
                 ))}
               </select>
+              <select value={movementType} onChange={e => setMovementType(e.target.value)}><option value="ALL">All movement types</option>{Object.keys(MOVE_BADGE).map(type => <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>)}</select>
+              <span>{moves.length} ledger entries</span>
             </div>
           )}
 

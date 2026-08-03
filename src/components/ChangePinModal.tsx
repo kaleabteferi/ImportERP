@@ -69,7 +69,7 @@ export function ChangePinModal({ onClose }: { onClose: () => void }) {
   const title = step === 'current' ? 'Enter your current PIN' : step === 'new' ? 'Choose a new PIN' : step === 'confirm' ? 'Confirm your new PIN' : 'PIN updated'
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 bg-black/50 z-[220] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-card w-full max-w-xs shadow-[var(--shadow-card-xl)] px-5 py-6">
         <div className="flex items-center justify-between mb-4">
           <span className="flex items-center gap-1.5 text-sm font-medium"><KeyRound size={15} className="text-accent-foreground" /> Change PIN</span>

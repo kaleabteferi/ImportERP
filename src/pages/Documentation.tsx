@@ -1,7 +1,10 @@
 import { useState, useMemo, isValidElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { BookOpen, ChevronRight, Search, ListChecks } from 'lucide-react'
+import { BookOpen, ChevronRight, Search, ListChecks, ArrowRight, ShieldCheck } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
+import { useAuth } from '../lib/auth'
+import { ROLE_LABELS } from '../lib/roles'
+import type { Role } from '../lib/roles'
 
 interface DocGroup { title: string; sections: DocSectionDef[] }
 interface DocSectionDef { id: string; title: string; roles?: string; body: React.ReactNode }
@@ -74,13 +77,14 @@ const GROUPS: DocGroup[] = [
             <p>Every account has one role, set by an admin on the <Link to="/users" className="text-blue-600 hover:underline">Users &amp; Roles</Link> page. A role controls both what shows up in the sidebar and, since the RLS hardening pass, what the account can actually read or write at the database level — not just what the UI shows.</p>
             <ul className="list-disc pl-4 space-y-1 mt-2">
               <li><strong>Full access</strong> — passes every check everywhere. CEO/GM/Assistant Manager tier.</li>
-              <li><strong>Operations &amp; Marketing</strong> — Proforma Invoices, Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator, Supplier Payments.</li>
+              <li><strong>Imports &amp; Operations</strong> — Proforma Invoices, Shipments, Supplier RFQs, Suppliers, Customers, Products, Djibouti Forwarder, Inventory, Warehouse Transfers, Customs Estimator, Supplier Payments.</li>
               <li><strong>Manufacturing &amp; Sales</strong> — Production, BOMs, Inventory, Warehouse Transfers, Sales, Customers, Products.</li>
               <li><strong>Accounting &amp; Finance</strong> — Sales, Cost Engine, Customs Estimator, Payables, Supplier Payments, Receivables, Money Tracking, Credit Accounts, Expenses, Djibouti Forwarder, shipment cost finalization.</li>
               <li><strong>HR &amp; System</strong> — Users &amp; Roles, Settings, Employees, Payroll, HR Notes.</li>
+              <li><strong>Warehouse Operations</strong> — only assigned warehouses. The warehouse responsibility separately determines whether the person manages operations, prepares payroll, reviews a region, or only views records.</li>
               <li><strong>Pending</strong> — a brand-new sign-up with no role yet. Sees a "waiting for approval" screen and nothing else until an HR &amp; System admin assigns a role.</li>
             </ul>
-            <p className="mt-2">Dashboard, Daily Activity, Reports, and Calculator are visible to every assigned role — they're read-only overviews or personal tools, not tied to one department.</p>
+            <p className="mt-2">Head-office roles land on the company Dashboard. Warehouse-scoped users land directly in Warehouse Operations. Calculator and Documentation are available to every active role; sensitive reports remain department-controlled.</p>
           </>
         ),
       },
@@ -351,6 +355,27 @@ const GROUPS: DocGroup[] = [
       },
     ],
   },
+  {
+    title: 'Command center & control',
+    sections: [
+      {
+        id: 'my-work', title: 'My Work and role dashboards',
+        body: <><p><Link to="/work" className="text-blue-600 hover:underline">My Work</Link> combines approvals, exceptions, document reviews and due tasks for your assigned role.</p><p className="mt-2">Use the Dashboard for performance and My Work for action. Warehouse users only receive work for assigned warehouses.</p></>,
+      },
+      {
+        id: 'universal-documents', title: 'Universal documents and materials',
+        body: <><p>The <Link to="/documents" className="text-blue-600 hover:underline">Document Register</Link> connects proformas, purchase orders, packing lists, containers, customs, receipts, production, sales, delivery and journals.</p><p className="mt-2">Lines can be finished products, SKD components, packaging, spares or raw materials. Record HS code, origin, model/size, cartons, units per carton, UOM, weight, CBM and customs values. SKD lines also record quantity required per finished unit.</p><p className="mt-2">Drafts may be edited; submitted records enter approval; approved records can be posted. Correct posted records through a controlled reversal rather than silent editing.</p></>,
+      },
+      {
+        id: 'global-command-search', title: 'Global search and commands',
+        body: <p>Press <strong>Ctrl K</strong> (Command K on macOS) to search products, SKUs, parties, employees, proformas, documents, containers, shipments, transfers and warehouses, or launch a common action.</p>,
+      },
+      {
+        id: 'notifications-and-audit', title: 'Notifications and audit history',
+        body: <><p>The bell collects document approvals, warehouse exceptions and operational alerts. Opening an alert marks it read and opens the relevant work.</p><p className="mt-2">Sensitive role, warehouse access, document, transfer, production and payroll changes record the actor, timestamp and before/after values. Never delete posted records to hide a correction.</p></>,
+      },
+    ],
+  },
 ]
 
 // Precomputed once at module load — GROUPS is static, so there's no need
@@ -359,7 +384,75 @@ const SEARCH_INDEX = new Map(
   GROUPS.flatMap(g => g.sections.map(s => [s.id, `${s.title} ${g.title} ${s.roles ?? ''} ${extractText(s.body)}`.toLowerCase()] as const))
 )
 
+interface ScenarioStep { label: string; detail: string; to: string }
+interface RoleScenario { title: string; trigger: string; steps: ScenarioStep[] }
+
+const ROLE_SCENARIOS: Record<Role, RoleScenario[]> = {
+  full_access: [
+    { title: 'Start the management day', trigger: 'At the beginning of each working day', steps: [
+      { label: 'Review company position', detail: 'Check cash, imports, sales and operational alerts.', to: '/' },
+      { label: 'Review warehouses', detail: 'Compare production, labor, efficiency and pending approvals.', to: '/warehouse-operations' },
+      { label: 'Resolve exceptions', detail: 'Open consolidated reports and assign follow-up owners.', to: '/reports' },
+    ] },
+  ],
+  operations_marketing: [
+    { title: 'Import goods from supplier', trigger: 'When a supplier quotation or PI arrives', steps: [
+      { label: 'Create or compare the source', detail: 'Register the supplier, RFQ and selected quotation.', to: '/rfqs' },
+      { label: 'Build the Proforma Invoice', detail: 'Enter line items, packing information and containers.', to: '/proforma-invoices' },
+      { label: 'Track shipment movement', detail: 'Update milestones, documents and Djibouti handover.', to: '/shipments' },
+    ] },
+    { title: 'Prepare warehouse receipt', trigger: 'When a truck is approaching the destination warehouse', steps: [
+      { label: 'Confirm the inbound load', detail: 'Verify shipment or transfer status and destination.', to: '/shipments' },
+      { label: 'Notify the warehouse', detail: 'The assigned manager counts, reconciles and places stock.', to: '/warehouse-operations' },
+    ] },
+  ],
+  manufacturing_sales: [
+    { title: 'Produce and release finished goods', trigger: 'When components are available for assembly', steps: [
+      { label: 'Confirm the recipe', detail: 'Check the active BOM and required component quantities.', to: '/boms' },
+      { label: 'Run production', detail: 'Create the batch, assign workers and record accepted output.', to: '/warehouse-operations' },
+      { label: 'Move or sell output', detail: 'Transfer finished goods or create the customer sale.', to: '/warehouse-transfers' },
+    ] },
+  ],
+  accounting_finance: [
+    { title: 'Close an import cost', trigger: 'When all shipment expenses and quantities are known', steps: [
+      { label: 'Review liabilities', detail: 'Verify supplier balances, payments and outstanding charges.', to: '/payables' },
+      { label: 'Finalize landed cost', detail: 'Confirm cost allocation and inventory valuation.', to: '/costs' },
+      { label: 'Reconcile cash', detail: 'Match outgoing payments and incoming sales receipts.', to: '/money-tracking' },
+    ] },
+    { title: 'Approve warehouse payroll', trigger: 'After HR has approved a submitted warehouse run', steps: [
+      { label: 'Open payroll inbox', detail: 'Review the warehouse summary and approval history.', to: '/payroll' },
+      { label: 'Approve and post', detail: 'Finance approval posts the summarized accounting journal.', to: '/payroll' },
+    ] },
+  ],
+  hr_system: [
+    { title: 'Onboard a head-office employee', trigger: 'When a new non-warehouse employee joins', steps: [
+      { label: 'Create employee record', detail: 'Add employment, salary, bank and statutory information.', to: '/employees' },
+      { label: 'Assign login access', detail: 'Link the user and select exactly one company role.', to: '/users' },
+      { label: 'Review payroll readiness', detail: 'Confirm pay details before the next central run.', to: '/payroll' },
+    ] },
+    { title: 'Onboard warehouse staff', trigger: 'When an employee belongs to a warehouse', steps: [
+      { label: 'Use Warehouse Operations', detail: 'Register the employee inside the assigned warehouse.', to: '/warehouse-operations' },
+      { label: 'Place them in a workforce group', detail: 'Assign team, shift and operational responsibility.', to: '/warehouse-operations' },
+      { label: 'Keep payroll separated', detail: 'Warehouse calculates and submits; HR reviews centrally.', to: '/payroll' },
+    ] },
+  ],
+  warehouse_operations: [
+    { title: 'Receive an arriving truck', trigger: 'When goods reach your warehouse gate', steps: [
+      { label: 'Open Receiving', detail: 'Find the shipment or transfer expected at your warehouse.', to: '/warehouse-operations' },
+      { label: 'Count and reconcile', detail: 'Record cartons, accepted units, shortages and damage.', to: '/warehouse-operations' },
+      { label: 'Place and post', detail: 'Choose floor-plan areas and add only accepted stock.', to: '/warehouse-operations' },
+    ] },
+    { title: 'Run a production shift', trigger: 'At shift start and after work is completed', steps: [
+      { label: 'Create the batch', detail: 'Choose task, target, group and participating workers.', to: '/warehouse-operations' },
+      { label: 'Record attendance and output', detail: 'Capture hours, overtime, accepted and rejected units.', to: '/warehouse-operations' },
+      { label: 'Prepare payroll', detail: 'Review exceptions and submit the warehouse run to HR.', to: '/warehouse-operations' },
+    ] },
+  ],
+}
+
 export function Documentation() {
+  const { profile } = useAuth()
+  const role = profile?.role as Role | undefined
   const [activeId, setActiveId] = useState(GROUPS[0].sections[0].id)
   const [query, setQuery] = useState('')
 
@@ -400,7 +493,17 @@ export function Documentation() {
         <p className="text-xs text-gray-400 mb-3">{matchCount === 0 ? `No sections match "${query}".` : `${matchCount} section${matchCount === 1 ? '' : 's'} match "${query}".`}</p>
       )}
 
-      {!q && (
+      {!q && role && <section className="mb-5 overflow-hidden rounded-[22px] border border-[var(--color-border-secondary)] bg-[var(--color-background-primary)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border-tertiary)] px-5 py-4">
+          <div><p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]"><ShieldCheck size={17} className="text-[var(--color-accent)]" />Your role playbook</p><p className="mt-1 text-xs text-[var(--color-text-secondary)]">Recommended workflows for {ROLE_LABELS[role]}.</p></div>
+          <span className="rounded-full bg-[var(--color-panel-dark)] px-3 py-1.5 text-xs font-semibold text-[var(--color-panel-dark-foreground)]">{ROLE_LABELS[role]}</span>
+        </div>
+        <div className="grid gap-3 p-4 lg:grid-cols-2">
+          {ROLE_SCENARIOS[role].map(scenario => <article key={scenario.title} className="rounded-2xl border border-[var(--color-border-tertiary)] bg-[var(--color-background-secondary)] p-4"><p className="text-base font-semibold text-[var(--color-text-primary)]">{scenario.title}</p><p className="mt-1 text-xs text-[var(--color-text-secondary)]">Use this when: {scenario.trigger}.</p><ol className="mt-4 space-y-2">{scenario.steps.map((step, index) => <li key={`${scenario.title}-${step.label}`}><Link to={step.to} className="group flex min-h-12 items-center gap-3 rounded-xl border border-transparent px-2 py-2 hover:border-[var(--color-border-secondary)] hover:bg-[var(--color-background-primary)]"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-panel-dark)] text-xs font-semibold text-[var(--color-panel-dark-foreground)]">{index + 1}</span><span className="min-w-0 flex-1"><strong className="block text-sm text-[var(--color-text-primary)]">{step.label}</strong><span className="block text-xs leading-5 text-[var(--color-text-secondary)]">{step.detail}</span></span><ArrowRight size={15} className="shrink-0 text-[var(--color-text-tertiary)] transition-transform group-hover:translate-x-0.5" /></Link></li>)}</ol></article>)}
+        </div>
+      </section>}
+
+      {!q && role === 'full_access' && (
         <div className="bg-blue-50 border border-blue-100 rounded-card p-5 mb-5">
           <p className="text-sm font-medium flex items-center gap-2 mb-3"><ListChecks size={15} className="text-blue-600" /> New here? Do these in order</p>
           <div className="space-y-3">

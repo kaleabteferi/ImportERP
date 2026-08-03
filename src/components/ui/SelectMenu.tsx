@@ -216,7 +216,15 @@ export function SelectMenu({
               <input
                 ref={searchRef}
                 value={query}
-                onChange={event => { setQuery(event.target.value); setActiveIndex(0) }}
+                onChange={event => {
+                  const nextQuery = event.target.value
+                  setQuery(nextQuery)
+                  const normalized = nextQuery.trim().toLowerCase()
+                  const nextOptions = normalized
+                    ? options.filter(option => option.label.toLowerCase().includes(normalized) || option.description?.toLowerCase().includes(normalized))
+                    : options
+                  setActiveIndex(Math.max(0, nextOptions.findIndex(option => !option.disabled)))
+                }}
                 placeholder="Search options…"
                 aria-label={`Search ${ariaLabel ?? 'options'}`}
                 role="combobox"

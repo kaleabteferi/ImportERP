@@ -9,6 +9,8 @@
 // actually-dispatched, and actually-received quantities can each differ.
 import { supabase } from '../lib/supabase'
 import { addExpenseAndRecalculate } from './expenses'
+import { createDamageReport } from './damageReports'
+import { moveInventoryLocation } from './warehouseOperations'
 
 export type TransferPurpose = 'WAREHOUSE_TO_WAREHOUSE' | 'SALES' | 'RETURN' | 'OTHER'
 export type TransferStatus = 'REQUESTED' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED'
@@ -422,15 +424,25 @@ export async function recordDjiboutiDispatch(transfer: WarehouseTransfer, input:
 
 // Stage 3: confirm what actually arrived (may differ from what was
 // dispatched). Posts TRANSFER_IN to the destination warehouse for the
-// confirmed quantity, not the dispatched one.
+// confirmed quantity, not the dispatched one. Optionally also writes off a
+// damaged portion and/or shelves the good portion straight into a location,
+// so checking off a packing list and placing it happen in one step instead
+// of a separate trip to the Locations tab.
 //
 // CKD/SKD kits travel from China through Ali's Djibouti warehouse as
 // sealed kits (receiveShipmentAtDjibouti deliberately doesn't decompose
 // them) and only become usable as their individual components once
 // they're actually at the assembly warehouse — so decompose here, the
-// same way a direct (non-Djibouti) receipt does in postReceivedItems.
-export async function confirmDjiboutiReceipt(transfer: WarehouseTransfer, receivedQuantity: number): Promise<void> {
+// same way a direct (non-Djibouti) receipt does in postReceivedItems. Damage
+// write-offs and placement both have to target the same components too.
+export async function confirmDjiboutiReceipt(
+  transfer: WarehouseTransfer,
+  receivedQuantity: number,
+  damagedQuantity = 0,
+  placementLocationId: string | null = null,
+): Promise<void> {
   if (!transfer.to_warehouse_id) throw new Error('This dispatch has no destination warehouse set.')
+  const toWarehouseId = transfer.to_warehouse_id
 
   const { error: updateError } = await supabase
     .from('warehouse_transfers')
@@ -451,6 +463,7 @@ export async function confirmDjiboutiReceipt(transfer: WarehouseTransfer, receiv
     .eq('id', transfer.product_id)
     .maybeSingle()
 
+  let bomLines: { component_product_id: string; quantity_required: number }[] | null = null
   if (product?.assembly_type === 'CKD' || product?.assembly_type === 'SKD') {
     const { data: bomHeader } = await supabase
       .from('bom_headers')
@@ -458,42 +471,99 @@ export async function confirmDjiboutiReceipt(transfer: WarehouseTransfer, receiv
       .eq('product_id', transfer.product_id)
       .eq('is_active', true)
       .maybeSingle()
-
     if (bomHeader) {
-      const { data: bomLines } = await supabase
+      const { data } = await supabase
         .from('bom_lines')
         .select('component_product_id, quantity_required')
         .eq('bom_header_id', bomHeader.id)
-
-      for (const line of bomLines ?? []) {
-        const { error: compError } = await supabase.from('inventory_ledger').insert({
-          product_id: line.component_product_id,
-          quantity: Math.abs(receivedQuantity) * line.quantity_required,
-          movement_type: 'TRANSFER_IN',
-          movement_date: movementDate,
-          warehouse_id: transfer.to_warehouse_id,
-          reference_type: 'warehouse_transfer',
-          reference_id: transfer.id,
-          notes: `${notes} · component of ${product.assembly_type} kit`,
-        })
-        if (compError) throw new Error(compError.message)
-      }
-      return
+      bomLines = data ?? []
     }
     // No BOM defined yet — fall through and credit the kit product
     // directly so the stock isn't silently lost, same fallback used for
     // direct receipts without Djibouti in postReceivedItems.
   }
 
-  const { error: inError } = await supabase.from('inventory_ledger').insert({
-    product_id: transfer.product_id,
-    quantity: Math.abs(receivedQuantity),
-    movement_type: 'TRANSFER_IN',
-    movement_date: movementDate,
-    warehouse_id: transfer.to_warehouse_id,
-    reference_type: 'warehouse_transfer',
-    reference_id: transfer.id,
-    notes,
-  })
-  if (inError) throw new Error(inError.message)
+  if (bomLines) {
+    for (const line of bomLines) {
+      const { error: compError } = await supabase.from('inventory_ledger').insert({
+        product_id: line.component_product_id,
+        quantity: Math.abs(receivedQuantity) * line.quantity_required,
+        movement_type: 'TRANSFER_IN',
+        movement_date: movementDate,
+        warehouse_id: toWarehouseId,
+        reference_type: 'warehouse_transfer',
+        reference_id: transfer.id,
+        notes: `${notes} · component of ${product!.assembly_type} kit`,
+      })
+      if (compError) throw new Error(compError.message)
+    }
+  } else {
+    const { error: inError } = await supabase.from('inventory_ledger').insert({
+      product_id: transfer.product_id,
+      quantity: Math.abs(receivedQuantity),
+      movement_type: 'TRANSFER_IN',
+      movement_date: movementDate,
+      warehouse_id: toWarehouseId,
+      reference_type: 'warehouse_transfer',
+      reference_id: transfer.id,
+      notes,
+    })
+    if (inError) throw new Error(inError.message)
+  }
+
+  // Damaged units still count as received (they physically arrived) and
+  // are immediately written off, so the ledger shows the full count
+  // rather than the damaged portion silently never appearing.
+  let damageReportId: string | null = null
+  if (damagedQuantity > 0) {
+    damageReportId = await createDamageReport({
+      productId: transfer.product_id,
+      warehouseId: toWarehouseId,
+      quantity: damagedQuantity,
+      reason: 'Damaged in transit — found while confirming receipt from Djibouti',
+      shipmentId: transfer.linked_shipment_id || undefined,
+      reportDate: movementDate,
+      notes: `${transfer.transfer_number}${transfer.waybill_number ? ` · WB ${transfer.waybill_number}` : ''}`,
+      skipLedgerMovement: !!bomLines,
+    })
+    if (bomLines) {
+      for (const line of bomLines) {
+        await supabase.from('inventory_ledger').insert({
+          product_id: line.component_product_id,
+          quantity: -Math.abs(line.quantity_required * damagedQuantity),
+          movement_type: 'DAMAGE',
+          movement_date: movementDate,
+          warehouse_id: toWarehouseId,
+          reference_type: 'damage_report',
+          reference_id: damageReportId,
+          notes: `Component write-off from damaged ${product?.assembly_type} receipt · ${transfer.transfer_number}`,
+        })
+      }
+    }
+  }
+
+  const goodQty = receivedQuantity - damagedQuantity
+  if (placementLocationId && goodQty > 0) {
+    if (bomLines) {
+      for (const line of bomLines) {
+        await moveInventoryLocation({
+          warehouseId: toWarehouseId,
+          productId: line.component_product_id,
+          fromLocationId: null,
+          toLocationId: placementLocationId,
+          quantity: line.quantity_required * goodQty,
+          notes: `Placed from ${transfer.transfer_number}`,
+        })
+      }
+    } else {
+      await moveInventoryLocation({
+        warehouseId: toWarehouseId,
+        productId: transfer.product_id,
+        fromLocationId: null,
+        toLocationId: placementLocationId,
+        quantity: goodQty,
+        notes: `Placed from ${transfer.transfer_number}`,
+      })
+    }
+  }
 }

@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   fetchPayrollPeriods, createPayrollPeriod, deletePayrollPeriod,
-  fetchPayrollEntries, recalculateAndSaveEntry, finalizePayrollPeriod,
+  fetchPayrollEntries, recalculateAndSaveEntry, finalizePayrollPeriod, fetchWarehousePayrollInbox, fetchWarehousePayrollInboxEmployees,
 } from '../api/payroll'
-import type { PayrollPeriod, PayrollEntry, PayrollEntryDeduction } from '../api/payroll'
+import type { PayrollPeriod, PayrollEntry, PayrollEntryDeduction, WarehousePayrollInboxItem, WarehousePayrollInboxEmployee } from '../api/payroll'
+import { transitionWarehousePayroll } from '../api/warehouseOperations'
 import { fetchEmployees } from '../api/employees'
 import type { Employee } from '../api/employees'
 import { fetchAccounts } from '../api/accounts'
@@ -14,7 +15,7 @@ import { OT_LABELS, OT_MULTIPLIERS } from '../lib/payrollEngine'
 import type { OvertimeType } from '../lib/payrollEngine'
 import {
   Wallet, Loader2, Plus, X, Check, Lock, ChevronLeft, Pencil, Trash2,
-  Printer, Info, Users, AlertTriangle,
+  Printer, Info, Users, AlertTriangle, Building2, Warehouse, ShieldCheck, Landmark, Clock3, ArrowRight, FileCheck2, Banknote,
 } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
@@ -22,6 +23,7 @@ import { StatCard } from '../components/ui/StatCard'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { SwipeToDelete } from '../components/ui/SwipeToDelete'
+import './HrWorkspace.css'
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 2 }).format(n)
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -168,7 +170,7 @@ function EntryEditForm({ entry, employee, onCancel, onSaved }: {
 const OT_TYPES = Object.keys(OT_LABELS) as OvertimeType[]
 const OT_SHORT_LABELS: Record<OvertimeType, string> = { weekday: 'Weekday', night: 'Night', rest_day: 'Rest day', public_holiday: 'Holiday' }
 
-// A factory floor of 50-100 daily-wage/casual workers can't reasonably be
+// A larger head-office team cannot reasonably be
 // entered one row-edit-panel at a time — this is a spreadsheet-style table
 // covering just days worked + overtime hours (the two fields that actually
 // vary week to week for that cohort) across every non-permanent employee at
@@ -252,7 +254,7 @@ function BulkFactoryForm({ entries, employeeById, onCancel, onSaved }: {
     <div className="bg-white border border-gray-200 rounded-card p-4 mb-4 space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <p className="text-sm font-medium flex items-center gap-1.5"><Users size={14} className="text-blue-600" /> Bulk overtime & days entry — {selectedEntries.length} of {bulkEntries.length} employees selected</p>
+          <p className="text-sm font-medium flex items-center gap-1.5"><Users size={14} className="text-blue-600" /> Bulk days and overtime — {selectedEntries.length} of {bulkEntries.length} employees selected</p>
           <p className="text-xs text-gray-400 mt-0.5">Enter days worked and overtime hours for a group of employees at once, then save in one action. Uncheck anyone this run doesn't apply to.</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -321,7 +323,7 @@ function BulkFactoryForm({ entries, employeeById, onCancel, onSaved }: {
 
 function Payslip({ entry, period, employee, onClose }: { entry: PayrollEntry; period: PayrollPeriod; employee: Employee | undefined; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-card w-full max-w-md shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 print:hidden">
           <h2 className="text-sm font-medium">Payslip</h2>
@@ -357,9 +359,31 @@ function Payslip({ entry, period, employee, onClose }: { entry: PayrollEntry; pe
   )
 }
 
+function WarehousePayrollInbox({ runs, loading, onRefresh }: { runs: WarehousePayrollInboxItem[]; loading: boolean; onRefresh: () => Promise<void> }) {
+  const [status, setStatus] = useState<'all' | 'attention' | 'approved' | 'posted'>('all')
+  const [selected, setSelected] = useState<WarehousePayrollInboxItem | null>(null)
+  const [employees, setEmployees] = useState<WarehousePayrollInboxEmployee[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [acting, setActing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const visible = runs.filter(run => status === 'all' || status === 'attention' && ['submitted','hr_approved','finance_approved'].includes(run.status) || status === 'approved' && ['hr_approved','finance_approved'].includes(run.status) || status === 'posted' && ['posted','paid'].includes(run.status))
+  const open = async (run: WarehousePayrollInboxItem) => { setSelected(run); setDetailLoading(true); setError(null); try { setEmployees(await fetchWarehousePayrollInboxEmployees(run.id)) } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load payroll detail.') } finally { setDetailLoading(false) } }
+  const act = async (action: 'hr_approve' | 'finance_approve' | 'post' | 'reject') => { if (!selected) return; setActing(true); setError(null); try { await transitionWarehousePayroll(selected.id, action); await onRefresh(); setSelected(null) } catch (caught) { setError(caught instanceof Error ? caught.message : 'The payroll action failed.') } finally { setActing(false) } }
+  const action = selected?.status === 'submitted' ? { label: 'Approve HR review', value: 'hr_approve' as const, icon: ShieldCheck } : selected?.status === 'hr_approved' ? { label: 'Approve for Finance', value: 'finance_approve' as const, icon: Landmark } : selected?.status === 'finance_approved' ? { label: 'Post accounting journal', value: 'post' as const, icon: FileCheck2 } : null
+  if (loading) return <div className="hr-loading"><Loader2 className="animate-spin" /> Loading warehouse submissions…</div>
+  return <section className="payroll-inbox">
+    <div className="payroll-inbox__toolbar"><div><span>Approval queue</span><b>{runs.filter(run => ['submitted','hr_approved','finance_approved'].includes(run.status)).length} run(s) require action</b></div><nav>{(['all','attention','approved','posted'] as const).map(item => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)}>{item}</button>)}</nav></div>
+    {error && <div className="hr-form-error">{error}</div>}
+    {visible.length ? <div className="payroll-inbox__list">{visible.map(run => <button key={run.id} onClick={() => void open(run)} className={selected?.id === run.id ? 'active' : ''}><i><Warehouse /></i><span><small>{run.warehouse_name}</small><b>{run.run_number}</b><em>{new Date(run.period_start).toLocaleDateString()} – {new Date(run.period_end).toLocaleDateString()}</em></span><span><small>Employees</small><b>{run.employee_count}</b></span><span><small>Gross</small><b>{N(run.gross_amount)} ETB</b></span><span><small>Net</small><b>{N(run.net_amount)} ETB</b></span><strong className={`payroll-state state-${run.status}`}>{run.status.replaceAll('_',' ')}</strong><ArrowRight /></button>)}</div> : <div className="hr-empty"><FileCheck2 /><h3>No payroll runs in this category</h3><p>Warehouse submissions appear here after the warehouse manager completes calculation and submits the run.</p></div>}
+    {selected && <div className="payroll-review"><header><div><span>{selected.warehouse_name}</span><h3>{selected.run_number}</h3><p>{selected.employee_count} employee calculation snapshots · warehouse figures cannot be edited centrally</p></div><button aria-label="Close payroll review" onClick={() => setSelected(null)}><X /></button></header><div className="payroll-review__metrics"><span>Regular + OT + incentive<b>{N(selected.gross_amount)} ETB</b></span><span>Overtime<b>{N(selected.overtime_amount)} ETB</b></span><span>Tax + pension + deductions<b>{N(selected.tax_amount + selected.pension_amount + selected.deduction_amount)} ETB</b></span><span>Net payable<b>{N(selected.net_amount)} ETB</b></span></div>{detailLoading ? <div className="hr-loading"><Loader2 className="animate-spin" /> Loading calculations…</div> : <div className="payroll-review__table"><div className="head"><span>Employee</span><span>Days</span><span>Regular</span><span>OT</span><span>Incentive</span><span>Tax / pension</span><span>Net</span></div>{employees.map(employee => <div key={employee.id}><span><b>{employee.employee_name}</b></span><span>{employee.days_worked}</span><span>{N(employee.regular_pay)}</span><span>{N(employee.overtime_pay)}<small>{employee.overtime_hours} h</small></span><span>{N(employee.production_incentive)}</span><span>{N(employee.tax + employee.pension_employee)}</span><span><b>{N(employee.net_pay)}</b></span></div>)}</div>}<footer><span><Lock /> Attendance, overtime and calculation detail remain owned by {selected.warehouse_name}.</span><div>{['submitted','hr_approved','finance_approved'].includes(selected.status) && <Button variant="secondary" disabled={acting} onClick={() => void act('reject')}>Return to warehouse</Button>}{action && <Button loading={acting} icon={<action.icon size={14} />} onClick={() => void act(action.value)}>{action.label}</Button>}</div></footer></div>}
+  </section>
+}
+
 export function Payroll() {
+  const [workspace, setWorkspace] = useState<'corporate' | 'warehouse'>('corporate')
   const [periods, setPeriods] = useState<PayrollPeriod[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [warehouseRuns, setWarehouseRuns] = useState<WarehousePayrollInboxItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
@@ -376,10 +400,11 @@ export function Payroll() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [periodRows, employeeRows, accountRows] = await Promise.all([fetchPayrollPeriods(), fetchEmployees(), fetchAccounts()])
+      const [periodRows, employeeRows, accountRows, warehouseRunRows] = await Promise.all([fetchPayrollPeriods(), fetchEmployees(), fetchAccounts(), fetchWarehousePayrollInbox()])
       setPeriods(periodRows)
       setEmployees(employeeRows)
       setAccounts(accountRows ?? [])
+      setWarehouseRuns(warehouseRunRows)
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load payroll.')
     } finally {
@@ -403,6 +428,7 @@ export function Payroll() {
   useEffect(() => { if (activePeriodId) loadEntries(activePeriodId) }, [activePeriodId, loadEntries])
 
   const employeeById = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees])
+  const corporateEmployees = useMemo(() => employees.filter(employee => !employee.warehouse_id), [employees])
   const activePeriod = periods.find(p => p.id === activePeriodId) ?? null
 
   const totals = useMemo(() => ({
@@ -445,7 +471,7 @@ export function Payroll() {
 
   if (activePeriodId && activePeriod) {
     return (
-      <div className="p-5 max-w-5xl mx-auto">
+      <div className="payroll-workspace">
         <button onClick={() => setActivePeriodId(null)} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-3">
           <ChevronLeft size={13} /> Back to pay runs
         </button>
@@ -454,7 +480,7 @@ export function Payroll() {
           subtitle={`${entries.length} employees · ${activePeriod.status}`}
           actions={activePeriod.status === 'draft' ? (
             <>
-              <Button variant="secondary" icon={showBulkFactory ? <X size={12} /> : <Users size={12} />} onClick={() => setShowBulkFactory(v => !v)}>Bulk overtime entry</Button>
+              <Button variant="secondary" icon={showBulkFactory ? <X size={12} /> : <Users size={12} />} onClick={() => setShowBulkFactory(v => !v)}>Bulk days & overtime</Button>
               <select value={recordExpenseAccountId} onChange={e => setRecordExpenseAccountId(e.target.value)}
                 className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
                 <option value="">Don't record as an expense</option>
@@ -528,32 +554,37 @@ export function Payroll() {
   }
 
   return (
-    <div className="p-5 max-w-4xl mx-auto">
-      <PageHeader
+    <main className="payroll-workspace">
+      <section className="hr-hero payroll-hero"><div className="hr-hero__copy"><span>Payroll control center</span><h1>Company payroll</h1><p>Calculate head-office pay centrally and review warehouse-submitted payroll without mixing employee records or calculation ownership.</p></div><div className="hr-hero__guard"><Lock /><span><b>Separation of duties</b>Warehouse prepares · HR reviews · Finance approves and posts</span></div></section>
+      <nav className="hr-workspace-tabs" aria-label="Payroll workspaces"><button className={workspace === 'corporate' ? 'active' : ''} onClick={() => setWorkspace('corporate')}><Building2 /><span><b>Head-office payroll</b><small>Calculated by central HR</small></span><strong>{periods.length}</strong></button><button className={workspace === 'warehouse' ? 'active' : ''} onClick={() => { setWorkspace('warehouse'); setShowNewForm(false) }}><Warehouse /><span><b>Warehouse submissions</b><small>Review, approve and post</small></span><strong>{warehouseRuns.filter(run => ['submitted','hr_approved','finance_approved'].includes(run.status)).length}</strong></button></nav>
+      <section className="hr-kpis payroll-kpis"><article><i><Users /></i><span>Head-office employees<strong>{corporateEmployees.filter(employee => employee.is_active).length}</strong><small>Central payroll scope</small></span></article><article><i><Clock3 /></i><span>Awaiting approval<strong>{warehouseRuns.filter(run => ['submitted','hr_approved','finance_approved'].includes(run.status)).length}</strong><small>Warehouse submissions</small></span></article><article><i><Banknote /></i><span>Warehouse net payroll<strong>{N(warehouseRuns.filter(run => !['rejected','draft'].includes(run.status)).reduce((sum, run) => sum + run.net_amount, 0))}</strong><small>ETB in current register</small></span></article><article><i><FileCheck2 /></i><span>Posted warehouse runs<strong>{warehouseRuns.filter(run => ['posted','paid'].includes(run.status)).length}</strong><small>Accounting completed</small></span></article></section>
+      {workspace === 'corporate' && <PageHeader
         icon={<Wallet size={18} />}
-        title="Payroll"
-        subtitle={<>Monthly pay runs — PAYE, pension, and overtime calculated per <Link to="/hr-notes" className="text-blue-600 hover:underline">HR Notes</Link></>}
-        actions={<Button icon={showNewForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowNewForm(v => !v)}>New pay run</Button>}
-      />
+        title="Head-office payroll"
+        subtitle={<>Central calculation for employees without a warehouse assignment · PAYE, pension and overtime follow <Link to="/hr-notes" className="text-blue-600 hover:underline">HR Notes</Link></>}
+        actions={<Button icon={showNewForm ? <X size={12} /> : <Plus size={12} />} onClick={() => setShowNewForm(v => !v)}>New head-office run</Button>}
+      />}
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
-      {employees.filter(e => e.is_active).length === 0 && (
+      {workspace === 'warehouse' && <WarehousePayrollInbox runs={warehouseRuns} loading={loading} onRefresh={load} />}
+      {workspace === 'corporate' && <>
+      {corporateEmployees.filter(e => e.is_active).length === 0 && (
         <div className="mb-4 flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
           <Info size={13} className="shrink-0 mt-0.5" />
-          <span>No active employees yet — <Link to="/employees" className="underline">add your team</Link> before starting a pay run.</span>
+          <span>No active head-office employees yet — <Link to="/employees" className="underline">add central employees</Link> before starting a pay run.</span>
         </div>
       )}
 
-      {showNewForm && <NewRunForm employees={employees} onCancel={() => setShowNewForm(false)} onCreated={id => { setShowNewForm(false); load(); setActivePeriodId(id) }} />}
+      {showNewForm && <NewRunForm employees={corporateEmployees} onCancel={() => setShowNewForm(false)} onCreated={id => { setShowNewForm(false); load(); setActivePeriodId(id) }} />}
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 gap-2"><Loader2 size={18} className="animate-spin" /> Loading…</div>
       ) : periods.length === 0 ? (
         <div className="text-center py-16">
           <Wallet size={36} className="mx-auto text-gray-200 mb-3" />
-          <p className="text-sm font-medium text-gray-500 mb-1">No pay runs yet</p>
-          <p className="text-xs text-gray-400">Create one above to calculate this month's pay.</p>
+          <p className="text-sm font-medium text-gray-500 mb-1">No head-office pay runs yet</p>
+          <p className="text-xs text-gray-400">Create a central run here. Warehouse payroll arrives in the separate submissions workspace.</p>
         </div>
       ) : (
         <Card>
@@ -574,6 +605,7 @@ export function Payroll() {
           })}
         </Card>
       )}
-    </div>
+      </>}
+    </main>
   )
 }

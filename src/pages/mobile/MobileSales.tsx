@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { createSalesOrder, fetchOrdersWithMargins, recordPayment } from '../../api/sales'
 import { fetchCustomers, createCustomer } from '../../api/customers'
@@ -30,13 +31,16 @@ function oneName(c: OrderRow['customers']): string {
 }
 
 export function MobileSales() {
+  const [searchParams] = useSearchParams()
+  const preselectedProductId = searchParams.get('product') ?? ''
+  const preselectedWarehouseId = searchParams.get('warehouse') ?? ''
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => Boolean(preselectedProductId))
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -44,8 +48,8 @@ export function MobileSales() {
   const [customerId, setCustomerId] = useState('')
   const [newCustomerName, setNewCustomerName] = useState('')
   const [showNewCustomer, setShowNewCustomer] = useState(false)
-  const [warehouseId, setWarehouseId] = useState('')
-  const [cart, setCart] = useState<CartLine[]>([])
+  const [warehouseId, setWarehouseId] = useState(preselectedWarehouseId)
+  const [cart, setCart] = useState<CartLine[]>(() => preselectedProductId ? [{ productId: preselectedProductId, quantity: 1, unitPriceEtb: 0 }] : [])
   const [itemQuery, setItemQuery] = useState('')
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({})
   const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')

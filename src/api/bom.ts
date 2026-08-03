@@ -15,7 +15,7 @@ export async function fetchBoms() {
   const productIds = [...new Set(rows.map(r => r.product_id ?? r.finished_product_id).filter(Boolean))]
 
   const { data: products } = productIds.length > 0
-    ? await supabase.from('products').select('id, name, sku').in('id', productIds)
+    ? await supabase.from('products').select('id, name, sku, assembly_type, material_kind').in('id', productIds)
     : { data: [] }
   const productById = new Map((products ?? []).map((p: any) => [p.id, p]))
 
@@ -26,7 +26,7 @@ export async function fetchBoms() {
 
   const componentIds = [...new Set((allLines ?? []).map((l: any) => l.component_product_id))]
   const { data: components } = componentIds.length > 0
-    ? await supabase.from('products').select('id, name, sku').in('id', componentIds)
+    ? await supabase.from('products').select('id, name, sku, assembly_type, material_kind').in('id', componentIds)
     : { data: [] }
   const componentById = new Map((components ?? []).map((p: any) => [p.id, p]))
 
@@ -39,6 +39,7 @@ export async function fetchBoms() {
         componentProductId: l.component_product_id,
         componentName: componentById.get(l.component_product_id)?.name ?? 'Unknown',
         componentSku: componentById.get(l.component_product_id)?.sku ?? '',
+        componentMaterialKind: componentById.get(l.component_product_id)?.material_kind ?? 'finished_product',
         quantityRequired: Number(l.quantity_required ?? 0),
       }))
     return {
@@ -50,13 +51,14 @@ export async function fetchBoms() {
       productId,
       productName: productById.get(productId)?.name ?? 'Unknown product',
       productSku: productById.get(productId)?.sku ?? '',
+      productAssemblyType: productById.get(productId)?.assembly_type ?? null,
       lines,
     }
   })
 }
 
 export async function fetchAllProducts() {
-  const { data, error } = await supabase.from('products').select('id, name, sku').order('name')
+  const { data, error } = await supabase.from('products').select('id, name, sku, assembly_type, material_kind').order('name')
   if (error) throw new Error(error.message)
   return data
 }

@@ -3,13 +3,16 @@ import { Link } from 'react-router-dom'
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, ChevronRight,
   CircleAlert, Clock3, CreditCard, Landmark, Loader2, PackageCheck,
-  RefreshCw, Sparkles, TrendingDown, TrendingUp, Users, Wallet,
+  RefreshCw, Sparkles, TrendingDown, TrendingUp, Users, Wallet, Inbox, Files,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { GlobalSearchBar } from '../components/GlobalSearchBar'
 import { ManufacturingPerformanceCard } from '../components/dashboard/ManufacturingPerformanceCard'
 import { useDashboardData, type DayPoint, type Period } from '../hooks/useDashboardData'
 import { useAuth } from '../lib/auth'
+import { ROLE_LABELS, type Role } from '../lib/roles'
+
+const ROLE_FOCUS: Record<Role,string>={full_access:'Company approvals, warehouse exceptions and financial exposure',accounting_finance:'Cash, obligations, payroll journals and postings',operations_marketing:'Supplier documents, containers, customs and receiving',manufacturing_sales:'Materials, production, finished goods and sales availability',hr_system:'People, warehouse payroll review and access control',warehouse_operations:'Receiving, placement, production and transfer tasks'}
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
 const PERIOD_LABEL: Record<Period, string> = { day: 'Today', week: 'This week', month: 'This month' }
@@ -200,6 +203,8 @@ export function Dashboard() {
           </button>
         </div>
       </header>
+
+      {profile?.role !== 'pending' && <section className="dashboard-role-focus"><div><span>{ROLE_LABELS[profile?.role as Role]}</span><strong>{ROLE_FOCUS[profile?.role as Role]}</strong></div><Link to="/work"><Inbox/>My work</Link><Link to="/documents"><Files/>Documents</Link></section>}
 
       <nav className="dashboard-periods" aria-label="Dashboard period">
         {(['day', 'week', 'month'] as Period[]).map(option => (

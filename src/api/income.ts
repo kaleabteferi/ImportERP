@@ -63,7 +63,7 @@ export async function recordQuickIncome(input: {
 }
 
 export async function fetchWarehousesList() {
-  const { data, error } = await supabase.from('warehouses').select('id, name').order('name')
+  const { data, error } = await supabase.from('warehouses').select('id, name').eq('is_active', true).order('name')
   if (error) throw new Error(error.message)
   return data
 }

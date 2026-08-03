@@ -31,6 +31,11 @@ export interface NewDamageReportInput {
   reportedByEmployeeId?: string
   reportDate: string
   notes?: string
+  // Set when the damage claim is filed against a finished CKD/SKD kit but
+  // the kit itself was never stocked as such (it gets decomposed into BOM
+  // components at receiving time) — the caller posts the decomposed
+  // write-off ledger entries itself instead.
+  skipLedgerMovement?: boolean
 }
 
 async function nextReportNumber(year: number): Promise<string> {
@@ -79,16 +84,18 @@ export async function createDamageReport(input: NewDamageReportInput): Promise<s
   }
   if (!reportId) throw new Error(lastError?.message ?? 'Failed to create damage report')
 
-  await postInventoryMovement({
-    product_id: input.productId,
-    quantity: -Math.abs(input.quantity),
-    movement_type: 'DAMAGE',
-    movement_date: input.reportDate,
-    warehouse_id: input.warehouseId,
-    reference_type: 'damage_report',
-    reference_id: reportId,
-    notes: input.reason,
-  })
+  if (!input.skipLedgerMovement) {
+    await postInventoryMovement({
+      product_id: input.productId,
+      quantity: -Math.abs(input.quantity),
+      movement_type: 'DAMAGE',
+      movement_date: input.reportDate,
+      warehouse_id: input.warehouseId,
+      reference_type: 'damage_report',
+      reference_id: reportId,
+      notes: input.reason,
+    })
+  }
 
   return reportId
 }

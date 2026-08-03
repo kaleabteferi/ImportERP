@@ -103,28 +103,37 @@ export function suggestPackingLayout(
   for (const it of sorted) {
     let cartonsNeeded = Math.ceil(it.remainingUnits / it.unitsPerCarton)
     const kgPerCarton = it.cartonWeightKg ?? 0
+    const skippedContainers = new Set<string>()
 
-    for (const c of remaining) {
-      if (cartonsNeeded <= 0) break
-      if (c.volLeft <= 0) continue
-      const maxByVol = Math.floor(c.volLeft / it.cartonVolumeM3)
-      const maxByWeight = kgPerCarton > 0 ? Math.floor(c.kgLeft / kgPerCarton) : cartonsNeeded
-      const fit = Math.min(cartonsNeeded, maxByVol, maxByWeight)
-      if (fit <= 0) continue
+    // Product-cohesive best fit: prefer one container that can hold the
+    // whole remaining product line, choosing the tightest such fit. Only
+    // split when no container can take it whole; then use the container
+    // that can take the largest meaningful block. This reduces customs and
+    // receiving fragmentation while still using both CBM and payload.
+    while (cartonsNeeded > 0) {
+      const candidates = remaining.filter(c => !skippedContainers.has(c.containerId)).map(c => {
+        const maxByVol = Math.floor(c.volLeft / it.cartonVolumeM3)
+        const maxByWeight = kgPerCarton > 0 ? Math.floor(c.kgLeft / kgPerCarton) : cartonsNeeded
+        return { c, fit: Math.min(cartonsNeeded, maxByVol, maxByWeight) }
+      }).filter(candidate => candidate.fit > 0)
+      if (!candidates.length) break
 
-      // Skip a trivial fragment of THIS container for THIS item -- unless
-      // it's the item's entire remaining need, or it's using a real chunk
-      // of the container's capacity, leave the sliver alone; the item will
-      // get a properly-sized slot elsewhere instead of being scattered.
-      const finishesItem = fit === cartonsNeeded
-      const meaningfulShare = (fit * it.cartonVolumeM3) / c.capacityM3 >= MIN_FRAGMENT_FRACTION
-      if (!finishesItem && !meaningfulShare) continue
+      const completeFits = candidates.filter(candidate => candidate.fit >= cartonsNeeded)
+      const chosen = completeFits.length
+        ? completeFits.sort((left, right) => (left.c.volLeft - cartonsNeeded * it.cartonVolumeM3) - (right.c.volLeft - cartonsNeeded * it.cartonVolumeM3))[0]
+        : candidates.sort((left, right) => right.fit - left.fit || left.c.volLeft - right.c.volLeft)[0]
+      const finishesItem = chosen.fit === cartonsNeeded
+      const meaningfulShare = (chosen.fit * it.cartonVolumeM3) / chosen.c.capacityM3 >= MIN_FRAGMENT_FRACTION
+      if (!finishesItem && !meaningfulShare) {
+        skippedContainers.add(chosen.c.containerId)
+        continue
+      }
 
-      const key = `${c.containerId} ${it.piItemId}`
-      cartonsByKey.set(key, (cartonsByKey.get(key) ?? 0) + fit)
-      c.volLeft -= fit * it.cartonVolumeM3
-      c.kgLeft -= fit * kgPerCarton
-      cartonsNeeded -= fit
+      const key = `${chosen.c.containerId} ${it.piItemId}`
+      cartonsByKey.set(key, (cartonsByKey.get(key) ?? 0) + chosen.fit)
+      chosen.c.volLeft -= chosen.fit * it.cartonVolumeM3
+      chosen.c.kgLeft -= chosen.fit * kgPerCarton
+      cartonsNeeded -= chosen.fit
     }
 
     if (cartonsNeeded > 0) unplacedByItem.set(it.piItemId, cartonsNeeded)

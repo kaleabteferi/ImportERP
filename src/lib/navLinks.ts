@@ -9,24 +9,26 @@ import {
   Package, Calculator, BarChart3, Factory,
   Tag, Wallet, CreditCard, Banknote, Landmark, Receipt, CalendarDays, Users, ListTree, Truck, Anchor,
   ShoppingCart, Sigma, FileSearch, ArrowRightLeft, FileText,
-  UserCog, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion,
+  UserCog, IdCard, Wallet as WalletIcon, BookOpen, FileQuestion, Inbox, Files,
   Settings as SettingsIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Role } from './roles'
 
-export interface NavLinkDef { to: string; icon: LucideIcon; label: string; allow: Role[] }
+export interface NavLinkDef { to: string; icon: LucideIcon; label: string; allow: Role[]; warehouseScope?: boolean }
 export interface NavGroup { section: string; items: NavLinkDef[] }
 
 // allow: [] means visible to every authenticated role (pure reporting/overview pages).
 export const NAV_LINKS: NavGroup[] = [
   { section: 'Overview', items: [
-    { to: '/',              icon: LayoutDashboard, label: 'Dashboard',      allow: [] },
-    { to: '/daily-activity',icon: CalendarDays,    label: 'Daily Activity', allow: [] },
-    { to: '/calculator',    icon: Sigma,            label: 'Calculator',     allow: [] },
-    { to: '/documentation', icon: FileQuestion,     label: 'Documentation',  allow: [] },
+    { to: '/',              icon: LayoutDashboard, label: 'Dashboard',      allow: [], warehouseScope: true },
+    { to: '/work',          icon: Inbox,           label: 'My Work',        allow: [], warehouseScope: true },
+    { to: '/daily-activity',icon: CalendarDays,    label: 'Daily Activity', allow: ['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system'] },
+    { to: '/calculator',    icon: Sigma,            label: 'Calculator',     allow: [], warehouseScope: true },
+    { to: '/documentation', icon: FileQuestion,     label: 'Documentation',  allow: [], warehouseScope: true },
   ]},
   { section: 'Import', items: [
+    { to: '/documents', icon: Files, label: 'Document Register', allow: [], warehouseScope: true },
     { to: '/proforma-invoices', icon: FileText, label: 'Proforma Invoices', allow: ['operations_marketing'] },
     { to: '/shipments',  icon: Ship,       label: 'Shipments',  allow: ['operations_marketing'] },
     { to: '/rfqs',       icon: FileSearch, label: 'Supplier RFQs', allow: ['operations_marketing', 'accounting_finance'] },
@@ -36,7 +38,7 @@ export const NAV_LINKS: NavGroup[] = [
     { to: '/products',   icon: Tag,        label: 'Products',   allow: ['operations_marketing', 'manufacturing_sales'] },
   ]},
   { section: 'Operations', items: [
-    { to: '/warehouse-operations', icon: Factory, label: 'Production', allow: ['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance'] },
+    { to: '/warehouse-operations', icon: Factory, label: 'Warehouse Operations', allow: ['manufacturing_sales', 'operations_marketing', 'hr_system', 'accounting_finance'], warehouseScope: true },
     { to: '/boms',        icon: ListTree,    label: 'BOMs',       allow: ['manufacturing_sales'] },
     { to: '/inventory',   icon: Package,     label: 'Inventory',  allow: ['manufacturing_sales', 'operations_marketing'] },
     { to: '/warehouse-transfers', icon: Truck, label: 'Warehouse Transfers', allow: ['manufacturing_sales', 'operations_marketing'] },
@@ -53,12 +55,12 @@ export const NAV_LINKS: NavGroup[] = [
     { to: '/money-tracking', icon: Banknote,    label: 'Money Tracking',  allow: ['accounting_finance'] },
     { to: '/credit-accounts',icon: Landmark,    label: 'Credit Accounts', allow: ['accounting_finance'] },
     { to: '/expenses',       icon: Receipt,     label: 'Expenses',        allow: ['accounting_finance'] },
-    { to: '/reports',        icon: BarChart3,   label: 'Reports',         allow: [] },
+    { to: '/reports',        icon: BarChart3,   label: 'Reports',         allow: ['accounting_finance', 'operations_marketing', 'manufacturing_sales', 'hr_system'] },
   ]},
   { section: 'HR', items: [
     { to: '/employees', icon: IdCard,      label: 'Employees',  allow: ['hr_system'] },
-    { to: '/payroll',   icon: WalletIcon,  label: 'Payroll',    allow: ['hr_system'] },
-    { to: '/hr-notes',  icon: BookOpen,    label: 'HR Notes',   allow: ['hr_system'] },
+    { to: '/payroll',   icon: WalletIcon,  label: 'Payroll',    allow: ['hr_system', 'accounting_finance'] },
+    { to: '/hr-notes',  icon: BookOpen,    label: 'HR Notes',   allow: ['hr_system', 'accounting_finance'] },
   ]},
   { section: 'System', items: [
     { to: '/users',    icon: UserCog,    label: 'Users & Roles', allow: ['hr_system'] },

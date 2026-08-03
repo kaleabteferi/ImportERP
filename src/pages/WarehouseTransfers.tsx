@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Truck, Loader2, CheckCircle2, AlertTriangle, Plus } from 'lucide-react'
 import { fetchWarehousesList } from '../api/income'
 import { fetchAllProducts } from '../api/bom'
@@ -33,13 +34,15 @@ const EMPTY_FORM = {
 }
 
 export function WarehouseTransfers() {
+  const [searchParams] = useSearchParams()
+  const prefilledForm = { ...EMPTY_FORM, fromWarehouseId: searchParams.get('from') ?? '', productId: searchParams.get('product') ?? '', quantity: searchParams.get('quantity') ?? '' }
   const [transfers, setTransfers] = useState<WarehouseTransfer[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [products, setProducts] = useState<Option[]>([])
   const [employees, setEmployees] = useState<Option[]>([])
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ ...EMPTY_FORM })
+  const [open, setOpen] = useState(() => Boolean(prefilledForm.fromWarehouseId || prefilledForm.productId))
+  const [form, setForm] = useState(prefilledForm)
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

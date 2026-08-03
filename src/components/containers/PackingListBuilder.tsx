@@ -25,7 +25,7 @@ interface Props {
   refreshToken?: number
 }
 
-const EMPTY_LINE = { pi_item_id: '', carton_qty: '', units_per_carton: '', length_cm: '', width_cm: '', height_cm: '' }
+const EMPTY_LINE = { pi_item_id: '', carton_qty: '', units_per_carton: '', length_cm: '', width_cm: '', height_cm: '', gross_weight_per_ctn: '', net_weight_per_ctn: '', marks_and_numbers: '' }
 
 const N3 = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 4 }).format(n)
 
@@ -83,13 +83,17 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
   function pickLineItem(piItemId: string) {
     const piItem = piItems.find(pi => pi.id === piItemId)
     const p = piItem?.products
+    const existing = lines.find(line => line.pi_item_id === piItemId)
     setForm(prev => ({
       ...prev,
       pi_item_id: piItemId,
-      units_per_carton: prev.units_per_carton || (p?.default_units_per_carton ? String(p.default_units_per_carton) : ''),
-      length_cm: prev.length_cm || (p?.carton_length_cm ? String(p.carton_length_cm) : ''),
-      width_cm: prev.width_cm || (p?.carton_width_cm ? String(p.carton_width_cm) : ''),
-      height_cm: prev.height_cm || (p?.carton_height_cm ? String(p.carton_height_cm) : ''),
+      units_per_carton: existing?.units_per_carton ? String(existing.units_per_carton) : prev.units_per_carton || (p?.default_units_per_carton ? String(p.default_units_per_carton) : ''),
+      length_cm: existing?.length_cm ? String(existing.length_cm) : prev.length_cm || (p?.carton_length_cm ? String(p.carton_length_cm) : ''),
+      width_cm: existing?.width_cm ? String(existing.width_cm) : prev.width_cm || (p?.carton_width_cm ? String(p.carton_width_cm) : ''),
+      height_cm: existing?.height_cm ? String(existing.height_cm) : prev.height_cm || (p?.carton_height_cm ? String(p.carton_height_cm) : ''),
+      gross_weight_per_ctn: existing?.gross_weight_per_ctn ? String(existing.gross_weight_per_ctn) : prev.gross_weight_per_ctn,
+      net_weight_per_ctn: existing?.net_weight_per_ctn ? String(existing.net_weight_per_ctn) : prev.net_weight_per_ctn,
+      marks_and_numbers: existing?.marks_and_numbers || prev.marks_and_numbers,
     }))
   }
 
@@ -102,6 +106,9 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
       length_cm: l.length_cm != null ? String(l.length_cm) : '',
       width_cm: l.width_cm != null ? String(l.width_cm) : '',
       height_cm: l.height_cm != null ? String(l.height_cm) : '',
+      gross_weight_per_ctn: l.gross_weight_per_ctn != null ? String(l.gross_weight_per_ctn) : '',
+      net_weight_per_ctn: l.net_weight_per_ctn != null ? String(l.net_weight_per_ctn) : '',
+      marks_and_numbers: l.marks_and_numbers ?? '',
     })
     setError(null)
   }
@@ -125,6 +132,10 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
     // here rather than re-typed (and possibly re-typed wrong) per container.
     const piItem = piItems.find(pi => pi.id === form.pi_item_id)
     if (!piItem) { setError('Selected item not found.'); return }
+    const proposedUnits = Number(form.carton_qty) * Number(form.units_per_carton)
+    if (!editingLineId && proposedUnits > remaining(piItem) + 0.0001) {
+      setError(`This adds ${proposedUnits} units, but only ${remaining(piItem)} remain unallocated.`); return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -136,6 +147,9 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
         length_cm: form.length_cm ? parseFloat(form.length_cm) : null,
         width_cm: form.width_cm ? parseFloat(form.width_cm) : null,
         height_cm: form.height_cm ? parseFloat(form.height_cm) : null,
+        gross_weight_per_ctn: form.gross_weight_per_ctn ? parseFloat(form.gross_weight_per_ctn) : null,
+        net_weight_per_ctn: form.net_weight_per_ctn ? parseFloat(form.net_weight_per_ctn) : null,
+        marks_and_numbers: form.marks_and_numbers || null,
       }
       if (editingLineId) {
         await updatePackingListItem(editingLineId, payload)
@@ -168,7 +182,7 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
   }
 
   return (
-    <div className="mt-2">
+    <div className="packing-builder">
       {error && <div className="mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
       {lines.length === 0 ? (
@@ -176,7 +190,7 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
           <Package size={13} /> No items packed into this container yet.
         </div>
       ) : (
-        <table className="w-full text-xs mb-3">
+        <table className="packing-table">
           <thead>
             <tr className="text-gray-400 text-left">
               <th className="font-medium py-1">Item</th>
@@ -185,6 +199,8 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
               <th className="font-medium py-1 text-right">Total units</th>
               <th className="font-medium py-1 text-right">Unit price</th>
               <th className="font-medium py-1 text-right">Volume</th>
+              <th className="font-medium py-1 text-right">Gross kg</th>
+              <th className="font-medium py-1">Marks</th>
               <th className="w-12"></th>
             </tr>
           </thead>
@@ -203,6 +219,8 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
                       ? <span className={vol.estimated ? 'text-amber-600' : ''}>{N3(vol.m3)} m³{vol.estimated ? ' (est.)' : ''}</span>
                       : <span className="text-amber-500">no size</span>}
                   </td>
+                  <td className="py-1.5 text-right font-mono">{l.gross_weight_per_ctn ? N3(Number(l.gross_weight_per_ctn) * Number(l.carton_qty)) : '—'}</td>
+                  <td className="py-1.5">{l.marks_and_numbers || '—'}</td>
                   <td className="py-1.5">
                     <div className="flex items-center gap-1.5 justify-end">
                       <button onClick={() => startEdit(l)} className="text-gray-300 hover:text-blue-600 transition-colors"><Pencil size={12} /></button>
@@ -216,10 +234,11 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
         </table>
       )}
 
-      <div className={`flex flex-wrap items-end gap-2 rounded-lg p-2.5 ${editingLineId ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
+      <div className={`packing-form ${editingLineId ? 'editing' : ''}`}>
         {editingLineId && (
           <p className="w-full text-xs font-medium text-blue-700">Editing this line — Save to apply, or Cancel.</p>
         )}
+        {!editingLineId && form.pi_item_id && lines.some(line => line.pi_item_id === form.pi_item_id) && <p className="packing-merge-note"><Package size={13} /> Already in this container — the additional cartons will increase the existing line instead of creating a duplicate.</p>}
         <div>
           <label className="block text-xs text-gray-400 mb-1">Line item</label>
           <select className="text-xs px-2 py-1.5 border border-gray-200 rounded-lg bg-white w-48"
@@ -231,6 +250,18 @@ export function PackingListBuilder({ piId, containerId, piItems, onChanged, refr
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Gross kg/ctn</label>
+          <input type="number" step="0.01" value={form.gross_weight_per_ctn} onChange={e => setForm(p => ({ ...p, gross_weight_per_ctn: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Net kg/ctn</label>
+          <input type="number" step="0.01" value={form.net_weight_per_ctn} onChange={e => setForm(p => ({ ...p, net_weight_per_ctn: e.target.value }))} />
+        </div>
+        <div className="packing-form-marks">
+          <label className="block text-xs text-gray-400 mb-1">Shipping marks / carton range</label>
+          <input value={form.marks_and_numbers} onChange={e => setForm(p => ({ ...p, marks_and_numbers: e.target.value }))} placeholder="e.g. KA-01–KA-120" />
         </div>
         <div>
           <label className="block text-xs text-gray-400 mb-1">Cartons</label>

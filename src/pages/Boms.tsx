@@ -1,22 +1,34 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchBoms, fetchAllProducts, createBom, updateBom, setBomActive, deleteBom } from '../api/bom'
 import type { BomStage } from '../api/bom'
+import { MATERIAL_KIND_LABELS, type MaterialKind } from './Products'
 import { SearchableSelect } from '../components/SearchableSelect'
 import { BulkImportModal } from '../components/BulkImportModal'
 import type { BulkImportColumn } from '../components/BulkImportModal'
-import { ListTree, Loader2, Plus, X, Trash2, Power, Sticker, Wrench, Boxes, Pencil, ClipboardPaste } from 'lucide-react'
+import { ListTree, Loader2, Plus, X, Trash2, Power, Sticker, Wrench, Boxes, Pencil, ClipboardPaste, PackageOpen } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { SwipeToDelete } from '../components/ui/SwipeToDelete'
 
-interface ProductOption { id: string; name: string; sku: string }
+interface ProductOption { id: string; name: string; sku: string; assemblyType: string | null; materialKind: MaterialKind }
 interface BomLine { componentProductId: string; quantityRequired: number }
 interface Bom {
   id: string; name: string; isActive: boolean; notes: string | null; stage: BomStage
-  productId: string; productName: string; productSku: string
-  lines: Array<{ id: string; componentProductId: string; componentName: string; componentSku: string; quantityRequired: number }>
+  productId: string; productName: string; productSku: string; productAssemblyType: string | null
+  lines: Array<{ id: string; componentProductId: string; componentName: string; componentSku: string; componentMaterialKind: MaterialKind; quantityRequired: number }>
+}
+
+// CKD/SKD kits conventionally separate the physical assembly parts from
+// packaging (cartons, foam, manuals, screw bags) -- they're sourced, costed,
+// and declared to customs differently, so a real BOM keeps them visibly apart
+// rather than one flat undifferentiated parts list.
+function splitPackaging<T extends { componentMaterialKind: MaterialKind }>(lines: T[]) {
+  return {
+    components: lines.filter(l => l.componentMaterialKind !== 'packaging_material'),
+    packaging: lines.filter(l => l.componentMaterialKind === 'packaging_material'),
+  }
 }
 
 const STAGE_INFO: Record<BomStage, { label: string; icon: typeof Wrench; hint: string }> = {
@@ -54,7 +66,19 @@ function BomForm({ products, initial, onDone, onCancel }: {
     setLines(lines.map((l, idx) => idx === i ? { ...l, ...patch } : l))
   }
 
-  const productOptions = products.map(p => ({ id: p.id, label: p.name, sublabel: p.sku }))
+  // Finished-product picker: show assembly type so it's obvious which
+  // products are actually CKD/SKD kits vs. ready-to-sell imports -- an
+  // ASSEMBLY-stage BOM only makes sense against a FULL/SKD/CKD product.
+  const finishedProductOptions = products.map(p => ({
+    id: p.id, label: p.name,
+    sublabel: `${p.sku}${p.assemblyType ? ` · ${p.assemblyType}` : ''}`,
+  }))
+  // Component picker: show material kind so packaging/spares are visibly
+  // distinct from real assembly components while building the list.
+  const componentOptions = products.map(p => ({
+    id: p.id, label: p.name,
+    sublabel: `${p.sku} · ${MATERIAL_KIND_LABELS[p.materialKind]}`,
+  }))
 
   async function handleComponentImport(rows: Record<string, string>[]) {
     const errors: string[] = []
@@ -126,11 +150,16 @@ function BomForm({ products, initial, onDone, onCancel }: {
       </div>
 
       <SearchableSelect
-        options={productOptions}
+        options={finishedProductOptions}
         value={productId}
         onChange={setProductId}
         placeholder={stage === 'ASSEMBLY' ? 'Finished product this BOM assembles' : 'Product this stage applies to'}
       />
+      {stage === 'ASSEMBLY' && productId && !['SKD', 'CKD', 'FULL'].includes(products.find(p => p.id === productId)?.assemblyType ?? '') && (
+        <p className="text-xs text-amber-600 -mt-1.5">
+          This product's assembly type isn't SKD/CKD/FULL — double-check it's meant to be built from components, not sold as-is.
+        </p>
+      )}
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -141,11 +170,19 @@ function BomForm({ products, initial, onDone, onCancel }: {
             <ClipboardPaste size={11} /> Paste components
           </button>
         </div>
-        {lines.map((line, i) => (
+        {stage === 'ASSEMBLY' && (
+          <p className="text-xs text-gray-400 flex items-start gap-1.5">
+            <PackageOpen size={13} className="shrink-0 mt-0.5" />
+            Include packaging (cartons, foam, manuals, screw bags) as their own lines — tag them "Packaging material" on the Products page so they're grouped separately from real assembly parts below.
+          </p>
+        )}
+        {lines.map((line, i) => {
+          const component = products.find(p => p.id === line.componentProductId)
+          return (
           <div key={i} className="flex gap-2 items-center">
             <SearchableSelect
               className="flex-1"
-              options={productOptions}
+              options={componentOptions}
               value={line.componentProductId}
               onChange={id => updateLine(i, { componentProductId: id })}
               placeholder="Component product"
@@ -153,11 +190,15 @@ function BomForm({ products, initial, onDone, onCancel }: {
             <input type="number" value={line.quantityRequired}
               onChange={e => updateLine(i, { quantityRequired: Number(e.target.value) })}
               placeholder="Qty per unit" className="w-28 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg" />
+            {component?.materialKind === 'packaging_material' && (
+              <Badge variant="neutral">Packaging</Badge>
+            )}
             <button onClick={() => removeLine(i)} className="p-1.5 text-gray-400 hover:text-red-500">
               <Trash2 size={14} />
             </button>
           </div>
-        ))}
+          )
+        })}
         <button onClick={addLine} className="text-xs text-blue-600 flex items-center gap-1">
           <Plus size={12} /> Add component
         </button>
@@ -201,12 +242,30 @@ function BomCard({ bom, onEdit, onToggle, onRemove }: { bom: Bom; onEdit: () => 
         </button>
       </div>
       <div className="px-4 py-2 space-y-1">
-        {bom.lines.map(line => (
-          <div key={line.id} className="flex justify-between text-xs text-gray-600">
-            <span>{line.componentName} {line.componentSku && `(${line.componentSku})`}</span>
-            <span className="text-gray-400">{line.quantityRequired} per unit</span>
-          </div>
-        ))}
+        {(() => {
+          const { components, packaging } = splitPackaging(bom.lines)
+          return <>
+            {components.map(line => (
+              <div key={line.id} className="flex justify-between text-xs text-gray-600">
+                <span>{line.componentName} {line.componentSku && `(${line.componentSku})`}</span>
+                <span className="text-gray-400">{line.quantityRequired} per unit</span>
+              </div>
+            ))}
+            {packaging.length > 0 && (
+              <>
+                <p className="text-[10px] uppercase tracking-wide text-gray-400 pt-2 flex items-center gap-1">
+                  <PackageOpen size={11} /> Packaging
+                </p>
+                {packaging.map(line => (
+                  <div key={line.id} className="flex justify-between text-xs text-gray-600">
+                    <span>{line.componentName} {line.componentSku && `(${line.componentSku})`}</span>
+                    <span className="text-gray-400">{line.quantityRequired} per unit</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        })()}
       </div>
     </Card>
     </SwipeToDelete>
@@ -225,7 +284,11 @@ export function Boms() {
     try {
       const [bomRows, productRows] = await Promise.all([fetchBoms(), fetchAllProducts()])
       setBoms(bomRows as any)
-      setProducts((productRows ?? []).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku })))
+      setProducts((productRows ?? []).map((p: any) => ({
+        id: p.id, name: p.name, sku: p.sku,
+        assemblyType: p.assembly_type ?? null,
+        materialKind: (p.material_kind ?? 'finished_product') as MaterialKind,
+      })))
     } catch (e) {
       console.error(e)
     } finally {

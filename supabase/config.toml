@@ -1,0 +1,6 @@
+project_id = "import-erp"
+
+[functions.admin-users]
+# The function verifies the caller JWT and ERP role itself. Disabling gateway
+# verification lets browser OPTIONS preflight reach the CORS handler.
+verify_jwt = false

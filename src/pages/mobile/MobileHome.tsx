@@ -1,96 +1,74 @@
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboardData } from '../../hooks/useDashboardData'
-import {
-  TrendingUp, Package, Wallet, CreditCard, ShoppingCart, Wrench,
-  Banknote, ChevronRight, Loader2, AlertTriangle,
-} from 'lucide-react'
+import { useDashboardData, type Period } from '../../hooks/useDashboardData'
+import { ArrowDownRight, ArrowUpRight, Banknote, Boxes, ChevronRight, CircleAlert, CreditCard, Loader2, Package, RefreshCw, ShoppingCart, Users, Wallet, Wrench } from 'lucide-react'
 
-const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
-
-function Tile({ to, icon: Icon, label, value, tone }: {
-  to: string; icon: typeof TrendingUp; label: string; value: string; tone?: 'warn' | 'good'
-}) {
-  return (
-    <Link to={to} className="bg-white rounded-card shadow-[var(--shadow-card-sm)] p-4 flex flex-col gap-2 active:bg-gray-50">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tone === 'warn' ? 'bg-amber-50 text-amber-600' : tone === 'good' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
-        <Icon size={16} />
-      </div>
-      <div>
-        <p className="text-xs text-gray-400">{label}</p>
-        <p className="text-base font-semibold text-gray-900">{value}</p>
-      </div>
-    </Link>
-  )
-}
-
-function ActionButton({ to, icon: Icon, label, color }: { to: string; icon: typeof ShoppingCart; label: string; color: string }) {
-  return (
-    <Link to={to} className={`flex flex-col items-center justify-center gap-1.5 rounded-card py-4 text-white ${color} active:opacity-90`}>
-      <Icon size={22} />
-      <span className="text-xs font-medium">{label}</span>
-    </Link>
-  )
-}
+const N = (value: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0, notation: Math.abs(value) >= 1_000_000 ? 'compact' : 'standard' }).format(Math.round(value))
 
 export function MobileHome() {
-  const d = useDashboardData('day')
+  const [period, setPeriod] = useState<Period>('day')
+  const data = useDashboardData(period)
+  const netCash = data.cashInEtb - data.cashOutEtb
+  const revenueChange = data.revenuePrevEtb ? (data.revenueEtb - data.revenuePrevEtb) / data.revenuePrevEtb * 100 : null
   const today = new Date().toLocaleDateString('en-ET', { weekday: 'long', month: 'short', day: 'numeric' })
 
-  return (
-    <div className="p-4 pb-6 max-w-md mx-auto">
-      <div className="mb-4">
-        <p className="text-xs text-gray-400">{today}</p>
-        <h1 className="text-lg font-semibold">Today at a glance</h1>
-      </div>
+  return <div className="mobile-surface mobile-dashboard">
+    <header className="mobile-page-intro">
+      <div><span>{today}</span><h1>Operating pulse</h1><p>Sales, cash and warehouse activity in one view.</p></div>
+      <button className="mobile-icon-button" onClick={data.refresh} aria-label="Refresh dashboard"><RefreshCw size={18} className={data.loading ? 'animate-spin' : ''} /></button>
+    </header>
+    <div className="mobile-periods" aria-label="Dashboard period">{(['day', 'week', 'month'] as Period[]).map(value => <button key={value} className={period === value ? 'active' : ''} onClick={() => setPeriod(value)}>{value === 'day' ? 'Today' : `This ${value}`}</button>)}</div>
 
-      {d.loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
-          <Loader2 size={18} className="animate-spin" /> Loading…
+    {data.loading ? <div className="mobile-state"><Loader2 className="animate-spin" /><span>Loading live company data…</span></div> : <>
+      {data.error && <div className="mobile-alert is-error"><CircleAlert size={17} /><span>{data.error}</span></div>}
+      <section className="mobile-pulse-card">
+        <div className="mobile-pulse-head"><span>Net cash movement</span><small>{period === 'day' ? 'today' : `this ${period}`}</small></div>
+        <strong>{netCash >= 0 ? '+' : '−'}{N(Math.abs(netCash))}<small> ETB</small></strong>
+        <div className="mobile-cash-flow"><div><ArrowDownRight /><span>Cash in<b>{N(data.cashInEtb)} ETB</b></span></div><div><ArrowUpRight /><span>Cash out<b>{N(data.cashOutEtb)} ETB</b></span></div></div>
+        <Sparkline points={data.revenueTrend.map(point => point.value)} />
+      </section>
+
+      <section className="mobile-quick-actions" aria-label="Quick actions">
+        <QuickAction to="/sales" icon={<ShoppingCart />} label="Record sale" />
+        <QuickAction to="/production" icon={<Wrench />} label="Log output" />
+        <QuickAction to="/money-tracking?action=income" icon={<Banknote />} label="Add income" />
+        <QuickAction to="/money-tracking?action=expense" icon={<Wallet />} label="Add expense" />
+      </section>
+
+      <section className="mobile-metric-grid">
+        <Metric to="/sales" label="Revenue" value={`${N(data.revenueEtb)} ETB`} meta={revenueChange == null ? 'No prior comparison' : `${revenueChange >= 0 ? '+' : ''}${revenueChange.toFixed(1)}% vs previous`} tone="blue" />
+        <Metric to="/production" label="Produced" value={`${N(data.producedUnits)} units`} meta={`${N(data.producedPrevUnits)} previous`} tone="green" />
+        <Metric to="/receivables" label="Customers owe" value={`${N(data.receivablesEtb)} ETB`} meta={`${data.activeCustomers} active customers`} tone="amber" />
+        <Metric to="/payables" label="Supplier debt" value={`${N(data.payablesEtb)} ETB`} meta={data.payablesUsd ? `${N(data.payablesUsd)} USD also due` : 'ETB obligations'} tone="red" />
+      </section>
+
+      <section className="mobile-section">
+        <div className="mobile-section-title"><div><span>Company position</span><h2>What the business holds</h2></div></div>
+        <div className="mobile-position-list">
+          <Position to="/inventory" icon={<Boxes />} label="Inventory value" value={`${N(data.inventoryValueEtb)} ETB`} detail={data.daysOfStock == null ? 'Stock coverage unavailable' : `${data.daysOfStock.toFixed(0)} days of stock`} />
+          <Position to="/inventory" icon={<Package />} label="Stock-out risk" value={`${data.stockoutRiskCount} products`} detail="Forecast attention" alert={data.stockoutRiskCount > 0} />
+          <Position to="/customers" icon={<Users />} label="Customer activity" value={`${data.activeCustomers} active`} detail={`${data.frequentCustomers} repeat customers`} />
+          <Position to="/credit-accounts" icon={<CreditCard />} label="Receivables" value={`${N(data.receivablesEtb)} ETB`} detail="Open customer balances" />
         </div>
-      ) : (
-        <>
-          {d.topAdvice && (
-            <div className="bg-indigo-600 text-white rounded-card p-4 mb-4">
-              <p className="text-xs text-indigo-200 uppercase tracking-wide mb-1">Today's advice</p>
-              <p className="text-sm leading-snug">{d.topAdvice.text}</p>
-            </div>
-          )}
+      </section>
 
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <ActionButton to="/sales" icon={ShoppingCart} label="Record sale" color="bg-blue-600" />
-            <ActionButton to="/production" icon={Wrench} label="Log production" color="bg-green-600" />
-          </div>
-          <div className="grid grid-cols-2 gap-2 mb-5">
-            <ActionButton to="/money-tracking" icon={Banknote} label="Add income" color="bg-emerald-600" />
-            <ActionButton to="/money-tracking" icon={Wallet} label="Add expense" color="bg-red-600" />
-          </div>
+      {(data.topAdvice || data.todoToday.length > 0) && <section className="mobile-section">
+        <div className="mobile-section-title"><div><span>Priority queue</span><h2>Needs attention</h2></div><b>{data.todoToday.length + (data.topAdvice ? 1 : 0)}</b></div>
+        <div className="mobile-attention-list">
+          {data.topAdvice && <article className="is-advice"><i><CircleAlert /></i><div><span>Recommended next step</span><p>{data.topAdvice.text}</p></div></article>}
+          {data.todoToday.map((item, index) => item.link ? <Link key={index} to={item.link}><i><CircleAlert /></i><p>{item.text}</p><ChevronRight /></Link> : <article key={index}><i><CircleAlert /></i><p>{item.text}</p></article>)}
+        </div>
+      </section>}
+    </>}
+  </div>
+}
 
-          <div className="grid grid-cols-2 gap-2.5 mb-5">
-            <Tile to="/sales" icon={TrendingUp} label="Revenue today" value={`${N(d.revenueEtb)} ETB`} />
-            <Tile to="/production" icon={Package} label="Produced today" value={`${N(d.producedUnits)} units`} />
-            <Tile to="/receivables" icon={CreditCard} label="Customers owe" value={`${N(d.receivablesEtb)} ETB`} tone={d.receivablesEtb > 0 ? 'warn' : undefined} />
-            <Tile to="/payables" icon={Wallet} label="You owe" value={`${N(d.payablesEtb)} ETB`} tone={d.payablesEtb > 0 ? 'warn' : undefined} />
-          </div>
-
-          {d.todoToday.length > 0 && (
-            <div className="bg-white rounded-card shadow-[var(--shadow-card-sm)] overflow-hidden">
-              <p className="text-xs font-medium text-gray-500 px-4 pt-3 pb-1">What needs attention</p>
-              {d.todoToday.map((t, i) => {
-                const content = (
-                  <div className="flex items-center gap-2.5 px-4 py-3">
-                    <AlertTriangle size={14} className="text-amber-500 shrink-0" />
-                    <p className="flex-1 text-sm text-gray-700">{t.text}</p>
-                    {t.link && <ChevronRight size={15} className="text-gray-300 shrink-0" />}
-                  </div>
-                )
-                return t.link
-                  ? <Link key={i} to={t.link} className={`block active:bg-gray-50 ${i < d.todoToday.length - 1 ? 'border-b border-gray-50' : ''}`}>{content}</Link>
-                  : <div key={i} className={i < d.todoToday.length - 1 ? 'border-b border-gray-50' : ''}>{content}</div>
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
+function QuickAction({ to, icon, label }: { to: string; icon: ReactNode; label: string }) { return <Link to={to}><i>{icon}</i><span>{label}</span></Link> }
+function Metric({ to, label, value, meta, tone }: { to: string; label: string; value: string; meta: string; tone: string }) { return <Link to={to} className={`mobile-metric tone-${tone}`}><span>{label}</span><strong>{value}</strong><small>{meta}</small></Link> }
+function Position({ to, icon, label, value, detail, alert }: { to: string; icon: ReactNode; label: string; value: string; detail: string; alert?: boolean }) { return <Link to={to} className={alert ? 'is-alert' : ''}><i>{icon}</i><div><span>{label}</span><small>{detail}</small></div><strong>{value}</strong><ChevronRight /></Link> }
+function Sparkline({ points }: { points: number[] }) {
+  if (points.length < 2) return null
+  const max = Math.max(...points, 1); const min = Math.min(...points); const range = Math.max(1, max - min)
+  const path = points.map((value, index) => `${index ? 'L' : 'M'} ${index / (points.length - 1) * 100} ${36 - (value - min) / range * 30}`).join(' ')
+  return <svg className="mobile-sparkline" viewBox="0 0 100 40" preserveAspectRatio="none" aria-label="Revenue trend"><path d={`${path} L 100 40 L 0 40 Z`} className="fill" /><path d={path} className="line" /></svg>
 }

@@ -39,6 +39,43 @@ export interface PayrollEntry {
   deductions: PayrollEntryDeduction[]
 }
 
+export interface WarehousePayrollInboxItem {
+  id: string
+  operational_unit_id: string
+  warehouse_name: string
+  run_number: string
+  period_start: string
+  period_end: string
+  status: 'draft' | 'calculated' | 'submitted' | 'hr_approved' | 'finance_approved' | 'posted' | 'paid' | 'rejected'
+  employee_count: number
+  gross_amount: number
+  overtime_amount: number
+  incentive_amount: number
+  deduction_amount: number
+  tax_amount: number
+  pension_amount: number
+  employer_pension_amount: number
+  net_amount: number
+  created_at: string
+  journal_batch_number: string | null
+  posting_status: 'pending' | 'posted' | 'failed' | 'reversed' | null
+}
+
+export interface WarehousePayrollInboxEmployee {
+  id: string
+  employee_name: string
+  days_worked: number
+  regular_pay: number
+  overtime_hours: number
+  overtime_pay: number
+  production_incentive: number
+  gross_pay: number
+  tax: number
+  pension_employee: number
+  other_deductions: number
+  net_pay: number
+}
+
 export async function fetchPayrollPeriods(): Promise<PayrollPeriod[]> {
   const { data, error } = await supabase.from('payroll_periods').select('*').order('period_year', { ascending: false }).order('period_month', { ascending: false })
   if (error) throw new Error(error.message)
@@ -58,7 +95,10 @@ export async function createPayrollPeriod(month: number, year: number, employees
     .single()
   if (periodError) throw new Error(periodError.message)
 
-  const activeEmployees = employees.filter(e => e.is_active)
+  // The central calculator owns head-office payroll only. Warehouse workers
+  // are calculated in their warehouse workspace and arrive in the central
+  // payroll inbox as submitted, immutable calculation snapshots.
+  const activeEmployees = employees.filter(e => e.is_active && !e.warehouse_id)
   for (const emp of activeEmployees) {
     const daysWorked = emp.employment_type === 'permanent' ? null : 26
     const calc = calculatePayrollEntry({
@@ -169,4 +209,51 @@ export async function recalculateAndSaveEntry(
 export async function finalizePayrollPeriod(id: string): Promise<void> {
   const { error } = await supabase.from('payroll_periods').update({ status: 'finalized', finalized_at: new Date().toISOString() }).eq('id', id)
   if (error) throw new Error(error.message)
+}
+
+export async function fetchWarehousePayrollInbox(): Promise<WarehousePayrollInboxItem[]> {
+  const [{ data: runs, error: runsError }, { data: units, error: unitsError }, { data: batches, error: batchesError }] = await Promise.all([
+    supabase.from('warehouse_payroll_runs').select('*').order('period_end', { ascending: false }).limit(250),
+    supabase.from('operational_units').select('id, name'),
+    supabase.from('payroll_accounting_batches').select('payroll_run_id, journal_batch_number, posting_status'),
+  ])
+  if (runsError) throw new Error(runsError.message)
+  if (unitsError) throw new Error(unitsError.message)
+  if (batchesError) throw new Error(batchesError.message)
+  const unitNames = new Map((units ?? []).map(unit => [unit.id as string, unit.name as string]))
+  const batchByRun = new Map((batches ?? []).map(batch => [batch.payroll_run_id as string, batch]))
+  return (runs ?? []).map(run => {
+    const batch = batchByRun.get(run.id as string)
+    return {
+      ...run,
+      warehouse_name: unitNames.get(run.operational_unit_id as string) ?? 'Warehouse',
+      employee_count: Number(run.employee_count ?? 0), gross_amount: Number(run.gross_amount ?? 0),
+      overtime_amount: Number(run.overtime_amount ?? 0), incentive_amount: Number(run.incentive_amount ?? 0),
+      deduction_amount: Number(run.deduction_amount ?? 0), tax_amount: Number(run.tax_amount ?? 0),
+      pension_amount: Number(run.pension_amount ?? 0), employer_pension_amount: Number(run.employer_pension_amount ?? 0),
+      net_amount: Number(run.net_amount ?? 0),
+      journal_batch_number: batch?.journal_batch_number as string | null ?? null,
+      posting_status: batch?.posting_status as WarehousePayrollInboxItem['posting_status'] ?? null,
+    } as WarehousePayrollInboxItem
+  })
+}
+
+export async function fetchWarehousePayrollInboxEmployees(runId: string): Promise<WarehousePayrollInboxEmployee[]> {
+  const { data, error } = await supabase
+    .from('warehouse_payroll_run_employees')
+    .select('*, employees(full_name)')
+    .eq('payroll_run_id', runId)
+  if (error) throw new Error(error.message)
+  return (data ?? []).map(row => {
+    const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees
+    return {
+      id: row.id as string,
+      employee_name: employee?.full_name ?? 'Employee',
+      days_worked: Number(row.days_worked ?? 0), regular_pay: Number(row.regular_pay ?? 0),
+      overtime_hours: Number(row.overtime_hours ?? 0), overtime_pay: Number(row.overtime_pay ?? 0),
+      production_incentive: Number(row.production_incentive ?? 0), gross_pay: Number(row.gross_pay ?? 0),
+      tax: Number(row.tax ?? 0), pension_employee: Number(row.pension_employee ?? 0),
+      other_deductions: Number(row.other_deductions ?? 0), net_pay: Number(row.net_pay ?? 0),
+    }
+  })
 }

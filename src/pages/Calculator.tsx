@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Button } from '../components/ui/Button'
+import { QuickCalculator } from '../components/QuickCalculator'
 
 const COLS = 10
 const ROWS = 30
@@ -24,7 +25,6 @@ function SheetCell({ id, raw, display, hasError, selected, onFocus, onCommit }: 
 }) {
   const [editing, setEditing] = useState(false)
   const [local, setLocal] = useState(raw)
-  useEffect(() => { if (!editing) setLocal(raw) }, [raw, editing])
 
   return (
     <input
@@ -68,14 +68,17 @@ export function Calculator() {
     setLoading(true)
     try {
       setSheets(await fetchSpreadsheets())
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load sheets.')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load sheets.')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [load])
 
   const computed = useMemo(() => evaluateSheet(cells), [cells])
 
@@ -118,8 +121,8 @@ export function Calculator() {
       }
       setDirty(false)
       await load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to save sheet.')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to save sheet.')
     } finally {
       setSaving(false)
     }
@@ -131,8 +134,8 @@ export function Calculator() {
       await deleteSpreadsheet(id)
       if (activeId === id) { setActiveId(null); setName('Untitled sheet'); setCells({}); setDirty(false) }
       await load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to delete sheet.')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to delete sheet.')
     }
   }
 
@@ -154,11 +157,13 @@ export function Calculator() {
 
   return (
     <div className="p-5 max-w-6xl mx-auto">
-      <PageHeader icon={<CalcIcon size={18} />} title="Calculator" subtitle="A spreadsheet for your own math — formulas, ranges, and charts" />
+      <PageHeader icon={<CalcIcon size={18} />} title="Calculator" subtitle="Quick ERP calculations first, with a full spreadsheet workspace when you need it" />
+
+      <QuickCalculator />
 
       {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
 
-      <div className="grid grid-cols-[200px_1fr] gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[200px_1fr]">
         {/* Sheet list */}
         <div>
           <Button className="w-full mb-2" icon={<Plus size={13} />} onClick={() => startNewSheet()}>New sheet</Button>

@@ -1,4 +1,5 @@
-import { BookOpen, AlertTriangle, CheckCircle2, HelpCircle, XCircle } from 'lucide-react'
+import { BookOpen, AlertTriangle, CheckCircle2, HelpCircle, XCircle, ChevronDown, Calculator, ClipboardCheck, ArrowRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { PAYE_BRACKETS, PENSION_EMPLOYEE_RATE, PENSION_EMPLOYER_RATE, OT_MULTIPLIERS, OT_LABELS, MONTHLY_HOURS_DIVISOR } from '../lib/payrollEngine'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Card } from '../components/ui/Card'
@@ -16,23 +17,34 @@ function ConfidenceBadge({ level }: { level: 'high' | 'medium' | 'unconfirmed' }
   return <Badge variant={variant} icon={<Icon size={11} />}>{label}</Badge>
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   return (
-    <Card padded>
-      <h2 className="text-sm font-medium mb-3">{title}</h2>
-      <div className="space-y-3 text-sm text-gray-700">{children}</div>
-    </Card>
+    <details open={defaultOpen} className="group overflow-hidden rounded-2xl border border-[var(--color-border-secondary)] bg-[var(--color-background-primary)]">
+      <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-background-secondary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]">
+        {title}<ChevronDown size={17} className="shrink-0 text-[var(--color-text-tertiary)] transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-3 border-t border-[var(--color-border-tertiary)] px-4 py-4 text-sm leading-6 text-[var(--color-text-secondary)]">{children}</div>
+    </details>
   )
 }
 
 export function HrNotes() {
   return (
-    <div className="p-5 max-w-3xl mx-auto space-y-4">
+    <div className="hr-notes-page p-4 sm:p-5 max-w-4xl mx-auto space-y-4">
       <PageHeader
         icon={<BookOpen size={18} />}
         title="HR Notes — Ethiopian payroll rules"
         subtitle="What this app's payroll calculations are actually based on, and how sure we are about each figure"
       />
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card padded className="border-[var(--color-border-secondary)]">
+          <div className="flex items-start gap-3"><span className="rounded-xl bg-[var(--color-panel-dark)] p-2 text-[var(--color-panel-dark-foreground)]"><ClipboardCheck size={18} /></span><div><p className="text-sm font-semibold text-[var(--color-text-primary)]">Before approving payroll</p><ol className="mt-2 list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--color-text-secondary)]"><li>Confirm attendance and approved overtime.</li><li>Review salary, pension eligibility and deductions.</li><li>Resolve exceptions before HR or Finance approval.</li></ol><Link to="/payroll" className="mt-3 inline-flex min-h-10 items-center gap-1.5 text-xs font-semibold text-blue-600">Open payroll <ArrowRight size={13} /></Link></div></div>
+        </Card>
+        <Card padded className="border-[var(--color-border-secondary)]">
+          <div className="flex items-start gap-3"><span className="rounded-xl bg-[var(--color-accent)] p-2 text-[var(--color-accent-foreground)]"><Calculator size={18} /></span><div><p className="text-sm font-semibold text-[var(--color-text-primary)]">Test a payroll scenario</p><p className="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">Use the quick calculator to estimate gross pay, pension, PAYE, overtime and net pay without changing a payroll run.</p><Link to="/calculator" className="mt-3 inline-flex min-h-10 items-center gap-1.5 text-xs font-semibold text-blue-600">Open calculator <ArrowRight size={13} /></Link></div></div>
+        </Card>
+      </div>
 
       <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-card text-xs text-amber-800">
         <AlertTriangle size={15} className="shrink-0 mt-0.5" />
@@ -44,7 +56,7 @@ export function HrNotes() {
         </p>
       </div>
 
-      <Section title="Income tax (PAYE) — Income Tax (Amendment) Proclamation No. 1395/2025">
+      <Section title="Income tax (PAYE) — Income Tax (Amendment) Proclamation No. 1395/2025" defaultOpen>
         <p>Effective 8 July 2025. Confirmed by three independent professional sources (EY, Chambers and Partners, PwC Worldwide Tax Summaries). <ConfidenceBadge level="high" /></p>
         <div className="overflow-hidden border border-gray-100 rounded-lg">
           <table className="w-full text-xs">

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { recordQuickIncome, fetchWarehousesList } from '../../api/income'
 import { recordCompanyExpense } from '../../api/companyExpenses'
@@ -7,7 +8,7 @@ import { fetchCreditAccounts } from '../../api/credit'
 import { fetchAccounts } from '../../api/accounts'
 import type { Account } from '../../api/accounts'
 import {
-  Banknote, Loader2, ArrowDownLeft, ArrowUpRight, Plus, ChevronLeft, Check,
+  Banknote, Loader2, ArrowDownLeft, ArrowUpRight, Plus, ChevronLeft, Check, Search, Landmark, WalletCards,
 } from 'lucide-react'
 import { HawalaFields, emptyHawalaValue } from '../../components/HawalaFields'
 
@@ -17,24 +18,34 @@ interface Option { id: string; name: string }
 interface CreditAccount { id: string; customer_id: string; balance: number; credit_limit: number; due_date: string }
 
 const N = (n: number) => new Intl.NumberFormat('en-ET', { maximumFractionDigits: 0 }).format(Math.round(n))
-const METHODS = [
+type IncomeMethod = 'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'
+type ExpenseMethod = Exclude<IncomeMethod, 'credit'>
+interface SalesPaymentRow { id: string; amount_etb: number | null; created_at: string; sales_orders: { customers: { name: string } | { name: string }[] | null } | { customers: { name: string } | { name: string }[] | null }[] | null }
+interface ExpenseRow { id: string; amount: number | null; currency: string | null; expense_date: string; vendor_name: string | null; description: string }
+interface CreditRow { id: string; balance: number | null; credit_limit: number | null; due_date: string; customers: { id: string } | { id: string }[] | null }
+const one = <T,>(value: T | T[] | null | undefined): T | null => Array.isArray(value) ? (value[0] ?? null) : (value ?? null)
+const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
+const METHODS: Array<{ value: IncomeMethod; label: string }> = [
   { value: 'cash', label: 'Cash' }, { value: 'bank_transfer', label: 'Transfer' },
   { value: 'mobile_money', label: 'Mobile money' }, { value: 'credit', label: 'Credit' },
   { value: 'hawala', label: 'Hawala' },
 ]
-const EXPENSE_METHODS = [
+const EXPENSE_METHODS: Array<{ value: ExpenseMethod; label: string }> = [
   { value: 'cash', label: 'Cash' }, { value: 'bank_transfer', label: 'Transfer' },
   { value: 'mobile_money', label: 'Mobile money' }, { value: 'hawala', label: 'Hawala' },
 ]
 
 export function MobileMoneyTracking() {
+  const [searchParams] = useSearchParams()
   const [txns, setTxns] = useState<Txn[]>([])
   const [customers, setCustomers] = useState<Option[]>([])
   const [warehouses, setWarehouses] = useState<Option[]>([])
   const [credit, setCredit] = useState<CreditAccount[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState<'income' | 'expense' | null>(null)
+  const [form, setForm] = useState<'income' | 'expense' | null>(() => searchParams.get('action') === 'income' ? 'income' : searchParams.get('action') === 'expense' ? 'expense' : null)
+  const [direction, setDirection] = useState<'all' | Direction>('all')
+  const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -42,7 +53,7 @@ export function MobileMoneyTracking() {
   const [customerId, setCustomerId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [incomeAmount, setIncomeAmount] = useState('')
-  const [incomeMethod, setIncomeMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'credit' | 'hawala'>('cash')
+  const [incomeMethod, setIncomeMethod] = useState<IncomeMethod>('cash')
   const [incomeAccountId, setIncomeAccountId] = useState('')
   const [creditAccountId, setCreditAccountId] = useState('')
   const [incomeHawala, setIncomeHawala] = useState(emptyHawalaValue())
@@ -51,12 +62,10 @@ export function MobileMoneyTracking() {
   const [expenseDesc, setExpenseDesc] = useState('')
   const [expenseAmount, setExpenseAmount] = useState('')
   const [expenseAccountId, setExpenseAccountId] = useState('')
-  const [expenseMethod, setExpenseMethod] = useState<'cash' | 'bank_transfer' | 'mobile_money' | 'hawala'>('cash')
+  const [expenseMethod, setExpenseMethod] = useState<ExpenseMethod>('cash')
   const [expenseHawala, setExpenseHawala] = useState(emptyHawalaValue())
 
-  const one = <T,>(v: T | T[] | null | undefined): T | null => Array.isArray(v) ? (v[0] ?? null) : (v ?? null)
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const [salesRes, expenseRes, customerRows, warehouseRows, creditRows, accountRows] = await Promise.all([
@@ -64,26 +73,26 @@ export function MobileMoneyTracking() {
         supabase.from('company_expenses').select('id, amount, currency, expense_date, vendor_name, description').order('expense_date', { ascending: false }).limit(30),
         fetchCustomers(), fetchWarehousesList(), fetchCreditAccounts(), fetchAccounts(),
       ])
-      const salesTxns: Txn[] = (salesRes.data ?? []).map((r: any) => {
+      const salesTxns: Txn[] = ((salesRes.data ?? []) as SalesPaymentRow[]).map(r => {
         const order = one(r.sales_orders); const customer = order ? one(order.customers) : null
         return { id: `sale-${r.id}`, direction: 'in', party: customer?.name ?? 'Customer', amount: Number(r.amount_etb ?? 0), currency: 'ETB', date: r.created_at, source: 'Sale' }
       })
-      const expenseTxns: Txn[] = (expenseRes.data ?? []).map((r: any) => ({
+      const expenseTxns: Txn[] = ((expenseRes.data ?? []) as ExpenseRow[]).map(r => ({
         id: `exp-${r.id}`, direction: 'out', party: r.vendor_name ?? r.description, amount: Number(r.amount ?? 0), currency: r.currency ?? 'ETB', date: r.expense_date, source: 'Expense',
       }))
       setTxns([...salesTxns, ...expenseTxns].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')))
-      setCustomers((customerRows ?? []).map((c: any) => ({ id: c.id, name: c.name })))
-      setWarehouses((warehouseRows ?? []).map((w: any) => ({ id: w.id, name: w.name })))
-      setCredit((creditRows ?? []).map((c: any) => ({ id: c.id, customer_id: one(c.customers)?.id ?? '', balance: Number(c.balance ?? 0), credit_limit: Number(c.credit_limit ?? 0), due_date: c.due_date })))
+      setCustomers(((customerRows ?? []) as Option[]).map(c => ({ id: c.id, name: c.name })))
+      setWarehouses(((warehouseRows ?? []) as Option[]).map(w => ({ id: w.id, name: w.name })))
+      setCredit(((creditRows ?? []) as CreditRow[]).map(c => ({ id: c.id, customer_id: one(c.customers)?.id ?? '', balance: Number(c.balance ?? 0), credit_limit: Number(c.credit_limit ?? 0), due_date: c.due_date })))
       setAccounts(accountRows ?? [])
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load.')
+    } catch (error: unknown) {
+      setError(errorMessage(error, 'Failed to load.'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { const timer = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(timer) }, [load])
 
   function resetForms() {
     setCustomerId(''); setWarehouseId(warehouses[0]?.id ?? ''); setIncomeAmount(''); setIncomeMethod('cash')
@@ -110,8 +119,8 @@ export function MobileMoneyTracking() {
         hawalaRoute: incomeMethod === 'hawala' ? incomeHawala.route.trim() || undefined : undefined,
       })
       setForm(null); resetForms(); load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to record income.')
+    } catch (error: unknown) {
+      setError(errorMessage(error, 'Failed to record income.'))
     } finally {
       setSaving(false)
     }
@@ -130,8 +139,8 @@ export function MobileMoneyTracking() {
         hawalaRoute: expenseMethod === 'hawala' ? expenseHawala.route.trim() || undefined : undefined,
       })
       setForm(null); resetForms(); load()
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to record expense.')
+    } catch (error: unknown) {
+      setError(errorMessage(error, 'Failed to record expense.'))
     } finally {
       setSaving(false)
     }
@@ -139,9 +148,9 @@ export function MobileMoneyTracking() {
 
   if (form) {
     return (
-      <div className="fixed inset-0 bg-white z-40 flex flex-col">
+      <div className="mobile-money-form fixed inset-0 bg-white z-[80] flex flex-col">
         <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
-          <button onClick={() => setForm(null)}><ChevronLeft size={20} className="text-gray-500" /></button>
+          <button onClick={() => setForm(null)} aria-label="Close form"><ChevronLeft size={20} className="text-gray-500" /></button>
           <h1 className="text-base font-medium flex-1">{form === 'income' ? 'Add income' : 'Add expense'}</h1>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -160,7 +169,7 @@ export function MobileMoneyTracking() {
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
               <div className="grid grid-cols-4 gap-1.5">
                 {METHODS.map(m => (
-                  <button key={m.value} onClick={() => setIncomeMethod(m.value as any)}
+                  <button key={m.value} onClick={() => setIncomeMethod(m.value)}
                     className={`py-2 text-[10px] rounded-lg border ${incomeMethod === m.value ? 'bg-accent text-accent-foreground border-accent font-medium' : 'bg-white border-gray-200 text-gray-600'}`}>
                     {m.label}
                   </button>
@@ -187,7 +196,7 @@ export function MobileMoneyTracking() {
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-card" />
               <div className="grid grid-cols-4 gap-1.5">
                 {EXPENSE_METHODS.map(m => (
-                  <button key={m.value} onClick={() => setExpenseMethod(m.value as any)}
+                  <button key={m.value} onClick={() => setExpenseMethod(m.value)}
                     className={`py-2 text-[10px] rounded-lg border ${expenseMethod === m.value ? 'bg-red-600 text-white border-red-600' : 'bg-white border-gray-200 text-gray-600'}`}>
                     {m.label}
                   </button>
@@ -214,6 +223,21 @@ export function MobileMoneyTracking() {
 
   const inTotal = txns.filter(t => t.direction === 'in').reduce((s, t) => s + t.amount, 0)
   const outTotal = txns.filter(t => t.direction === 'out').reduce((s, t) => s + t.amount, 0)
+  const visibleTxns = txns.filter(t => (direction === 'all' || t.direction === direction) && `${t.party} ${t.source}`.toLowerCase().includes(search.toLowerCase()))
+
+  return <div className="mobile-surface mobile-money">
+    <header className="mobile-page-intro"><div><span>Cash control</span><h1>Money movement</h1><p>Thirty latest receipts and payments from real transactions.</p></div><i className="mobile-money-mark"><Banknote /></i></header>
+    <section className="mobile-money-balance"><span>Net recorded movement</span><strong className={inTotal - outTotal >= 0 ? 'positive' : 'negative'}>{inTotal - outTotal >= 0 ? '+' : '−'}{N(Math.abs(inTotal - outTotal))}<small> ETB</small></strong><div><span><ArrowDownLeft />Received<b>{N(inTotal)} ETB</b></span><span><ArrowUpRight />Paid out<b>{N(outTotal)} ETB</b></span></div></section>
+    <div className="mobile-money-actions"><button onClick={() => { setForm('income'); setError(null); resetForms() }}><ArrowDownLeft /><span><b>Add income</b><small>Customer payment</small></span><Plus /></button><button className="expense" onClick={() => { setForm('expense'); setError(null); resetForms() }}><ArrowUpRight /><span><b>Add expense</b><small>Company payment</small></span><Plus /></button></div>
+    <section className="mobile-section">
+      <div className="mobile-section-title"><div><span>Activity ledger</span><h2>Recent movement</h2></div><b>{visibleTxns.length}</b></div>
+      <div className="mobile-money-tools"><div><Search /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search party or source" /></div><nav>{(['all', 'in', 'out'] as const).map(value => <button key={value} className={direction === value ? 'active' : ''} onClick={() => setDirection(value)}>{value === 'all' ? 'All' : value === 'in' ? 'Received' : 'Paid'}</button>)}</nav></div>
+      {loading ? <div className="mobile-state"><Loader2 size={18} className="animate-spin" /> Loading transactions…</div> : txns.length === 0 ? <div className="mobile-state"><WalletCards /><span>No transactions recorded yet.</span></div> : <div className="mobile-transaction-list">{visibleTxns.map(t => <article key={t.id}><i className={t.direction}>{t.direction === 'in' ? <ArrowDownLeft /> : <ArrowUpRight />}</i><div><b>{t.party}</b><span>{t.source} · {(t.date ?? '').slice(0, 10)}</span></div><strong className={t.direction}>{t.direction === 'in' ? '+' : '−'}{N(t.amount)}<small>{t.currency}</small></strong></article>)}{!visibleTxns.length && <div className="mobile-state"><Search /><span>No movement matches this filter.</span></div>}</div>}
+    </section>
+    <section className="mobile-account-strip"><Landmark /><div><b>{accounts.filter(account => account.currency === 'ETB').length} ETB accounts</b><span>Available for recording cash and bank movement</span></div></section>
+  </div>
+
+  /* Legacy mobile view retained in history during the redesign.
 
   return (
     <div className="p-4 pb-6 max-w-md mx-auto">
@@ -262,5 +286,5 @@ export function MobileMoneyTracking() {
         </div>
       )}
     </div>
-  )
+  ) */
 }
